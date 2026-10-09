@@ -7,7 +7,7 @@ activation state. It is not a complete cognition or Organism checkpoint.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from organism.checkpoint import (
@@ -19,9 +19,18 @@ from organism.checkpoint import (
 from organism.identity import OrganismIdentity
 from organism.memory import ExperienceRecord
 
-from .checkpoint import export_graph_checkpoint, restore_graph_checkpoint
+from .activation import SensoryNormalizer
+from .checkpoint import (
+    export_graph_checkpoint,
+    export_safety_state,
+    export_sensory_normalizers,
+    restore_graph_checkpoint,
+    restore_safety_state,
+    restore_sensory_normalizers,
+)
 from .graph import CognitiveGraph, GraphError
 from .limits import KernelLimits
+from .metaplasticity import SafetyState
 from .transition import CognitiveTransitionError, CognitiveTransitionState
 
 
@@ -40,12 +49,23 @@ class CognitiveRuntimeCheckpoint:
     state: CognitiveTransitionState
     graph: CognitiveGraph
     experience_records: tuple[ExperienceRecord, ...] = ()
+    safety_state: SafetyState | None = None
+    sensory_normalizers: dict[str, SensoryNormalizer] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, CognitiveTransitionState):
             raise CognitiveRuntimeCheckpointError("state must be CognitiveTransitionState")
         if not isinstance(self.graph, CognitiveGraph):
             raise CognitiveRuntimeCheckpointError("graph must be CognitiveGraph")
+        if self.safety_state is not None and not isinstance(self.safety_state, SafetyState):
+            raise CognitiveRuntimeCheckpointError("safety_state must be SafetyState or None")
+        if not isinstance(self.sensory_normalizers, dict) or any(
+            not isinstance(key, str) or not isinstance(value, SensoryNormalizer)
+            for key, value in self.sensory_normalizers.items()
+        ):
+            raise CognitiveRuntimeCheckpointError(
+                "sensory_normalizers must map string IDs to SensoryNormalizer values"
+            )
         if not isinstance(self.experience_records, tuple) or any(
             not isinstance(record, ExperienceRecord) for record in self.experience_records
         ):
@@ -66,13 +86,17 @@ class CognitiveRuntimeCheckpoint:
     def to_bytes(self) -> bytes:
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
-            "schema_version": 2,
+            "schema_version": 3,
             "identity": str(self.state.identity),
             "transition": self.state.checkpoint_payload(),
             "graph": export_graph_checkpoint(self.graph),
             "experience_records": [
                 record.canonical_payload() for record in self.experience_records
             ],
+            "safety_state": (
+                None if self.safety_state is None else export_safety_state(self.safety_state)
+            ),
+            "sensory_normalizers": export_sensory_normalizers(self.sensory_normalizers),
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -89,11 +113,13 @@ class CognitiveRuntimeCheckpoint:
                 "transition",
                 "graph",
                 "experience_records",
+                "safety_state",
+                "sensory_normalizers",
             }:
                 raise CognitiveRuntimeCheckpointError("invalid cognitive runtime checkpoint shape")
             if document["schema"] != "biopeia.organism.cognitive-runtime" or document[
                 "schema_version"
-            ] != 2:
+            ] != 3:
                 raise CognitiveRuntimeCheckpointError("unsupported cognitive runtime checkpoint")
             identity = OrganismIdentity.parse(document["identity"])
             state = CognitiveTransitionState.from_checkpoint_payload(document["transition"])
@@ -106,7 +132,16 @@ class CognitiveRuntimeCheckpoint:
             if not isinstance(raw_records, list):
                 raise CognitiveRuntimeCheckpointError("experience_records must be a list")
             records = tuple(ExperienceRecord.restore(item) for item in raw_records)
-            return cls(state=state, graph=graph, experience_records=records)
+            raw_safety = document["safety_state"]
+            safety_state = None if raw_safety is None else restore_safety_state(raw_safety)
+            normalizers = restore_sensory_normalizers(document["sensory_normalizers"])
+            return cls(
+                state=state,
+                graph=graph,
+                experience_records=records,
+                safety_state=safety_state,
+                sensory_normalizers=normalizers,
+            )
         except CognitiveRuntimeCheckpointError:
             raise
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, GraphError,
