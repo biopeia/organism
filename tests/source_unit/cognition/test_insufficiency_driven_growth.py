@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from organism.cognition.structure import StructuralPlasticity
+from organism.cognition.types import NodeKind
 
 
 def test_explained_relation_consumes_stale_growth_evidence():
@@ -16,6 +17,8 @@ def test_explained_relation_consumes_stale_growth_evidence():
             source_active=True,
             target_active=True,
             tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
 
     before = plasticity.export_checkpoint()
@@ -33,6 +36,8 @@ def test_explained_relation_consumes_stale_growth_evidence():
         source_active=True,
         target_active=True,
         tick=10,
+        source_kind=NodeKind.SENSE,
+        target_kind=NodeKind.CONCEPT,
     )
     refreshed = plasticity.export_checkpoint()
     assert refreshed["coactivation_counts"][0]["count"] == 1

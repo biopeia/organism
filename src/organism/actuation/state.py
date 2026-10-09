@@ -10,7 +10,6 @@ class SensorimotorV2Snapshot:
     effect_count: int
     causal_evidence_count: int
     competence_count: int
-    established_competence_count: int
     competence_candidate_count: int
     controllability_estimate_count: int
     predictive_context_count: int
@@ -41,9 +40,7 @@ class SensorimotorV2Snapshot:
     intent_interrupted_count: int = 0
     intent_invalidated_count: int = 0
     intent_prediction_match: float | None = None
-    # Revision Coherence v1 §3.5: the four competence questions.
-    # ``established_competence_count`` is a deprecated alias of the executable
-    # count, kept until the live telemetry contract is revised.
+    # Revision Coherence v1 §3.5: distinguish the four competence questions.
     predictable_competence_count: int = 0
     executable_competence_count: int = 0
     admissible_competence_count: int = 0
@@ -54,7 +51,6 @@ class SensorimotorV2Snapshot:
             self.effect_count,
             self.causal_evidence_count,
             self.competence_count,
-            self.established_competence_count,
             self.competence_candidate_count,
             self.controllability_estimate_count,
             self.predictive_context_count,

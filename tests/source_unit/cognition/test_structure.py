@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from organism.cognition.graph import CognitiveGraph, PlasticEdge, PlasticNode
 from organism.cognition.limits import KernelLimits
 from organism.cognition.structure import (
@@ -29,10 +31,52 @@ def test_no_proposal_before_minimum_support_reached():
     )
     for tick in range(4):
         plasticity.observe_coactivation(
-            source_id="a", target_id="b", source_active=True, target_active=True, tick=tick
+            source_id="a",
+            target_id="b",
+            source_active=True,
+            target_active=True,
+            tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     mutations = plasticity.propose(graph, kernel_limits=KernelLimits(), tick=4)
     assert mutations == ()
+
+
+def test_coactivation_requires_node_kinds_and_rejects_non_node_kind_values():
+    plasticity = StructuralPlasticity(
+        min_candidate_support=1, tentative_lifetime_ticks=100, cooldown_ticks=10
+    )
+
+    with pytest.raises(ValueError, match="must be NodeKind values"):
+        plasticity.observe_coactivation(
+            source_id="a",
+            target_id="b",
+            source_active=True,
+            target_active=True,
+            tick=0,
+            source_kind=None,  # type: ignore[arg-type]
+            target_kind=NodeKind.CONCEPT,
+        )
+
+    assert plasticity.export_checkpoint()["coactivation_counts"] == []
+
+
+def test_coactivation_does_not_record_a_sense_target():
+    plasticity = StructuralPlasticity(
+        min_candidate_support=1, tentative_lifetime_ticks=100, cooldown_ticks=10
+    )
+    plasticity.observe_coactivation(
+        source_id="a",
+        target_id="b",
+        source_active=True,
+        target_active=True,
+        tick=0,
+        source_kind=NodeKind.SENSE,
+        target_kind=NodeKind.SENSE,
+    )
+
+    assert plasticity.export_checkpoint()["coactivation_counts"] == []
 
 
 def test_proposal_fires_once_minimum_support_reached():
@@ -44,7 +88,13 @@ def test_proposal_fires_once_minimum_support_reached():
     )
     for tick in range(3):
         plasticity.observe_coactivation(
-            source_id="a", target_id="b", source_active=True, target_active=True, tick=tick
+            source_id="a",
+            target_id="b",
+            source_active=True,
+            target_active=True,
+            tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     mutations = plasticity.propose(graph, kernel_limits=KernelLimits(), tick=3)
     assert len(mutations) == 1
@@ -62,7 +112,13 @@ def test_no_coactivation_never_reaches_support():
     )
     for tick in range(10):
         plasticity.observe_coactivation(
-            source_id="a", target_id="b", source_active=True, target_active=False, tick=tick
+            source_id="a",
+            target_id="b",
+            source_active=True,
+            target_active=False,
+            tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     mutations = plasticity.propose(graph, kernel_limits=KernelLimits(), tick=10)
     assert mutations == ()
@@ -88,7 +144,13 @@ def test_already_connected_pair_is_never_reproposed():
     )
     for tick in range(5):
         plasticity.observe_coactivation(
-            source_id="a", target_id="b", source_active=True, target_active=True, tick=tick
+            source_id="a",
+            target_id="b",
+            source_active=True,
+            target_active=True,
+            tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     mutations = plasticity.propose(graph, kernel_limits=KernelLimits(), tick=5)
     assert mutations == ()
@@ -116,7 +178,13 @@ def test_proposal_withheld_when_kernel_edge_budget_exhausted():
     )
     for tick in range(3):
         plasticity.observe_coactivation(
-            source_id="a", target_id="b", source_active=True, target_active=True, tick=tick
+            source_id="a",
+            target_id="b",
+            source_active=True,
+            target_active=True,
+            tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     mutations = plasticity.propose(graph, kernel_limits=KernelLimits(max_edges=1), tick=3)
     assert mutations == ()
@@ -128,7 +196,13 @@ def test_reconcile_drops_coactivation_counts_for_removed_nodes():
     )
     for tick in range(3):
         plasticity.observe_coactivation(
-            source_id="a", target_id="b", source_active=True, target_active=True, tick=tick
+            source_id="a",
+            target_id="b",
+            source_active=True,
+            target_active=True,
+            tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     plasticity.reconcile({"a"})  # "b" no longer exists
     graph = CognitiveGraph(nodes=(_sense("a"),), edges=(), kernel_limits=KernelLimits())
@@ -142,7 +216,13 @@ def test_reconcile_bounds_memory_growth_over_many_distinct_pairs():
     )
     for i in range(1000):
         plasticity.observe_coactivation(
-            source_id=f"n{i}", target_id=f"m{i}", source_active=True, target_active=True, tick=0
+            source_id=f"n{i}",
+            target_id=f"m{i}",
+            source_active=True,
+            target_active=True,
+            tick=0,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     plasticity.reconcile({"n0", "m0"})
     assert len(plasticity._coactivation_counts) <= 1
@@ -158,14 +238,26 @@ def test_pair_on_cooldown_after_a_proposal_is_not_reproposed_immediately():
     )
     for tick in range(3):
         plasticity.observe_coactivation(
-            source_id="a", target_id="b", source_active=True, target_active=True, tick=tick
+            source_id="a",
+            target_id="b",
+            source_active=True,
+            target_active=True,
+            tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     first = plasticity.propose(graph, kernel_limits=KernelLimits(), tick=3)
     assert len(first) == 1
 
     for tick in range(3, 6):
         plasticity.observe_coactivation(
-            source_id="a", target_id="c", source_active=True, target_active=True, tick=tick
+            source_id="a",
+            target_id="c",
+            source_active=True,
+            target_active=True,
+            tick=tick,
+            source_kind=NodeKind.SENSE,
+            target_kind=NodeKind.CONCEPT,
         )
     second = plasticity.propose(graph, kernel_limits=KernelLimits(), tick=6)
     assert second == ()

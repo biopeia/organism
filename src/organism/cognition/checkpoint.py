@@ -31,14 +31,6 @@ _WEIGHT_MAGNITUDE_LEVELS = (
     1.25,
     2.0,
 )
-# NOTE(backwards-compat): ELIGIBILITY_CLASSES/ELIGIBILITY_RANGE are no longer used by this module's
-# own checkpoint functions (eligibility is labile, design §10.3) but remain
-# public: observatory/adapter.py uses them to quantize live (RAM, per-tick)
-# eligibility for real-time display -- a display concern, not persistence.
-ELIGIBILITY_CLASSES = 16
-ELIGIBILITY_RANGE = (-10.0, 10.0)
-
-
 def quantize_signed(value: float, bounds: tuple[float, float], num_classes: int) -> int:
     low, high = bounds
     clipped = max(low, min(high, value))

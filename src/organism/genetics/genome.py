@@ -182,11 +182,6 @@ class Genome:
         return self.genome_id
 
     @property
-    def identity(self) -> str:
-        """Compatibility alias for the genome instance identity."""
-        return self.genome_id
-
-    @property
     def mutation_policy(self) -> MutationPolicyGenes:
         values = (
             self.evolvability.development_mutation_scale,
