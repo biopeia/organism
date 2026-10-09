@@ -16,6 +16,7 @@ from organism.cognition.portable_checkpoint import (
 from organism.cognition.transition import CognitiveTransitionState, advance_cognition
 from organism.cognition.types import EdgeKind, NodeKind
 from organism.identity import OrganismIdentity
+from organism.memory import EpistemicStatus, ExperienceRecord, SourceKind
 
 
 def _graph() -> CognitiveGraph:
@@ -45,9 +46,27 @@ def _state() -> CognitiveTransitionState:
     )
 
 
+def _experience_record(*, organism_id: str | None = None) -> ExperienceRecord:
+    return ExperienceRecord(
+        record_id="experience.1",
+        organism_id=organism_id or str(_state().identity),
+        tick_class=12,
+        context_tokens=("signal.opaque.1",),
+        action_token="action.opaque.1",
+        outcome_tokens=("outcome.opaque.1",),
+        epistemic_status=EpistemicStatus.OBSERVED,
+        evidence_refs=("causal-record.12",),
+        confidence_class=6,
+        source_kind=SourceKind.DIRECT,
+    )
+
+
 def test_cognitive_graph_and_recurrent_state_round_trip_through_organism_envelope() -> None:
     state, _ = advance_cognition(_state(), _graph(), {"sense": 0.8}, causal_tick=12)
-    original = CognitiveRuntimeCheckpoint(state=state, graph=_graph())
+    record = _experience_record(organism_id=str(state.identity))
+    original = CognitiveRuntimeCheckpoint(
+        state=state, graph=_graph(), experience_records=(record,)
+    )
     envelope = original.to_organism_checkpoint()
 
     restored = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
@@ -55,6 +74,7 @@ def test_cognitive_graph_and_recurrent_state_round_trip_through_organism_envelop
     )
 
     assert restored.state == state
+    assert restored.experience_records == (record,)
     assert [(node.node_id, node.kind) for node in restored.graph.nodes] == [
         (node.node_id, node.kind) for node in original.graph.nodes
     ]
@@ -84,6 +104,33 @@ def test_cognitive_checkpoint_rejects_identity_mismatch() -> None:
 def test_cognitive_checkpoint_rejects_unknown_fields() -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
     document["extra"] = True
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="shape"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
+
+def test_cognitive_checkpoint_rejects_experience_from_another_identity() -> None:
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="different Organism identity"):
+        CognitiveRuntimeCheckpoint(
+            state=_state(),
+            graph=_graph(),
+            experience_records=(_experience_record(organism_id="other"),),
+        )
+
+
+def test_cognitive_checkpoint_rejects_duplicate_experience_record_identity() -> None:
+    record = _experience_record()
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="duplicate experience"):
+        CognitiveRuntimeCheckpoint(
+            state=_state(), graph=_graph(), experience_records=(record, record)
+        )
+
+
+def test_cognitive_checkpoint_requires_experience_records_in_current_schema() -> None:
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    del document["experience_records"]
 
     with pytest.raises(CognitiveRuntimeCheckpointError, match="shape"):
         CognitiveRuntimeCheckpoint.from_bytes(
