@@ -49,6 +49,7 @@ These remain available in the source repository and are not considered deleted o
 - `actuation/acquisition.py` remains deferred; it couples Organism acquisition evidence to Embodiment `BodySchemaEngine` writes.
 - `core/orchestration/`, `core/embodiment/`, `host/`, sensory/environment logic, World, Lab and scientific assets were not copied wholesale.
 - No backward-compatibility shim for the historical import path is included.
+- Restoring a composed cognitive payload through an `OrganismCheckpoint` that declares external dependencies now requires an explicit dependency resolver and verifies each referenced payload digest before restoring. This validates declared references only; it does not demonstrate that current private-model artifacts are all represented in the envelope.
 - The initial identity/checkpoint boundary and copied current modules are a migration candidate, not a claim of TARGET conformance or scientific validity.
 
 ## Validation
