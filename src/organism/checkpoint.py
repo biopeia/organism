@@ -96,7 +96,12 @@ class OrganismCheckpoint:
                 "private_state_sha256", "dependencies",
             }:
                 raise InvalidOrganismCheckpoint("checkpoint envelope has an invalid shape")
-            if document["schema"] != "biopeia.organism-checkpoint" or document["schema_version"] != 1:
+            schema_version = document["schema_version"]
+            if (
+                document["schema"] != "biopeia.organism-checkpoint"
+                or type(schema_version) is not int
+                or schema_version != 1
+            ):
                 raise InvalidOrganismCheckpoint("unsupported checkpoint schema or version")
             identity = OrganismIdentity.parse(document["identity"])
             state = base64.b64decode(document["private_state_base64"], validate=True)
