@@ -4,18 +4,25 @@ The Organism package owns longitudinal identity and private Organism state. It
 does not own physical body state, environmental truth, or World causal
 coordination.
 
-This repository begins the incremental extraction from the historical
+This repository is an incremental extraction from the historical
 `symbiont-lab` repository. The source remains intact. See
-[`MIGRATION_MAP.md`](MIGRATION_MAP.md) for the first bounded source mapping.
+[`MIGRATION.md`](MIGRATION.md) for source mapping, exclusions and provenance.
 
 ## Scope of this initial slice
 
 - immutable Organism identity values, including explicit fresh identities for
   branches;
-- an opaque, in-memory checkpoint boundary with verified external dependency
-  references;
-- no runtime, cognition implementation, file format, or World recovery
-  protocol is selected here.
+- an owner-opaque, schema-versioned checkpoint byte envelope with integrity
+  checks and verified external dependency references;
+- a bounded cognition component checkpoint for recurrent activations and their
+  explicit causal tick, nestable inside the opaque Organism payload;
+- copied cognition, learning, agency, genetics and actuation capabilities are
+  still subject to migration review; their presence does not validate their
+  scientific efficacy;
+- the envelope does not assemble the full runtime state and does not select a
+  World recovery protocol or cross-authority persistence format.
+- the cognition component checkpoint is not a complete cognition or Organism
+  checkpoint; graph/learned-model and other owner state remain to be composed.
 
 ## Development
 
@@ -24,4 +31,4 @@ python -m pip install -e '.[dev]'
 pytest
 ```
 
-Package import name: `biopeia_organism`.
+Package import name: `organism`.
