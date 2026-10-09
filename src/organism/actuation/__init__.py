@@ -10,6 +10,8 @@ from .action import (
 from .arbitration import ActionArbitrator, ArbitrationDecision
 from .binding import CompetenceExecutionBinding, CompetenceExecutionBindingRegistry
 from .commitment import ActionCommitment, CommitmentStatus
+from .command import motor_command_from_frame
+from .controller import ControllerFrame, SequenceController
 from .competence import (
     CompetenceCandidate,
     CompetenceEvidence,
@@ -65,6 +67,7 @@ __all__ = [
     "CausalEvidence",
     "CausalEvidenceLedger",
     "CommitmentStatus",
+    "ControllerFrame",
     "CompetenceCandidate",
     "CompetenceDevelopmentEngine",
     "CompetenceEvidence",
@@ -87,6 +90,8 @@ __all__ = [
     "SensorimotorSnapshot",
     "SensorimotorTransition",
     "SensorimotorV2Snapshot",
+    "SequenceController",
     "SequentialCompositionEvidence",
     "derive_actuator_constitution",
+    "motor_command_from_frame",
 ]
