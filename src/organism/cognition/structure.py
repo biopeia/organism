@@ -62,22 +62,21 @@ class StructuralPlasticity:
         source_active: bool,
         target_active: bool,
         tick: int,
-        source_kind: NodeKind | None = None,
-        target_kind: NodeKind | None = None,
+        source_kind: NodeKind,
+        target_kind: NodeKind,
     ) -> None:
         """Accumulate evidence only for structurally legal generic edges.
 
         A SENSE may be a source but can never be a target in CognitiveGraph.
         SENSE↔SENSE coactivity therefore belongs to the separate concept
         candidate mechanism and must not consume generic edge-candidate
-        memory. ``source_kind``/``target_kind`` are optional for backwards
-        compatibility with direct unit/lab callers that already provide a
-        prevalidated pair; the resident bridge always supplies both kinds.
+        memory. Node kinds are required so callers cannot bypass the structural
+        legality check by presenting a pair as prevalidated.
         """
         del tick  # TODO: retained in the public signature for future time-aware evidence
+        if not isinstance(source_kind, NodeKind) or not isinstance(target_kind, NodeKind):
+            raise ValueError("source_kind and target_kind must be NodeKind values")
         if target_kind is NodeKind.SENSE:
-            return
-        if source_kind is NodeKind.SENSE and target_kind is NodeKind.SENSE:
             return
         if source_active and target_active:
             key = (source_id, target_id)
