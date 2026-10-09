@@ -1,7 +1,9 @@
-"""Bounded portable composition for the extracted cognitive graph runtime.
+"""Bounded portable composition for extracted Organism-owned cognitive state.
 
-This composes graph structure/quantized learned weights with recurrent
-activation state. It is not a complete cognition or Organism checkpoint.
+This composes graph structure/quantized learned weights, recurrent activation
+state, and optionally a generative resident's durable internal state. Model
+owners and transient evidence resolvers remain external. It is not a complete
+cognition or Organism checkpoint.
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ from .graph import CognitiveGraph, GraphError
 from .limits import KernelLimits
 from .metaplasticity import SafetyState
 from .transition import CognitiveTransitionError, CognitiveTransitionState
+from .generative.registry import GenerativeModelRegistry
+from .generative.resident import ResidentGenerativeCognition
 
 
 class CognitiveRuntimeCheckpointError(ValueError):
@@ -42,8 +46,11 @@ class CognitiveRuntimeCheckpointError(ValueError):
 class CognitiveRuntimeCheckpoint:
     """A bounded composition of Organism-owned cognitive and memory state.
 
-    This payload includes only the graph, recurrent state, and explicitly
-    supplied experience records. It is not a complete Organism checkpoint.
+    This payload includes only explicitly supplied cognitive state. A
+    generative resident contributes its durable state, but its model registry
+    and transient factual-evidence resolver are not captured. Restore callers
+    must provide model owners separately when that capability is required.
+    This is not a complete Organism checkpoint.
     """
 
     state: CognitiveTransitionState
@@ -51,6 +58,7 @@ class CognitiveRuntimeCheckpoint:
     experience_records: tuple[ExperienceRecord, ...] = ()
     safety_state: SafetyState | None = None
     sensory_normalizers: dict[str, SensoryNormalizer] = field(default_factory=dict)
+    generative_resident: ResidentGenerativeCognition | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, CognitiveTransitionState):
@@ -59,6 +67,18 @@ class CognitiveRuntimeCheckpoint:
             raise CognitiveRuntimeCheckpointError("graph must be CognitiveGraph")
         if self.safety_state is not None and not isinstance(self.safety_state, SafetyState):
             raise CognitiveRuntimeCheckpointError("safety_state must be SafetyState or None")
+        if self.generative_resident is not None and not isinstance(
+            self.generative_resident, ResidentGenerativeCognition
+        ):
+            raise CognitiveRuntimeCheckpointError(
+                "generative_resident must be ResidentGenerativeCognition or None"
+            )
+        if self.generative_resident is not None and self.generative_resident.organism_id != str(
+            self.state.identity
+        ):
+            raise CognitiveRuntimeCheckpointError(
+                "generative resident belongs to a different Organism identity"
+            )
         if not isinstance(self.sensory_normalizers, dict) or any(
             not isinstance(key, str) or not isinstance(value, SensoryNormalizer)
             for key, value in self.sensory_normalizers.items()
@@ -86,7 +106,7 @@ class CognitiveRuntimeCheckpoint:
     def to_bytes(self) -> bytes:
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
-            "schema_version": 3,
+            "schema_version": 4,
             "identity": str(self.state.identity),
             "transition": self.state.checkpoint_payload(),
             "graph": export_graph_checkpoint(self.graph),
@@ -97,12 +117,21 @@ class CognitiveRuntimeCheckpoint:
                 None if self.safety_state is None else export_safety_state(self.safety_state)
             ),
             "sensory_normalizers": export_sensory_normalizers(self.sensory_normalizers),
+            "generative_resident": (
+                None
+                if self.generative_resident is None
+                else self.generative_resident.checkpoint()
+            ),
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     @classmethod
     def from_bytes(
-        cls, payload: bytes, *, kernel_limits: KernelLimits
+        cls,
+        payload: bytes,
+        *,
+        kernel_limits: KernelLimits,
+        generative_registry: GenerativeModelRegistry | None = None,
     ) -> CognitiveRuntimeCheckpoint:
         try:
             document = json.loads(payload)
@@ -115,11 +144,12 @@ class CognitiveRuntimeCheckpoint:
                 "experience_records",
                 "safety_state",
                 "sensory_normalizers",
+                "generative_resident",
             }:
                 raise CognitiveRuntimeCheckpointError("invalid cognitive runtime checkpoint shape")
             if document["schema"] != "biopeia.organism.cognitive-runtime" or document[
                 "schema_version"
-            ] != 3:
+            ] != 4:
                 raise CognitiveRuntimeCheckpointError("unsupported cognitive runtime checkpoint")
             identity = OrganismIdentity.parse(document["identity"])
             state = CognitiveTransitionState.from_checkpoint_payload(document["transition"])
@@ -135,12 +165,23 @@ class CognitiveRuntimeCheckpoint:
             raw_safety = document["safety_state"]
             safety_state = None if raw_safety is None else restore_safety_state(raw_safety)
             normalizers = restore_sensory_normalizers(document["sensory_normalizers"])
+            raw_generative = document["generative_resident"]
+            generative_resident = (
+                None
+                if raw_generative is None
+                else ResidentGenerativeCognition.from_checkpoint(
+                    raw_generative,
+                    organism_id=str(identity),
+                    registry=generative_registry,
+                )
+            )
             return cls(
                 state=state,
                 graph=graph,
                 experience_records=records,
                 safety_state=safety_state,
                 sensory_normalizers=normalizers,
+                generative_resident=generative_resident,
             )
         except CognitiveRuntimeCheckpointError:
             raise
@@ -161,6 +202,7 @@ class CognitiveRuntimeCheckpoint:
         *,
         kernel_limits: KernelLimits,
         read_dependency: Callable[[str], bytes] | None = None,
+        generative_registry: GenerativeModelRegistry | None = None,
     ) -> CognitiveRuntimeCheckpoint:
         """Restore the composed payload after validating declared dependencies.
 
@@ -180,7 +222,11 @@ class CognitiveRuntimeCheckpoint:
                 raise CognitiveRuntimeCheckpointError(
                     "Organism checkpoint dependency closure is invalid"
                 ) from exc
-        restored = cls.from_bytes(checkpoint.private_state, kernel_limits=kernel_limits)
+        restored = cls.from_bytes(
+            checkpoint.private_state,
+            kernel_limits=kernel_limits,
+            generative_registry=generative_registry,
+        )
         if restored.state.identity != checkpoint.identity:
             raise CognitiveRuntimeCheckpointError("envelope and private-state identities differ")
         return restored
