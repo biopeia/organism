@@ -19,6 +19,8 @@ from organism.cognition.transition import CognitiveTransitionState, advance_cogn
 from organism.cognition.types import EdgeKind, NodeKind
 from organism.identity import OrganismIdentity
 from organism.memory import EpistemicStatus, ExperienceRecord, SourceKind
+from organism.cognition.generative import AgendaSource, GenerativeTarget, ResidentGenerativeCognition
+from organism.cognition.generative.registry import GenerativeModelRegistry
 
 
 def _graph() -> CognitiveGraph:
@@ -137,9 +139,9 @@ def test_portable_checkpoint_rejects_malformed_safety_and_normalizer_payloads() 
         )
 
 
-def test_portable_checkpoint_schema_v2_is_not_accepted_as_a_current_payload() -> None:
+def test_portable_checkpoint_schema_v3_is_not_accepted_as_a_current_payload() -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
-    document["schema_version"] = 2
+    document["schema_version"] = 3
     with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
         CognitiveRuntimeCheckpoint.from_bytes(
             json.dumps(document).encode(), kernel_limits=KernelLimits()
@@ -167,6 +169,54 @@ def test_cognitive_checkpoint_rejects_unknown_fields() -> None:
         CognitiveRuntimeCheckpoint.from_bytes(
             json.dumps(document).encode(), kernel_limits=KernelLimits()
         )
+
+
+def test_portable_checkpoint_round_trips_explicit_generative_resident_state() -> None:
+    resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
+    resident.generative_tick = 9
+    resident.agenda.add_target(
+        GenerativeTarget(
+            target_id="target.longitudinal",
+            source=AgendaSource.UNCERTAINTY,
+            source_refs=("organism.signal.1",),
+            created_tick=4,
+            uncertainty=0.7,
+            persistence=0.5,
+            recurrence=2,
+        )
+    )
+    before = CognitiveRuntimeCheckpoint(_state(), _graph(), generative_resident=resident)
+
+    restored = CognitiveRuntimeCheckpoint.from_bytes(
+        before.to_bytes(), kernel_limits=KernelLimits()
+    )
+
+    assert restored.generative_resident is not None
+    assert restored.generative_resident.organism_id == str(_state().identity)
+    assert restored.generative_resident.generative_tick == 9
+    assert restored.generative_resident.agenda.targets == resident.agenda.targets
+
+
+def test_portable_checkpoint_restore_uses_explicit_external_model_registry() -> None:
+    resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
+    registry = GenerativeModelRegistry()
+    payload = CognitiveRuntimeCheckpoint(
+        _state(), _graph(), generative_resident=resident
+    ).to_bytes()
+
+    restored = CognitiveRuntimeCheckpoint.from_bytes(
+        payload, kernel_limits=KernelLimits(), generative_registry=registry
+    )
+
+    assert restored.generative_resident is not None
+    assert restored.generative_resident.registry is registry
+
+
+def test_portable_checkpoint_rejects_generative_state_for_another_organism() -> None:
+    resident = ResidentGenerativeCognition(organism_id="organism.other")
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="different Organism identity"):
+        CognitiveRuntimeCheckpoint(_state(), _graph(), generative_resident=resident)
 
 
 def test_cognitive_checkpoint_rejects_experience_from_another_identity() -> None:

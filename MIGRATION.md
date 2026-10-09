@@ -93,3 +93,21 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Disposition: `SPLIT` — compose two already extracted Organism cognitive-state values in the bounded portable cognitive payload. No mixed bridge runtime, Lab adapter, Embodiment/body state, or World persistence coordinator is copied.
 - Contract: schema version 3 records optional `SafetyState` and only established `SensoryNormalizer` values using the existing codecs. Unestablished normalizers remain omitted under the source codec's existing rule. The prior schema is not accepted by the current reader; no backward-compatibility obligation is implied.
 - Validation: the focused portable and graph checkpoint tests cover round-trip and malformed-state rejection. This composes only explicitly supplied values and does not prove a complete cognitive or Organism continuation, actual caller completeness, model artifact closure, or runtime continuity.
+
+## Incremental slice: generative resident state in cognitive continuation payload
+
+- Source repository: `https://github.com/alessbarb/symbiont-lab`
+- Source SHA: `80d372a186513035f85a769db886e505cabba52d`
+- Original paths and source blob IDs:
+  - `symbiont/src/symbiont/cognition/generative/resident.py` — `9fab387ce7c6fddd2445924673ab3c2d3767255d` (last source commit `5a09866340efd6568533fc0d6c686c540976c094`)
+  - `symbiont/src/symbiont/cognition/generative/persistence.py` — `ad46d0d92efd64ff23552c489d2ee1b95fd95c9d`
+  - `symbiont/src/symbiont/cognition/generative/agenda.py` — `64e692b090412a781ddb8f8db558511140a4e23f`
+  - `symbiont/src/symbiont/cognition/generative/scheduler.py` — `1e51824d137a57e6fe7561efe202a1153d3fc96e`
+  - `symbiont/src/symbiont/cognition/generative/workspace.py` — `8f39579e670ffe4b89865bdb1413dd4bb01a3489`
+- Supporting source paths were last changed at `13720935595fedabec2c376dc933629b0deae5aa` unless otherwise noted above.
+- Target path: `src/organism/cognition/portable_checkpoint.py`
+- Disposition: `SPLIT` — the existing Organism-owned resident codec is composed into the portable cognitive envelope only when explicitly supplied. The source resident implementation and its supporting codec modules were already extracted; this change does not duplicate or alter them.
+- Rewrite: the portable envelope now records/restores the resident payload and checks that the resident identity matches the transition identity. The envelope schema is version 4; older schemas are rejected rather than implicitly migrated.
+- Restore boundary: a caller may supply a `GenerativeModelRegistry`; model owners are not serialized into this checkpoint. The transient factual-evidence resolver is not serialized and must be rebound by the factual-state owner. The resident codec's own schema validation remains authoritative.
+- Validation: `uv run --with pytest python -m pytest -q` — 572 passed; `uv build` produced sdist and wheel; the wheel installed into an isolated target directory, imported `organism.cognition.portable_checkpoint`, and the full suite against that isolated installation passed (572 passed); `git diff --check` passed. CI is pending PR publication.
+- Scope limitation: this captures the resident's codec-declared durable internal state when passed by the caller. It does not establish that all Organism callers include it, that model-weight/dependency closure is portable, that a complete Organism continuation is captured, or that cognition is scientifically effective. No source files or scientific assets were modified.
