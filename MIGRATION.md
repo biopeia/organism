@@ -22,6 +22,7 @@
 | `symbiont/src/symbiont/host/adaptive.py::PairAccumulator` | `SPLIT` / `REWRITE` | `src/organism/statistics.py` | Extracted only the bounded online bivariate accumulator; no host sensing/adaptive subsystem was copied. |
 | `symbiont/src/symbiont/core/orchestration/runtime.py` identity handling | `REWRITE` | `src/organism/identity.py` | Requires an explicit identity value rather than implicit runtime identity generation. |
 | `symbiont/src/symbiont/host/checkpoint.py` and mixed runtime checkpoint composition | `REWRITE` | `src/organism/checkpoint.py` | Opaque private-state boundary and verified content-reference closure only; no runtime persistence format is selected. |
+| `symbiont/src/symbiont/core/cognition/bridge.py::CognitiveBridge` and `symbiont/src/symbiont/cognition/graph.py` | `REWRITE` | `src/organism/cognition/transition.py` | Adds an explicit causal-tick state transition around graph activation. The in-memory recurrent activation state is Organism-owned; it is not yet encoded in the portable checkpoint. Readouts remain consultative and do not produce actions. |
 
 ## Tests copied
 

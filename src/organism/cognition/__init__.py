@@ -6,3 +6,15 @@ independent of the evaluation apparatus that will eventually score it
 """
 
 from .learning import ShadowPrediction
+from .transition import (
+    CognitiveTransitionError,
+    CognitiveTransitionState,
+    advance_cognition,
+)
+
+__all__ = [
+    "CognitiveTransitionError",
+    "CognitiveTransitionState",
+    "ShadowPrediction",
+    "advance_cognition",
+]
