@@ -111,3 +111,17 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Restore boundary: a caller may supply a `GenerativeModelRegistry`; model owners are not serialized into this checkpoint. The transient factual-evidence resolver is not serialized and must be rebound by the factual-state owner. The resident codec's own schema validation remains authoritative.
 - Validation: `uv run --with pytest python -m pytest -q` — 572 passed; `uv build` produced sdist and wheel; the wheel installed into an isolated target directory, imported `organism.cognition.portable_checkpoint`, and the full suite against that isolated installation passed (572 passed); `git diff --check` passed. CI is pending PR publication.
 - Scope limitation: this captures the resident's codec-declared durable internal state when passed by the caller. It does not establish that all Organism callers include it, that model-weight/dependency closure is portable, that a complete Organism continuation is captured, or that cognition is scientifically effective. No source files or scientific assets were modified.
+
+## Incremental slice: fail-closed outcome-value ledger restore
+
+- Source repository: `https://github.com/alessbarb/symbiont-lab`
+- Source SHA: `cef998a55aae32ed8b2f7373079c11667b01e915`
+- Original source paths:
+  - `symbiont/src/symbiont/agency/value.py` — blob `24758519c5fb7b288247f0a4698542466d8483a0`; last changed at `80845c371cf6dfb6c76ab60dd005a48ad0c13367`
+  - `symbiont/src/symbiont/agency/prospective.py` — blob `7c63a9c8e92df8c7e767dfede2ae5e3e095e7520`; last changed at `fb109ff05b696009fa12118727f8b57710cc9735`
+  - `symbiont/src/symbiont/modeling/private_runtime.py` — caller evidence blob `dedb99e6106c48c7d49ca6f1101acf2eb69ea80d`; last changed at `e2ea9f119f1417171d37f3c7dafcac5653c54a8e`. This mixed source module was not copied by this slice.
+- Target paths: `src/organism/agency/value.py`, `tests/source_unit/agency/test_value.py`
+- Disposition: `REWRITE` — preserve valid v1 global and v2 contextual checkpoint semantics while rejecting malformed, duplicate, incomplete, or over-capacity payloads instead of silently skipping entries or truncating the restored state.
+- Restore behavior: the codec validates the complete payload before returning a ledger. A malformed entry or capacity overflow raises `ValueError`; a caller cannot receive a partial ledger as a successful restore. Existing bounded eviction during normal `observe()` operation is unchanged.
+- Validation: focused agency tests — 37 passed; full Organism source suite — 576 passed; `uv build` produced wheel and sdist; installed wheel into an isolated target directory, imported the installed module, and ran the copied ledger test module against the installed package — 24 passed; `git diff --check` passed. CI is pending PR publication.
+- Scope limitation: this hardens one explicitly checkpointable Organism agency state family. It does not create a top-level Organism checkpoint, prove all callers include the ledger, establish model-registry/weight artifact closure, or claim complete longitudinal continuity. The source monorepo is unchanged.

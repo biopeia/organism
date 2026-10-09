@@ -104,6 +104,12 @@ class OutcomeValueStat:
 
     @classmethod
     def restore(cls, payload: dict[str, Any]) -> "OutcomeValueStat":
+        expected_fields = {
+            "samples", "mean", "m2", "positive", "negative", "last_tick"
+        }
+        if not isinstance(payload, dict) or set(payload) != expected_fields:
+            raise ValueError("invalid outcome-value stat checkpoint shape")
+
         def _int(v: object, name: str, minimum: int = 0) -> int:
             if isinstance(v, bool) or not isinstance(v, int) or v < minimum:
                 raise ValueError(f"invalid {name} in outcome-value stat: {v!r}")
@@ -116,7 +122,7 @@ class OutcomeValueStat:
                 raise ValueError(f"{name} must be finite in outcome-value stat")
             return float(v)
 
-        return cls(
+        stat = cls(
             samples=_int(payload.get("samples", 0), "samples", minimum=1),
             mean=_float(payload.get("mean", 0.0), "mean"),
             m2=_float(payload.get("m2", 0.0), "m2"),
@@ -124,6 +130,13 @@ class OutcomeValueStat:
             negative=_int(payload.get("negative", 0), "negative"),
             last_tick=_int(payload.get("last_tick", 0), "last_tick"),
         )
+        if not -1.0 <= stat.mean <= 1.0:
+            raise ValueError("mean must be within [-1, 1] in outcome-value stat")
+        if stat.m2 < 0.0:
+            raise ValueError("m2 must be non-negative in outcome-value stat")
+        if stat.positive + stat.negative > stat.samples:
+            raise ValueError("sign counts exceed samples in outcome-value stat")
+        return stat
 
 
 class OutcomeValueLedger:
@@ -268,36 +281,50 @@ class OutcomeValueLedger:
 
     @classmethod
     def restore(cls, payload: object) -> "OutcomeValueLedger":
-        """Restore v1 global ledgers or v2 contextual ledgers."""
+        """Restore a complete v1 global or v2 contextual ledger.
+
+        Restoration fails closed: malformed entries and over-limit checkpoints
+        are rejected instead of returning a silently partial ledger.
+        """
         if not isinstance(payload, dict):
             raise ValueError("invalid outcome-value ledger checkpoint")
         version = payload.get("schema_version")
         if version not in {1, cls._SCHEMA_VERSION}:
             raise ValueError(f"unsupported outcome-value ledger schema version: {version!r}")
+        expected_fields = {"schema_version", "stats"}
+        if version == cls._SCHEMA_VERSION:
+            expected_fields.add("context_stats")
+        if set(payload) != expected_fields:
+            raise ValueError("invalid outcome-value ledger checkpoint shape")
+
         raw_stats = payload.get("stats", {})
         if not isinstance(raw_stats, dict):
             raise ValueError("invalid outcome-value ledger stats checkpoint")
+        if len(raw_stats) > MAX_OUTCOME_VALUES:
+            raise ValueError("outcome-value ledger exceeds global capacity")
 
         ledger = cls()
         for outcome_id, raw_stat in raw_stats.items():
-            if len(ledger._stats) >= MAX_OUTCOME_VALUES:
-                break
-            if not isinstance(outcome_id, str) or not isinstance(raw_stat, dict):
-                continue
+            if not isinstance(outcome_id, str) or not outcome_id or len(outcome_id) > 128:
+                raise ValueError("invalid outcome id in outcome-value ledger checkpoint")
+            if not isinstance(raw_stat, dict):
+                raise ValueError("invalid outcome-value stat checkpoint")
             try:
                 ledger._stats[outcome_id] = OutcomeValueStat.restore(raw_stat)
-            except (ValueError, TypeError, KeyError):
-                continue
+            except (ValueError, TypeError, KeyError) as exc:
+                raise ValueError(f"invalid outcome-value stat for {outcome_id!r}") from exc
 
         if version == cls._SCHEMA_VERSION:
-            raw_context = payload.get("context_stats", [])
+            raw_context = payload["context_stats"]
             if not isinstance(raw_context, list):
                 raise ValueError("invalid contextual outcome-value checkpoint")
+            if len(raw_context) > MAX_CONTEXTUAL_OUTCOME_VALUES:
+                raise ValueError("outcome-value ledger exceeds contextual capacity")
             for item in raw_context:
-                if len(ledger._context_stats) >= MAX_CONTEXTUAL_OUTCOME_VALUES:
-                    break
-                if not isinstance(item, dict):
-                    continue
+                if not isinstance(item, dict) or set(item) != {
+                    "context_key", "outcome_id", "stat"
+                }:
+                    raise ValueError("invalid contextual outcome-value entry shape")
                 context_key = item.get("context_key")
                 outcome_id = item.get("outcome_id")
                 raw_stat = item.get("stat")
@@ -305,15 +332,19 @@ class OutcomeValueLedger:
                     not _valid_context_key(context_key)
                     or not isinstance(outcome_id, str)
                     or not outcome_id
+                    or len(outcome_id) > 128
                     or not isinstance(raw_stat, dict)
                 ):
-                    continue
+                    raise ValueError("invalid contextual outcome-value entry")
+                key = (context_key, outcome_id)
+                if key in ledger._context_stats:
+                    raise ValueError("duplicate contextual outcome-value entry")
                 try:
-                    ledger._context_stats[(context_key, outcome_id)] = OutcomeValueStat.restore(
-                        raw_stat
-                    )
-                except (ValueError, TypeError, KeyError):
-                    continue
+                    ledger._context_stats[key] = OutcomeValueStat.restore(raw_stat)
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise ValueError(
+                        f"invalid contextual outcome-value stat for {outcome_id!r}"
+                    ) from exc
         return ledger
 
 

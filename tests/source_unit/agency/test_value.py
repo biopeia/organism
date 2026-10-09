@@ -7,6 +7,7 @@ import math
 import pytest
 
 from organism.agency.value import (
+    MAX_CONTEXTUAL_OUTCOME_VALUES,
     MAX_OUTCOME_VALUES,
     OutcomeValueLedger,
     context_key_for,
@@ -213,7 +214,7 @@ def test_restore_fails_on_non_dict():
         OutcomeValueLedger.restore("not a dict")
 
 
-def test_restore_skips_corrupted_entries():
+def test_restore_rejects_corrupted_entry_instead_of_returning_partial_ledger():
     checkpoint = {
         "schema_version": 1,
         "stats": {
@@ -228,9 +229,65 @@ def test_restore_skips_corrupted_entries():
             "outcome.corrupted": "not a dict",
         },
     }
-    restored = OutcomeValueLedger.restore(checkpoint)
-    assert restored.estimate("outcome.valid") is not None
-    assert restored.estimate("outcome.corrupted") is None
+    with pytest.raises(ValueError, match="invalid outcome-value stat checkpoint"):
+        OutcomeValueLedger.restore(checkpoint)
+
+
+def test_restore_rejects_global_checkpoint_over_capacity_without_truncation():
+    checkpoint = {
+        "schema_version": 1,
+        "stats": {
+            f"outcome.{index}": {
+                "samples": 1,
+                "mean": 0.3,
+                "m2": 0.0,
+                "positive": 1,
+                "negative": 0,
+                "last_tick": 10,
+            }
+            for index in range(MAX_OUTCOME_VALUES + 1)
+        },
+    }
+    with pytest.raises(ValueError, match="global capacity"):
+        OutcomeValueLedger.restore(checkpoint)
+
+
+def test_restore_rejects_contextual_checkpoint_over_capacity_without_truncation():
+    context_key = context_key_for(("ctx",))
+    stat = {
+        "samples": 1,
+        "mean": 0.3,
+        "m2": 0.0,
+        "positive": 1,
+        "negative": 0,
+        "last_tick": 10,
+    }
+    checkpoint = {
+        "schema_version": 2,
+        "stats": {},
+        "context_stats": [
+            {
+                "context_key": context_key,
+                "outcome_id": f"outcome.{index}",
+                "stat": stat,
+            }
+            for index in range(MAX_CONTEXTUAL_OUTCOME_VALUES + 1)
+        ],
+    }
+    with pytest.raises(ValueError, match="contextual capacity"):
+        OutcomeValueLedger.restore(checkpoint)
+
+
+def test_restore_v2_requires_complete_context_section():
+    with pytest.raises(ValueError, match="checkpoint shape"):
+        OutcomeValueLedger.restore({"schema_version": 2, "stats": {}})
+
+
+def test_restore_rejects_malformed_contextual_entry():
+    with pytest.raises(ValueError, match="contextual outcome-value entry shape"):
+        OutcomeValueLedger.restore(
+            {"schema_version": 2, "stats": {}, "context_stats": ["invalid"]}
+        )
 
 
 def test_multiple_outcomes_independent():
