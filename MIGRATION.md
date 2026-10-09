@@ -686,3 +686,42 @@ The pinned source import scan found these direct production consumers outside th
 Direct pinned tests touching these packages are `symbiont/tests/integration/test_germline_capture_to_budding.py`; `symbiont/tests/unit/actuation/test_causal_evidence.py`; `symbiont/tests/unit/core/{test_action_domain_restore,test_actuation_runtime_loop,test_advisory,test_assimilation,test_body_schema,test_body_schema_agentic,test_body_structure_state,test_clean_embodiment_episode,test_cognitive_body_schema,test_cognitive_body_schema_longitudinal,test_degradation,test_embodiment_agency,test_embodiment_v2,test_homeostasis,test_lifecycle,test_local_habitat,test_metabolism,test_ontogeny,test_organism_runtime,test_physiology,test_social,test_somatic_continuous_m2,test_temporal_domains,test_temporal_scales_m1}.py`; `symbiont/tests/unit/host/test_reduced_seed_register.py`; `symbiont/tests/unit/test_resident.py`; and root `tests/experimental_integrity/test_embodiment_inheritance_integrity.py`, `tests/experimental_integrity/test_embodiment_v2_architecture.py`, and `tests/unit/core/test_canonical_conventions.py`. The three root-level tests are `SPLIT` evidence across Embodiment, Organism, Genetics and Lab boundaries; they are not copied Organism tests or target acceptance. Related public API and causal-context evidence includes `symbiont/tests/test_api_surface.py`, `symbiont/tests/experimental_integrity/test_action_tick_context.py` and `test_embodiment_tick_context_identity.py`, and `symbiont/tests/experimental_integrity/test_causal_time_boundary.py`. All listed tests are source evidence, not target acceptance tests. Organism-owned assertions remain subject to the existing per-test ledger above; Embodiment-owned test disposition belongs to Embodiment.
 
 At the pinned source tree, both inventoried directories contain Python files only (28 total); there are no tracked non-Python assets within either directory. The pinned source worktree currently reports no untracked files. No untracked file can be attributed to the pinned commit, so this does not establish the absence of untracked material at other worktrees or historical times. The source scan did not identify a scientific/evidence resource owned by these two packages. This closes the *documented package-path gap only*: it does not close consumer inventory repository-wide, Lab/Environment/World/Embodiment inventories, any `DEFER` row, or the migration itself.
+
+## Ratified Organism progression requirement — implementation blocked by missing aggregate
+
+The Architecture Owner ratified on 2026-10-09 that TARGET Organism must persist an owner-owned longitudinal causal progression counter (`organism_step` semantics). This is an approved requirement, not an open design question. It is distinct from World causal ticks, wall-clock time, physical solver time, body age and generation. It must be monotonic within a canonical continuation, survive restore and canonical re-embodiment, and must not default to zero when required data is absent from a TARGET checkpoint. This entry records an implementation boundary; it does not amend the ratified semantics.
+
+### Current TARGET evidence and limitation
+
+The current Biopeia Organism checkout at review base `7bf9c60` has no owner aggregate or transition coordinator that authoritatively accepts complete longitudinal Organism state transitions. The existing pieces do not supply that boundary:
+
+- `src/organism/cognition/transition.py::CognitiveTransitionState.last_causal_tick` is an optional external causal tick used by the cognitive component. `advance_cognition` accepts a `causal_tick` and requires it to increase, but the tick may skip and describes only this cognitive transition; it is not a count of accepted whole-Organism transitions.
+- `src/organism/cognition/portable_checkpoint.py::CognitiveRuntimeCheckpoint` composes a bounded cognition/memory slice and explicitly states that it is not a complete Organism continuation. Its schema version 4 has no `organism_step`.
+- `src/organism/checkpoint.py::OrganismCheckpoint` is intentionally an opaque envelope around owner-produced bytes and dependencies. It cannot supply transition semantics or an authoritative increment operation.
+- The extracted agency, actuation, genetics and cognition components expose separate state/checkpoint operations; there is no owner transition boundary that validates and commits the whole set atomically.
+
+Therefore no counter has yet been implemented. Adding the field to `CognitiveTransitionState`, incrementing it in `advance_cognition`, relabeling `last_causal_tick`/`generative_tick`, or adding a free-standing number to the partial cognition checkpoint would not satisfy the approved requirement and would overstate ownership. This is a TARGET implementation blocker caused by missing runtime composition, not a request to reopen architecture or request for a compatibility path.
+
+### Required boundary before implementation
+
+Before implementing `organism_step`, introduce a canonical owner-side Organism state/transition composition that:
+
+1. identifies which Organism-owned components form the longitudinal state subject to one accepted transition;
+2. validates the complete proposed owner transition and publishes one next state only on acceptance;
+3. increments the owner-owned counter exactly once per accepted transition, never on rejection/failure, and leaves it unchanged when World advances without an Organism transition;
+4. keeps World tick as separate correlation and carries the counter through canonical restore and re-embodiment; and
+5. serializes the counter in strict owner-private continuation data, rejecting absent, boolean, non-integer or negative values in the TARGET restore path.
+
+The generic opaque checkpoint envelope should remain opaque. `CognitiveRuntimeCheckpoint` may remain a partial component checkpoint; it must not be described as the whole Organism continuation. A future aggregate may compose it without changing the distinct meaning of `last_causal_tick`.
+
+### Observed `symbiont_tick` names in current TARGET source
+
+The following production-source references were inspected in the current target tree; test-fixture uses are not production-symbol dispositions. This is a scoped disposition, not a claim that every tick-named field in the repository has been reviewed:
+
+| Current target reference | Observed use | Migration disposition |
+|---|---|---|
+| `src/organism/cognition/generative/resident.py::ResidentGenerativeCognition.last_symbiont_tick` and checkpoint key `last_symbiont_tick` | Stores the maximum caller-supplied `tick`; used as the recency basis for generative consolidation. Restore currently accepts an absent key as `0`. | `REWRITE` against an explicit TARGET progression/time input when the owner composition exists; do not map mechanically to World tick. Remove the absent-to-zero fallback as part of the TARGET checkpoint contract; this field is not itself `organism_step`. |
+| `src/organism/cognition/generative/episode.py::new_episode(symbiont_tick=...)`, `src/organism/cognition/generative/types.py::GenerativeEpisode.started_symbiont_tick`, and the corresponding workspace/persistence encoding | Persists the caller-supplied value as episode-start metadata. Current callers pass a parameter named `tick`; no evidence establishes a canonical whole-Organism progression mapping. | `REWRITE` to explicitly named TARGET domain time/correlation if required by the generative episode contract; otherwise `DROP`. Do not preserve the historical name or assume it equals World tick or `organism_step`. |
+| `ResidentGenerativeCognition.step`, `materialize_replay` and `materialize_recombination` `tick` inputs | Drive episode identifiers, episode metadata, recency tracking and/or use records. | Reassess at the new owner transition boundary; callers must provide explicit domain meaning. No implicit source-tick compatibility mapping. |
+
+No additional `symbiont_tick` symbols are assigned dispositions by this entry. The exact-field scan does not authorize copying historical semantics or adding a legacy import/fallback path. See issue [#22](https://github.com/biopeia/organism/issues/22) for the bounded implementation-boundary record.
