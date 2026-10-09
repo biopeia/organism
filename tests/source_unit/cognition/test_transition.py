@@ -13,6 +13,7 @@ from organism.cognition.transition import (
     advance_cognition,
 )
 from organism.cognition.types import EdgeKind, NodeKind
+from organism.checkpoint import OrganismCheckpoint
 from organism.identity import OrganismIdentity
 
 
@@ -56,6 +57,34 @@ def test_transition_uses_explicit_tick_and_prior_activation() -> None:
     assert second.activations["memory"] == pytest.approx(math.tanh(first.activations["sense"]))
     assert initial.last_causal_tick is None
     assert initial.previous_activations == ()
+
+
+def test_transition_component_checkpoint_round_trips_identity_tick_and_recurrent_state() -> None:
+    state, _ = advance_cognition(_state(), _graph(), {"sense": 0.8}, causal_tick=4)
+
+    restored = CognitiveTransitionState.from_checkpoint_bytes(state.checkpoint_bytes())
+
+    assert restored == state
+    assert restored.activation_mapping() == state.activation_mapping()
+
+    owner_checkpoint = OrganismCheckpoint(state.identity, state.checkpoint_bytes())
+    restored_owner_state = CognitiveTransitionState.from_checkpoint_bytes(
+        OrganismCheckpoint.from_bytes(owner_checkpoint.to_bytes()).private_state
+    )
+    assert restored_owner_state == state
+
+
+def test_transition_component_checkpoint_rejects_unknown_fields_and_invalid_values() -> None:
+    state, _ = advance_cognition(_state(), _graph(), {"sense": 0.8}, causal_tick=4)
+    payload = state.checkpoint_payload()
+    payload["unexpected"] = "not part of schema"
+    with pytest.raises(CognitiveTransitionError, match="shape"):
+        CognitiveTransitionState.from_checkpoint_payload(payload)
+
+    payload = state.checkpoint_payload()
+    payload["previous_activations"] = [["sense", float("nan")]]
+    with pytest.raises(CognitiveTransitionError, match="finite"):
+        CognitiveTransitionState.from_checkpoint_payload(payload)
 
 
 @pytest.mark.parametrize("bad_tick", [-1, True, 1.5])

@@ -8,9 +8,10 @@ portable checkpoint or a complete Organism continuation.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Any, Mapping
 
 from .graph import CognitiveGraph, GraphFrame, TickContext
 from .types import NodeKind
@@ -26,7 +27,8 @@ class CognitiveTransitionState:
     """Organism-private recurrent activation state for the graph kernel.
 
     Values are represented as a sorted tuple so callers cannot mutate the
-    previous frame through an alias. This is not a serialized checkpoint.
+    previous frame through an alias. Its component checkpoint is deliberately
+    narrower than a complete Organism cognition checkpoint.
     """
 
     identity: OrganismIdentity
@@ -68,6 +70,63 @@ class CognitiveTransitionState:
         """Return a fresh mapping for the graph kernel; no mutable alias escapes."""
 
         return dict(self.previous_activations)
+
+    def checkpoint_payload(self) -> dict[str, Any]:
+        """Export this recurrent transition state as owner-private data.
+
+        This is one cognition component only; it does not include graph
+        structure/weights, learned models, or other Organism-owned state.
+        """
+        return {
+            "schema": "biopeia.organism.cognitive-transition",
+            "schema_version": 1,
+            "identity": str(self.identity),
+            "last_causal_tick": self.last_causal_tick,
+            "previous_activations": [list(item) for item in self.previous_activations],
+        }
+
+    @classmethod
+    def from_checkpoint_payload(cls, payload: object) -> CognitiveTransitionState:
+        """Restore transition state from a strictly shaped owner payload."""
+        if not isinstance(payload, dict) or set(payload) != {
+            "schema", "schema_version", "identity", "last_causal_tick", "previous_activations"
+        }:
+            raise CognitiveTransitionError("invalid cognitive transition checkpoint shape")
+        if payload["schema"] != "biopeia.organism.cognitive-transition" or payload[
+            "schema_version"
+        ] != 1:
+            raise CognitiveTransitionError("unsupported cognitive transition checkpoint")
+        raw_activations = payload["previous_activations"]
+        if not isinstance(raw_activations, list):
+            raise CognitiveTransitionError("previous_activations must be a list")
+        try:
+            identity = OrganismIdentity.parse(payload["identity"])
+            activations = tuple(
+                (item[0], item[1])
+                for item in raw_activations
+                if isinstance(item, list) and len(item) == 2
+            )
+            if len(activations) != len(raw_activations):
+                raise CognitiveTransitionError("invalid activation checkpoint entry")
+            return cls(identity, payload["last_causal_tick"], activations)
+        except CognitiveTransitionError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise CognitiveTransitionError("invalid cognitive transition checkpoint") from exc
+
+    def checkpoint_bytes(self) -> bytes:
+        """Encode this cognition component deterministically for an envelope."""
+        return json.dumps(
+            self.checkpoint_payload(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+
+    @classmethod
+    def from_checkpoint_bytes(cls, payload: bytes) -> CognitiveTransitionState:
+        try:
+            decoded = json.loads(payload)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise CognitiveTransitionError("invalid cognitive transition checkpoint JSON") from exc
+        return cls.from_checkpoint_payload(decoded)
 
 
 def advance_cognition(
