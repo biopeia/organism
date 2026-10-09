@@ -21,8 +21,10 @@ This repository is an incremental extraction from the historical
   scientific efficacy;
 - the envelope does not assemble the full runtime state and does not select a
   World recovery protocol or cross-authority persistence format.
-- the cognition component checkpoint is not a complete cognition or Organism
-  checkpoint; graph/learned-model and other owner state remain to be composed.
+- `CognitiveRuntimeCheckpoint` composes graph structure/quantized learned
+  weights with recurrent activations inside the generic Organism envelope.
+  It excludes labile eligibility, private model artifacts and other cognition
+  components; it is not a complete Organism checkpoint.
 
 ## Development
 
