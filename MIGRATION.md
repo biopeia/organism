@@ -162,3 +162,14 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Rewrite: only package placement and documentation clarify the target owner/boundary; value validation, integer behavior, repr and primitive JSON representation remain source-equivalent.
 - Tests: target checks cover accepted integer/subclass values, negative and cross-scale/type rejection, alias identity, and native integer JSON encoding.
 - Limitation: this extracts the shared type only. `PairwisePredictiveEvidence`, its estimator equations/checkpoint, sensor state and evidence custody remain outside this slice.
+
+## Incremental slice: bounded attention allocation
+
+- Source repository: `https://github.com/alessbarb/symbiont-lab`
+- Source SHA: `80d372a186513035f85a769db886e505cabba52d`
+- Original path: `symbiont/src/symbiont/core/cognition/attention.py` (blob `fc1602bfb1105f0afbf7b4bb42b399f48d0b6dad`; last path change `13720935595fedabec2c376dc933629b0deae5aa`).
+- Target path: `src/organism/cognition/attention.py`
+- Disposition: `SPLIT` — extracted only the candidate/allocation value types and generic `AttentionBudget` selector. The Organism-owned cognition slice accepts caller-provided candidate names, uncertainty, costs, and observation counts; it does not observe or interpret external signals.
+- Behavior: preserves the source greedy uncertainty-per-ranking-cost heuristic, diminishing-return factor, name tie-break, and hard cost budget. It is explicitly not an exact knapsack solver, threat classifier, scientific result, or execution path.
+- Tests: `tests/source_unit/cognition/test_attention.py` covers validation, deterministic ranking, diminishing returns, rank-only bias, budget bounds, and unknown uncertainty.
+- Deferred: source's `uncertainty_from_baseline`, `bounded_uncertainty_from_baseline`, and `attend_to_host` are excluded because they depend on Host acclimation state. The source test's host-specific cases are likewise not copied. This slice does not claim that any particular caller supplies valid uncertainty/costs or that allocation is effective.
