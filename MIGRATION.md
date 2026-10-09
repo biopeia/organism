@@ -150,3 +150,15 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Contract: caller supplies command ID and causal tick; no host clock is read. The binding does not mutate commitment/controller state, validate or execute against a body surface, or claim that a command was accepted. Existing Embodiment remains responsible for body execution. It does not bind Modality, whose extracted v1 API is sensory transduction only, and does not claim a World-integrated causal action path.
 - Tests: `tests/source_unit/actuation/test_command_binding.py` checks provenance propagation, exact explicit tick, inactive/foreign commitment and mismatched controller/competence rejection, and that the operation creates a command without executing a body action.
 - Scope limitation: this is an Organism-local value binding, not a complete action lifecycle or proof that World committed the command. The source repository and scientific assets remain unchanged.
+
+## Incremental slice: Organism experiential evidence-count primitive
+
+- Source repository: `https://github.com/alessbarb/symbiont-lab`
+- Source SHA: `80d372a186513035f85a769db886e505cabba52d`
+- Original path: `symbiont/src/symbiont/sensory/evidence.py`
+- Source blob: `d2bc5c9dee18e113ffbd5a1540dc200c5882f3a3`; last source-path change `0c87bb9012342a59564c97654f34eea17157ecee` rejects cross-scale coercion.
+- Target path: `src/organism/foundation/evidence.py`; exported through `organism.foundation`.
+- Disposition: `SPLIT` — move only `EvidenceCount` and its `SampleCount` alias. The value represents local Organism perceptual/cognitive estimator evidence arrivals ($T_e$); it is not Modality capability, scheduler cycles ($T_s$), physical time ($T_p$), evidence content, or factual authority. No predictive-credit state or sensory lifecycle was copied.
+- Rewrite: only package placement and documentation clarify the target owner/boundary; value validation, integer behavior, repr and primitive JSON representation remain source-equivalent.
+- Tests: target checks cover accepted integer/subclass values, negative and cross-scale/type rejection, alias identity, and native integer JSON encoding.
+- Limitation: this extracts the shared type only. `PairwisePredictiveEvidence`, its estimator equations/checkpoint, sensor state and evidence custody remain outside this slice.
