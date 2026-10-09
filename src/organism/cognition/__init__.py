@@ -6,6 +6,10 @@ independent of the evaluation apparatus that will eventually score it
 """
 
 from .learning import ShadowPrediction
+from .portable_checkpoint import (
+    CognitiveRuntimeCheckpoint,
+    CognitiveRuntimeCheckpointError,
+)
 from .transition import (
     CognitiveTransitionError,
     CognitiveTransitionState,
@@ -15,6 +19,8 @@ from .transition import (
 __all__ = [
     "CognitiveTransitionError",
     "CognitiveTransitionState",
+    "CognitiveRuntimeCheckpoint",
+    "CognitiveRuntimeCheckpointError",
     "ShadowPrediction",
     "advance_cognition",
 ]
