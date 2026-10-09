@@ -79,3 +79,12 @@ def test_portable_envelope_rejects_unknown_version_and_extra_fields() -> None:
     document["unreviewed"] = True
     with pytest.raises(InvalidOrganismCheckpoint, match="invalid shape"):
         OrganismCheckpoint.from_bytes(json.dumps(document).encode())
+
+
+def test_portable_envelope_rejects_boolean_schema_version() -> None:
+    saved, _ = checkpoint()
+    document = json.loads(saved.to_bytes())
+    document["schema_version"] = True
+
+    with pytest.raises(InvalidOrganismCheckpoint, match="unsupported"):
+        OrganismCheckpoint.from_bytes(json.dumps(document).encode())
