@@ -99,4 +99,3 @@ class ExperienceLedger:
                 raise ValueError("experience ledger record must be an object")
             ledger.append(ExperienceRecord.restore(raw))
         return ledger
-

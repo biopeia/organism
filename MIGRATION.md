@@ -136,3 +136,17 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Disposition: `SPLIT` — extracted the bounded append-only recent episode ledger as Organism-owned private longitudinal memory. It preserves per-record Organism identity, stable record IDs, chronological capacity eviction, explicit checkpoint/restore, and the source schema version. Tests cover round-trip, identity isolation, duplicate rejection, oldest-record eviction, and malformed/overflow restore cases.
 - Deferred: `HistoricalExperienceArchive` remains in the source file and is not copied. Its stable all-time reservoir and evidence custody semantics require separate review; this slice makes no archive, retention-completeness, scientific custody, or sampling claims.
 - Scope limitation: this value is not wired into the top-level Organism runtime or a complete checkpoint. It preserves only records explicitly supplied to the ledger and does not claim complete longitudinal continuity, complete private-model artifacts, or scientific validity. The source repository remains unchanged.
+
+## Incremental slice: bind an Organism controller frame to its action commitment
+
+- Source repository: `https://github.com/alessbarb/symbiont-lab`
+- Source SHA: `80d372a186513035f85a769db886e505cabba52d`
+- Source symbols / original paths:
+  - `ActionCommitment` — `symbiont/src/symbiont/actuation/commitment.py`, blob `730a7b08f7aa8bf1dade4fbf311864b97accc7e6`
+  - `ControllerFrame` and `SequenceController` — `symbiont/src/symbiont/actuation/controller.py`, blob `81a9cd4ac6a7bc987cca765a40f24a45737ab8bf`
+  - `MotorCommand` — `symbiont/src/symbiont/actuation/action.py`, blob `e2ebd9f5d62643e2c5922be9f7decd4c7fb72420`
+- Target paths: `src/organism/actuation/command.py`, public exports in `src/organism/actuation/__init__.py`
+- Disposition: `REWRITE` — the source already defines owner-owned action commitments, controller frames and provenance-bearing motor commands, but does not provide a binding operation between the frame and an active commitment. The target frame records the exact commitment ID and generation tick; binding checks active status, controller/commitment/competence identity, and exact tick equality before carrying commitment provenance into a `MotorCommand`.
+- Contract: caller supplies command ID and causal tick; no host clock is read. The binding does not mutate commitment/controller state, validate or execute against a body surface, or claim that a command was accepted. Existing Embodiment remains responsible for body execution. It does not bind Modality, whose extracted v1 API is sensory transduction only, and does not claim a World-integrated causal action path.
+- Tests: `tests/source_unit/actuation/test_command_binding.py` checks provenance propagation, exact explicit tick, inactive/foreign commitment and mismatched controller/competence rejection, and that the operation creates a command without executing a body action.
+- Scope limitation: this is an Organism-local value binding, not a complete action lifecycle or proof that World committed the command. The source repository and scientific assets remain unchanged.
