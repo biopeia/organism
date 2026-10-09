@@ -125,3 +125,14 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Restore behavior: the codec validates the complete payload before returning a ledger. A malformed entry or capacity overflow raises `ValueError`; a caller cannot receive a partial ledger as a successful restore. Existing bounded eviction during normal `observe()` operation is unchanged.
 - Validation: focused agency tests — 37 passed; full Organism source suite — 576 passed; `uv build` produced wheel and sdist; installed wheel into an isolated target directory, imported the installed module, and ran the copied ledger test module against the installed package — 24 passed; `git diff --check` passed. CI is pending PR publication.
 - Scope limitation: this hardens one explicitly checkpointable Organism agency state family. It does not create a top-level Organism checkpoint, prove all callers include the ledger, establish model-registry/weight artifact closure, or claim complete longitudinal continuity. The source monorepo is unchanged.
+
+## Incremental slice: bounded private experience ledger
+
+- Source repository: `https://github.com/alessbarb/symbiont-lab`
+- Source SHA: `80d372a186513035f85a769db886e505cabba52d`
+- Original source path: `symbiont/src/symbiont/modeling/ledger.py` (blob `02b925fccbdf3c26556bfd48101c3c50eab8494e`)
+- Source symbol: `ExperienceLedger` (the first class in the source file; the following `HistoricalExperienceArchive` is excluded).
+- Target path: `src/organism/memory/ledger.py`, exported as `organism.memory.ExperienceLedger`.
+- Disposition: `SPLIT` — extracted the bounded append-only recent episode ledger as Organism-owned private longitudinal memory. It preserves per-record Organism identity, stable record IDs, chronological capacity eviction, explicit checkpoint/restore, and the source schema version. Tests cover round-trip, identity isolation, duplicate rejection, oldest-record eviction, and malformed/overflow restore cases.
+- Deferred: `HistoricalExperienceArchive` remains in the source file and is not copied. Its stable all-time reservoir and evidence custody semantics require separate review; this slice makes no archive, retention-completeness, scientific custody, or sampling claims.
+- Scope limitation: this value is not wired into the top-level Organism runtime or a complete checkpoint. It preserves only records explicitly supplied to the ledger and does not claim complete longitudinal continuity, complete private-model artifacts, or scientific validity. The source repository remains unchanged.
