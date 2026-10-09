@@ -3,6 +3,7 @@
 from .checkpoint import (
     CheckpointDependency,
     CheckpointDependencyMismatch,
+    InvalidOrganismCheckpoint,
     MissingCheckpointDependency,
     OrganismCheckpoint,
 )
@@ -11,6 +12,7 @@ from .identity import OrganismIdentity
 __all__ = [
     "CheckpointDependency",
     "CheckpointDependencyMismatch",
+    "InvalidOrganismCheckpoint",
     "MissingCheckpointDependency",
     "OrganismCheckpoint",
     "OrganismIdentity",

@@ -12,12 +12,13 @@ This repository is an incremental extraction from the historical
 
 - immutable Organism identity values, including explicit fresh identities for
   branches;
-- an opaque, in-memory checkpoint boundary with verified external dependency
-  references;
+- an owner-opaque, schema-versioned checkpoint byte envelope with integrity
+  checks and verified external dependency references;
 - copied cognition, learning, agency, genetics and actuation capabilities are
   still subject to migration review; their presence does not validate their
   scientific efficacy;
-- no World recovery protocol or cross-authority persistence format is selected.
+- the envelope does not assemble the full runtime state and does not select a
+  World recovery protocol or cross-authority persistence format.
 
 ## Development
 

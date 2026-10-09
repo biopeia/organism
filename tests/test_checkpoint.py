@@ -1,3 +1,5 @@
+import base64
+import json
 from hashlib import sha256
 from uuid import UUID
 
@@ -6,6 +8,7 @@ import pytest
 from organism import (
     CheckpointDependency,
     CheckpointDependencyMismatch,
+    InvalidOrganismCheckpoint,
     MissingCheckpointDependency,
     OrganismCheckpoint,
     OrganismIdentity,
@@ -44,3 +47,35 @@ def test_changed_dependency_is_rejected() -> None:
 def test_dependency_requires_valid_digest() -> None:
     with pytest.raises(ValueError, match="SHA-256"):
         CheckpointDependency("artifact", "not-a-digest")
+
+
+def test_portable_envelope_round_trips_opaque_longitudinal_state() -> None:
+    saved, payload = checkpoint()
+
+    restored = OrganismCheckpoint.from_bytes(saved.to_bytes())
+
+    assert restored == saved
+    restored.verify_dependency_closure(lambda locator: payload)
+
+
+def test_portable_envelope_rejects_private_state_corruption() -> None:
+    saved, _ = checkpoint()
+    document = json.loads(saved.to_bytes())
+    document["private_state_base64"] = base64.b64encode(b"changed-organism-state").decode()
+    envelope = json.dumps(document).encode()
+
+    with pytest.raises(InvalidOrganismCheckpoint, match="digest mismatch"):
+        OrganismCheckpoint.from_bytes(envelope)
+
+
+def test_portable_envelope_rejects_unknown_version_and_extra_fields() -> None:
+    saved, _ = checkpoint()
+    document = json.loads(saved.to_bytes())
+    document["schema_version"] = 2
+    with pytest.raises(InvalidOrganismCheckpoint, match="unsupported"):
+        OrganismCheckpoint.from_bytes(json.dumps(document).encode())
+
+    document["schema_version"] = 1
+    document["unreviewed"] = True
+    with pytest.raises(InvalidOrganismCheckpoint, match="invalid shape"):
+        OrganismCheckpoint.from_bytes(json.dumps(document).encode())
