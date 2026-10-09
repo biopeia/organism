@@ -23,6 +23,7 @@
 | `symbiont/src/symbiont/core/orchestration/runtime.py` identity handling | `REWRITE` | `src/organism/identity.py` | Requires an explicit identity value rather than implicit runtime identity generation. |
 | `symbiont/src/symbiont/host/checkpoint.py` and mixed runtime checkpoint composition | `REWRITE` | `src/organism/checkpoint.py` | Opaque private-state boundary and verified content-reference closure only; no runtime persistence format is selected. |
 | `symbiont/src/symbiont/core/cognition/bridge.py::CognitiveBridge` and `symbiont/src/symbiont/cognition/graph.py` | `REWRITE` | `src/organism/cognition/transition.py` | Adds an explicit causal-tick state transition around graph activation. The in-memory recurrent activation state is Organism-owned; it is not yet encoded in the portable checkpoint. Readouts remain consultative and do not produce actions. |
+| `src/organism/checkpoint.py::OrganismCheckpoint` | `REWRITE` | `src/organism/checkpoint.py` | Adds a deterministic schema-versioned byte envelope, owner-opaque payload digest validation and verified dependency references. It does not yet prove that every runtime component is assembled into the payload. |
 
 ## Tests copied
 
@@ -50,6 +51,7 @@ These remain available in the source repository and are not considered deleted o
 - `actuation/acquisition.py` remains deferred; it couples Organism acquisition evidence to Embodiment `BodySchemaEngine` writes.
 - `core/orchestration/`, `core/embodiment/`, `host/`, sensory/environment logic, World, Lab and scientific assets were not copied wholesale.
 - No backward-compatibility shim for the historical import path is included.
+- The checkpoint envelope is an initial serialization contract only. It does not choose durable storage/publication, coordinate World causal cuts, define rollback/recovery, or automatically gather cognition/runtime state. Those remain separate integration work.
 - The initial identity/checkpoint boundary and copied current modules are a migration candidate, not a claim of TARGET conformance or scientific validity.
 
 ## Validation
