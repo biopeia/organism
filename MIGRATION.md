@@ -80,3 +80,16 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Contract: each record must identify the same Organism as the transition state; duplicate record identities and foreign-Organism records are rejected. Schema version 2 explicitly contains the record list; version 1 is not accepted by this target reader. No backward-compatibility obligation is implied.
 - Validation: focused portable-checkpoint tests and the complete Organism repository test suite pass (7 and 566 tests respectively); isolated wheel build/install remains to be recorded separately.
 - Scope limitation: the composition includes only records passed to it. It does not discover or guarantee completeness of an experience ledger, private-model weights, training work, or all Organism longitudinal state. It is not a complete portable Organism continuation.
+
+## Incremental slice: cognitive safety and established sensory normalization state
+
+- Source repository: `https://github.com/alessbarb/symbiont-lab`
+- Source SHA: `80d372a186513035f85a769db886e505cabba52d`
+- Source evidence:
+  - `symbiont/src/symbiont/core/cognition/bridge_checkpoint.py` (blob `31aa419a94f90661a286ddb085ad512899dd2b86`) composes `safety_state` and `sensory_normalizers` into the historical cognitive bridge checkpoint and restores them.
+  - `symbiont/src/symbiont/cognition/checkpoint.py` (blob `528c8de2eb080dcb170bb5e9c7b4e4a10bd6c61b`) defines the bounded safety-state and established-normalizer codecs.
+  - Supporting target files `activation.py` and `metaplasticity.py` are unchanged source copies (source blob IDs `33e7ce9f9b44dfd8b5aa03db1a85e923de7d3143` and `60cd19f498f7f50783bf924ac79c1709e4a50574`, respectively).
+- Target path: `src/organism/cognition/portable_checkpoint.py`
+- Disposition: `SPLIT` — compose two already extracted Organism cognitive-state values in the bounded portable cognitive payload. No mixed bridge runtime, Lab adapter, Embodiment/body state, or World persistence coordinator is copied.
+- Contract: schema version 3 records optional `SafetyState` and only established `SensoryNormalizer` values using the existing codecs. Unestablished normalizers remain omitted under the source codec's existing rule. The prior schema is not accepted by the current reader; no backward-compatibility obligation is implied.
+- Validation: the focused portable and graph checkpoint tests cover round-trip and malformed-state rejection. This composes only explicitly supplied values and does not prove a complete cognitive or Organism continuation, actual caller completeness, model artifact closure, or runtime continuity.

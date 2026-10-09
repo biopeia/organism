@@ -13,6 +13,8 @@ from organism.cognition.portable_checkpoint import (
     CognitiveRuntimeCheckpoint,
     CognitiveRuntimeCheckpointError,
 )
+from organism.cognition.activation import SensoryNormalizer
+from organism.cognition.metaplasticity import SafetyState
 from organism.cognition.transition import CognitiveTransitionState, advance_cognition
 from organism.cognition.types import EdgeKind, NodeKind
 from organism.identity import OrganismIdentity
@@ -86,6 +88,62 @@ def test_cognitive_graph_and_recurrent_state_round_trip_through_organism_envelop
     assert restored_edge.age_ticks == original_edge.age_ticks
     # Eligibility is deliberately labile and excluded by the existing graph codec.
     assert restored_edge.eligibility == 0.0
+
+
+def test_portable_checkpoint_composes_safety_and_established_normalizer_state() -> None:
+    safety = SafetyState()
+    for _ in range(3):
+        safety.record_failure()
+    normalizer = SensoryNormalizer()
+    for value in (1.0, 2.0, 3.0, 4.0, 5.0):
+        normalizer.normalize(value)
+    tentative = SensoryNormalizer()
+    tentative.normalize(9.0)
+
+    original = CognitiveRuntimeCheckpoint(
+        state=_state(),
+        graph=_graph(),
+        safety_state=safety,
+        sensory_normalizers={"established": normalizer, "tentative": tentative},
+    )
+    restored = CognitiveRuntimeCheckpoint.from_bytes(
+        original.to_bytes(), kernel_limits=KernelLimits()
+    )
+
+    assert restored.safety_state == safety
+    assert set(restored.sensory_normalizers) == {"established"}
+    assert restored.sensory_normalizers["established"].mean == pytest.approx(normalizer.mean)
+    assert restored.sensory_normalizers["established"].variance == pytest.approx(
+        normalizer.variance
+    )
+    assert restored.sensory_normalizers["established"].count == normalizer.count
+
+
+def test_portable_checkpoint_rejects_malformed_safety_and_normalizer_payloads() -> None:
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    document["safety_state"] = {"consecutive_failures": -1, "frozen": True}
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="malformed cognitive runtime"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    document["sensory_normalizers"] = {
+        "bad": {"mean": 1.0, "variance": 1.0, "count": 1}
+    }
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="malformed cognitive runtime"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
+
+def test_portable_checkpoint_schema_v2_is_not_accepted_as_a_current_payload() -> None:
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    document["schema_version"] = 2
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
 
 
 def test_cognitive_checkpoint_rejects_identity_mismatch() -> None:
