@@ -8,7 +8,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from organism.checkpoint import CheckpointDependency, OrganismCheckpoint
+from typing import Callable
+
+from organism.checkpoint import (
+    CheckpointDependency,
+    CheckpointDependencyMismatch,
+    MissingCheckpointDependency,
+    OrganismCheckpoint,
+)
 from organism.identity import OrganismIdentity
 
 from .checkpoint import export_graph_checkpoint, restore_graph_checkpoint
@@ -80,8 +87,30 @@ class CognitiveRuntimeCheckpoint:
 
     @classmethod
     def from_organism_checkpoint(
-        cls, checkpoint: OrganismCheckpoint, *, kernel_limits: KernelLimits
+        cls,
+        checkpoint: OrganismCheckpoint,
+        *,
+        kernel_limits: KernelLimits,
+        read_dependency: Callable[[str], bytes] | None = None,
     ) -> CognitiveRuntimeCheckpoint:
+        """Restore the composed payload after validating declared dependencies.
+
+        Dependency references are part of the checkpoint's portability closure.
+        A caller restoring an envelope with references must provide a resolver;
+        silently ignoring those references could accept an incomplete
+        continuation.
+        """
+        if checkpoint.dependencies:
+            if read_dependency is None:
+                raise CognitiveRuntimeCheckpointError(
+                    "dependency resolver is required for referenced Organism state"
+                )
+            try:
+                checkpoint.verify_dependency_closure(read_dependency)
+            except (MissingCheckpointDependency, CheckpointDependencyMismatch) as exc:
+                raise CognitiveRuntimeCheckpointError(
+                    "Organism checkpoint dependency closure is invalid"
+                ) from exc
         restored = cls.from_bytes(checkpoint.private_state, kernel_limits=kernel_limits)
         if restored.state.identity != checkpoint.identity:
             raise CognitiveRuntimeCheckpointError("envelope and private-state identities differ")

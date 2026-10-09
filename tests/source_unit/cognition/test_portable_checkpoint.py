@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import json
 from uuid import UUID
 
 import pytest
 
 from organism.cognition.graph import CognitiveGraph, PlasticEdge, PlasticNode
+from organism.checkpoint import CheckpointDependency
 from organism.cognition.limits import KernelLimits
 from organism.cognition.portable_checkpoint import (
     CognitiveRuntimeCheckpoint,
@@ -87,3 +89,42 @@ def test_cognitive_checkpoint_rejects_unknown_fields() -> None:
         CognitiveRuntimeCheckpoint.from_bytes(
             json.dumps(document).encode(), kernel_limits=KernelLimits()
         )
+
+
+def test_organism_checkpoint_restore_requires_and_verifies_dependency_closure() -> None:
+    artifact = b"private learned model fixture"
+    checkpoint = CognitiveRuntimeCheckpoint(_state(), _graph()).to_organism_checkpoint(
+        dependencies=(
+            CheckpointDependency("models/model-1", sha256(artifact).hexdigest()),
+        )
+    )
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="resolver is required"):
+        CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+            checkpoint, kernel_limits=KernelLimits()
+        )
+
+    def missing_dependency(_locator: str) -> bytes:
+        raise FileNotFoundError("not present")
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="closure is invalid"):
+        CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+            checkpoint,
+            kernel_limits=KernelLimits(),
+            read_dependency=missing_dependency,
+        )
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="closure is invalid"):
+        CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+            checkpoint,
+            kernel_limits=KernelLimits(),
+            read_dependency=lambda _locator: b"wrong content",
+        )
+
+    restored = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+        checkpoint,
+        kernel_limits=KernelLimits(),
+        read_dependency=lambda locator: artifact if locator == "models/model-1" else b"",
+    )
+    assert restored.state.identity == checkpoint.identity
+    assert restored.graph is not None
