@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from biopeia_organism import OrganismIdentity
+from organism import OrganismIdentity
 
 
 def test_identity_wraps_explicit_value_without_generating_host_entropy() -> None:

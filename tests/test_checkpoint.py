@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 
-from biopeia_organism import (
+from organism import (
     CheckpointDependency,
     CheckpointDependencyMismatch,
     MissingCheckpointDependency,
