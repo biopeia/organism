@@ -68,3 +68,15 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Tests: focused target tests cover canonical restore/hash behavior and reject model-generated records marked as direct observations. The source's private-experience pipeline test is not copied because it exercises runtime composition, actuation, and private-model training beyond this slice.
 - Deferred: `modeling/ledger.py` is not included because it combines the Organism experience ledger with a historical archive/sampling class whose scientific-evidence custody boundary needs separate extraction review.
 - Scope limitation: this slice does not establish scientific validity, model-training efficacy, or a complete portable Organism checkpoint.
+
+## Incremental slice: experience records in cognitive continuation payload
+
+- Source repository: `https://github.com/alessbarb/symbiont-lab`
+- Source SHA: `80d372a186513035f85a769db886e505cabba52d`
+- Original path: `symbiont/src/symbiont/modeling/experience.py`
+- Source blob SHA-256: `c58c07f2875df887af370728408b782906beb37ef0a4d0c18631969452f54475`
+- Target path: `src/organism/cognition/portable_checkpoint.py`
+- Disposition: `SPLIT` — the existing `ExperienceRecord` values can be composed with the cognitive graph and recurrent state when explicitly supplied by the owner-side caller.
+- Contract: each record must identify the same Organism as the transition state; duplicate record identities and foreign-Organism records are rejected. Schema version 2 explicitly contains the record list; version 1 is not accepted by this target reader. No backward-compatibility obligation is implied.
+- Validation: focused portable-checkpoint tests and the complete Organism repository test suite pass (7 and 566 tests respectively); isolated wheel build/install remains to be recorded separately.
+- Scope limitation: the composition includes only records passed to it. It does not discover or guarantee completeness of an experience ledger, private-model weights, training work, or all Organism longitudinal state. It is not a complete portable Organism continuation.

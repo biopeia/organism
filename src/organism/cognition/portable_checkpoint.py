@@ -17,6 +17,7 @@ from organism.checkpoint import (
     OrganismCheckpoint,
 )
 from organism.identity import OrganismIdentity
+from organism.memory import ExperienceRecord
 
 from .checkpoint import export_graph_checkpoint, restore_graph_checkpoint
 from .graph import CognitiveGraph, GraphError
@@ -30,24 +31,48 @@ class CognitiveRuntimeCheckpointError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class CognitiveRuntimeCheckpoint:
-    """A graph plus its recurrent Organism-owned transition state."""
+    """A bounded composition of Organism-owned cognitive and memory state.
+
+    This payload includes only the graph, recurrent state, and explicitly
+    supplied experience records. It is not a complete Organism checkpoint.
+    """
 
     state: CognitiveTransitionState
     graph: CognitiveGraph
+    experience_records: tuple[ExperienceRecord, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, CognitiveTransitionState):
             raise CognitiveRuntimeCheckpointError("state must be CognitiveTransitionState")
         if not isinstance(self.graph, CognitiveGraph):
             raise CognitiveRuntimeCheckpointError("graph must be CognitiveGraph")
+        if not isinstance(self.experience_records, tuple) or any(
+            not isinstance(record, ExperienceRecord) for record in self.experience_records
+        ):
+            raise CognitiveRuntimeCheckpointError(
+                "experience_records must be a tuple of ExperienceRecord values"
+            )
+        record_ids: set[str] = set()
+        expected_identity = str(self.state.identity)
+        for record in self.experience_records:
+            if record.organism_id != expected_identity:
+                raise CognitiveRuntimeCheckpointError(
+                    "experience record belongs to a different Organism identity"
+                )
+            if record.record_id in record_ids:
+                raise CognitiveRuntimeCheckpointError("duplicate experience record identity")
+            record_ids.add(record.record_id)
 
     def to_bytes(self) -> bytes:
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
-            "schema_version": 1,
+            "schema_version": 2,
             "identity": str(self.state.identity),
             "transition": self.state.checkpoint_payload(),
             "graph": export_graph_checkpoint(self.graph),
+            "experience_records": [
+                record.canonical_payload() for record in self.experience_records
+            ],
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -58,12 +83,17 @@ class CognitiveRuntimeCheckpoint:
         try:
             document = json.loads(payload)
             if not isinstance(document, dict) or set(document) != {
-                "schema", "schema_version", "identity", "transition", "graph"
+                "schema",
+                "schema_version",
+                "identity",
+                "transition",
+                "graph",
+                "experience_records",
             }:
                 raise CognitiveRuntimeCheckpointError("invalid cognitive runtime checkpoint shape")
             if document["schema"] != "biopeia.organism.cognitive-runtime" or document[
                 "schema_version"
-            ] != 1:
+            ] != 2:
                 raise CognitiveRuntimeCheckpointError("unsupported cognitive runtime checkpoint")
             identity = OrganismIdentity.parse(document["identity"])
             state = CognitiveTransitionState.from_checkpoint_payload(document["transition"])
@@ -72,7 +102,11 @@ class CognitiveRuntimeCheckpoint:
             graph = restore_graph_checkpoint(document["graph"], kernel_limits=kernel_limits)
             if graph is None:
                 raise CognitiveRuntimeCheckpointError("graph is required")
-            return cls(state=state, graph=graph)
+            raw_records = document["experience_records"]
+            if not isinstance(raw_records, list):
+                raise CognitiveRuntimeCheckpointError("experience_records must be a list")
+            records = tuple(ExperienceRecord.restore(item) for item in raw_records)
+            return cls(state=state, graph=graph, experience_records=records)
         except CognitiveRuntimeCheckpointError:
             raise
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, GraphError,
