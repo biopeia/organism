@@ -832,3 +832,12 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Target paths: `src/organism/actuation/model.py::controllability_confidence`; `tests/source_unit/actuation/test_controllability_model.py`.
 - Validation: focused controllability/footprint tests and full Organism suite are recorded in the associated PR.
 - Scope limitation: this does not ratify or validate the positive-confidence estimator, define an evidence window or priors, separate passive from competing active sources, remove the binding fallback in affordance projection, rename other uses of `controllability`, or close issue #42. No legacy behavior or compatibility path is preserved.
+
+## Incremental correction: exact cognitive graph checkpoint state (issue #45)
+
+- Finding provenance: Biopeia Organism issue [#45](https://github.com/biopeia/organism/issues/45), against implementation base `8bf1eafeb2c05459e4cbaae3a377d2f1c35504c6`; source is an existing TARGET checkpoint defect, not a historical-code extraction.
+- Disposition: `REWRITE` of the graph checkpoint codec. Codec v4 preserves finite edge `weight` and `eligibility` values exactly as binary64 JSON numbers. The outer cognitive runtime checkpoint advances from schema v5 to v6; older versions are rejected, with no compatibility/import path.
+- Strictness: graph, node, and edge payloads reject unknown or missing fields. Restore rejects non-float, boolean, non-finite, out-of-contract weight, and eligibility values outside the learning bound.
+- Target paths: `src/organism/cognition/checkpoint.py`, `src/organism/cognition/portable_checkpoint.py`, and focused cognition checkpoint tests.
+- Validation: exact non-quantized round trips, a multi-step matched learning transition from live/restored graphs, prior codec/schema rejection, malformed-field rejection, full package tests, build, and CI are recorded in the associated PR.
+- Scope limitation: this removes the graph codec's quantization/reset loss only. It does not establish a complete Organism continuation, caller completeness, full dependency closure, or resolve other `#45` omissions such as all structural/plasticity/generative state. It makes no scientific efficacy claim. No `symbiont-lab` file is changed.

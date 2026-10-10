@@ -14,57 +14,9 @@ from .activation import MIN_NORMALIZER_SAMPLES, SensoryNormalizer
 from .graph import CognitiveGraph, GraphError, PlasticEdge, PlasticNode
 from .limits import KernelLimits
 from .metaplasticity import SafetyState
+from .types import WEIGHT_RANGE
 
-WEIGHT_CLASSES = 17
-WEIGHT_CODEC_VERSION = 3
-WEIGHT_DEADBAND = 0.01
-# NOTE: v3 keeps the same 17 classes but allocates substantially more resolution
-# near zero, where tentative and recently learned synapses actually live.
-_WEIGHT_MAGNITUDE_LEVELS = (
-    0.0,
-    0.03125,
-    0.0625,
-    0.125,
-    0.25,
-    0.5,
-    0.75,
-    1.25,
-    2.0,
-)
-def quantize_signed(value: float, bounds: tuple[float, float], num_classes: int) -> int:
-    low, high = bounds
-    clipped = max(low, min(high, value))
-    ratio = (clipped - low) / (high - low)
-    return round(ratio * (num_classes - 1))
-
-
-def quantize_weight(value: float) -> int:
-    """Quantize weight with high resolution near zero (codec v3)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        raise ValueError("weight must be finite")
-    if abs(value) <= WEIGHT_DEADBAND:
-        return WEIGHT_CLASSES // 2
-    magnitude = min(max(abs(float(value)), 0.0), _WEIGHT_MAGNITUDE_LEVELS[-1])
-    side = min(
-        range(1, len(_WEIGHT_MAGNITUDE_LEVELS)),
-        key=lambda index: abs(_WEIGHT_MAGNITUDE_LEVELS[index] - magnitude),
-    )
-    return (WEIGHT_CLASSES // 2 + side) if value > 0 else (WEIGHT_CLASSES // 2 - side)
-
-
-def dequantize_weight(class_id: int) -> float:
-    if (
-        isinstance(class_id, bool)
-        or not isinstance(class_id, int)
-        or not 0 <= class_id < WEIGHT_CLASSES
-    ):
-        raise ValueError("invalid weight class")
-    center = WEIGHT_CLASSES // 2
-    if class_id == center:
-        return 0.0
-    side = abs(class_id - center)
-    magnitude = _WEIGHT_MAGNITUDE_LEVELS[side]
-    return magnitude if class_id > center else -magnitude
+WEIGHT_CODEC_VERSION = 4
 
 
 def export_genome_checkpoint(genome: Genome | None) -> dict[str, Any] | None:
@@ -114,11 +66,9 @@ def _require_finite(value: Any, field: str) -> float:
     return number
 
 
-def _require_class_id(value: Any, *, field: str, num_classes: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise GraphError(f"{field} must be an integer class id")
-    if not 0 <= value < num_classes:
-        raise GraphError(f"{field} must be within [0, {num_classes - 1}]")
+def _require_finite_float(value: Any, field: str) -> float:
+    if type(value) is not float or not math.isfinite(value):
+        raise GraphError(f"{field} must be a finite float")
     return value
 
 
@@ -138,19 +88,39 @@ def _require_int(value: Any, field: str) -> int:
 
 def export_graph_checkpoint(
     graph: CognitiveGraph | None,
-    *,
-    weight_class_overrides: dict[tuple[str, str, str], int] | None = None,
 ) -> dict[str, Any] | None:
-    """Serialize graph structure, quantizing continuously learned edge state.
-
-    weight_class_overrides (keyed by (source_id, target_id, kind.value)),
-    when provided, supplies each edge's durable weight class -- e.g. from a
-    WeightStabilityTracker -- instead of quantizing the current live weight
-    directly. CognitiveBridge always passes a complete override map; a
-    caller that doesn't (e.g. a standalone unit test) falls back to live
-    quantization, same as before this parameter existed."""
+    """Serialize the exact graph-owned state needed by this codec."""
     if graph is None:
         return None
+    from .learning import ELIGIBILITY_BOUND
+
+    edges: list[dict[str, Any]] = []
+    for edge in graph.edges:
+        weight = _require_finite(edge.weight, "edge.weight")
+        if not WEIGHT_RANGE[0] <= weight <= WEIGHT_RANGE[1]:
+            raise GraphError(
+                f"edge.weight must be within [{WEIGHT_RANGE[0]}, {WEIGHT_RANGE[1]}]"
+            )
+        eligibility = _require_finite(edge.eligibility, "edge.eligibility")
+        if abs(eligibility) > ELIGIBILITY_BOUND:
+            raise GraphError(
+                f"edge.eligibility must be within [-{ELIGIBILITY_BOUND}, {ELIGIBILITY_BOUND}]"
+            )
+        edges.append(
+            {
+                "source_id": edge.source_id,
+                "target_id": edge.target_id,
+                "kind": edge.kind.value,
+                "weight": weight,
+                "plasticity": edge.plasticity,
+                "delay_ticks": edge.delay_ticks,
+                "eligibility": eligibility,
+                "support": edge.support,
+                "age_ticks": edge.age_ticks,
+                "stable_ticks": edge.stable_ticks,
+                "last_use_tick": edge.last_use_tick,
+            }
+        )
     return {
         "weight_codec_version": WEIGHT_CODEC_VERSION,
         "nodes": [
@@ -163,26 +133,7 @@ def export_graph_checkpoint(
             }
             for node in graph.nodes
         ],
-        "edges": [
-            {
-                "source_id": edge.source_id,
-                "target_id": edge.target_id,
-                "kind": edge.kind.value,
-                "weight_class": (
-                    weight_class_overrides[(edge.source_id, edge.target_id, edge.kind.value)]
-                    if weight_class_overrides is not None
-                    and (edge.source_id, edge.target_id, edge.kind.value) in weight_class_overrides
-                    else quantize_weight(edge.weight)
-                ),
-                "plasticity": edge.plasticity,
-                "delay_ticks": edge.delay_ticks,
-                "support": edge.support,
-                "age_ticks": edge.age_ticks,
-                "stable_ticks": edge.stable_ticks,
-                "last_use_tick": edge.last_use_tick,
-            }
-            for edge in graph.edges
-        ],
+        "edges": edges,
     }
 
 
@@ -209,6 +160,20 @@ def restore_graph_checkpoint(
     if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
         raise GraphError("graph checkpoint payload must have list-shaped 'nodes' and 'edges'")
 
+    if set(payload) != {"weight_codec_version", "nodes", "edges"}:
+        raise GraphError("graph checkpoint payload has unknown or missing fields")
+    node_fields = {"node_id", "kind", "bias", "tau", "predicts_node_id"}
+    edge_fields = {
+        "source_id", "target_id", "kind", "weight", "plasticity", "delay_ticks",
+        "eligibility", "support", "age_ticks", "stable_ticks", "last_use_tick",
+    }
+    if any(not isinstance(entry, dict) or set(entry) != node_fields for entry in raw_nodes):
+        raise GraphError("graph checkpoint nodes have unknown or missing fields")
+    if any(not isinstance(entry, dict) or set(entry) != edge_fields for entry in raw_edges):
+        raise GraphError("graph checkpoint edges have unknown or missing fields")
+
+    from .learning import ELIGIBILITY_BOUND
+
     try:
         nodes = tuple(
             PlasticNode(
@@ -225,16 +190,10 @@ def restore_graph_checkpoint(
                 source_id=str(entry["source_id"]),
                 target_id=str(entry["target_id"]),
                 kind=EdgeKind(entry["kind"]),
-                weight=dequantize_weight(
-                    _require_class_id(
-                        entry["weight_class"],
-                        field="edge.weight_class",
-                        num_classes=WEIGHT_CLASSES,
-                    )
-                ),
+                weight=_require_finite_float(entry["weight"], "edge.weight"),
                 plasticity=_require_finite(entry["plasticity"], "edge.plasticity"),
                 delay_ticks=_require_int(entry["delay_ticks"], "edge.delay_ticks"),
-                eligibility=0.0,  # labile: never restored from a checkpoint (design §10.3, P5)
+                eligibility=_require_finite_float(entry["eligibility"], "edge.eligibility"),
                 support=_require_nonneg_int(entry["support"], "edge.support"),
                 age_ticks=_require_nonneg_int(entry["age_ticks"], "edge.age_ticks"),
                 stable_ticks=_require_nonneg_int(entry["stable_ticks"], "edge.stable_ticks"),
@@ -246,6 +205,8 @@ def restore_graph_checkpoint(
         if isinstance(exc, GraphError):
             raise
         raise GraphError(f"malformed graph checkpoint: {exc}") from exc
+    if any(abs(edge.eligibility) > ELIGIBILITY_BOUND for edge in edges):
+        raise GraphError(f"edge.eligibility must be within [-{ELIGIBILITY_BOUND}, {ELIGIBILITY_BOUND}]")
     return CognitiveGraph(nodes=nodes, edges=edges, kernel_limits=kernel_limits)
 
 
