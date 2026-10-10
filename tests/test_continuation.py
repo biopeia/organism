@@ -17,6 +17,8 @@ from organism import (
     EmbodimentContextRef,
     OrganismTransitionState,
     StaleCanonicalContinuation,
+    OrganismTransitionProposal,
+    accept_organism_transition,
     branch_continuation,
     transition_organism_lifecycle,
 )
@@ -194,6 +196,62 @@ def test_registry_allows_reactivation_to_bind_new_embodiment_context():
     assert active.organism_step == initial.organism_step
     assert active.state.owner_checkpoint == initial.state.owner_checkpoint
     assert active.state.embodiment == new_context
+
+
+def test_reembodiment_context_and_longitudinal_state_survive_continuation_restore():
+    original_context = EmbodimentContextRef("body-a", "episode-a", "morph-1")
+    new_context = EmbodimentContextRef("body-b", "episode-b", "morph-2")
+    checkpoint = OrganismCheckpoint(IDENTITY, b"longitudinal-private-state")
+    initial_state = OrganismTransitionState(
+        checkpoint,
+        organism_step=0,
+        embodiment=original_context,
+        lifecycle=OrganismLifecycle.ACTIVE,
+    )
+    initial = OrganismContinuation(initial_state, CONTINUATION)
+    registry = CanonicalContinuationRegistry()
+    registry.register_genesis(initial)
+
+    with registry.acquire(initial) as lease:
+        progressed_state = accept_organism_transition(
+            lease.current.state,
+            OrganismTransitionProposal(
+                owner_checkpoint=lease.current.state.owner_checkpoint,
+                embodiment=original_context,
+            ),
+        )
+        progressed = OrganismContinuation(progressed_state, CONTINUATION)
+        lease.commit(progressed)
+
+    with registry.acquire(progressed) as lease:
+        dormant_state = transition_organism_lifecycle(
+            lease.current.state,
+            OrganismLifecycle.DORMANT,
+            transition_id="lifecycle-1",
+            request_ref="prior-presence-ended",
+        )
+        dormant = OrganismContinuation(dormant_state, CONTINUATION)
+        lease.commit(dormant)
+
+    restored_registry = CanonicalContinuationRegistry.from_bytes(registry.to_bytes())
+    with restored_registry.acquire(dormant) as lease:
+        active_state = transition_organism_lifecycle(
+            lease.current.state,
+            OrganismLifecycle.ACTIVE,
+            transition_id="lifecycle-2",
+            request_ref="explicit-reembodiment",
+            embodiment=new_context,
+        )
+        active = OrganismContinuation(active_state, CONTINUATION)
+        lease.commit(active)
+
+    restored_active = OrganismContinuation.from_bytes(active.to_bytes())
+    assert restored_active.identity == initial.identity
+    assert restored_active.continuation_id == initial.continuation_id
+    assert restored_active.organism_step == progressed.organism_step
+    assert restored_active.state.owner_checkpoint == initial.state.owner_checkpoint
+    assert restored_active.state.embodiment == new_context
+    assert restored_active.state.lifecycle is OrganismLifecycle.ACTIVE
 
 
 def test_registry_checkpoint_decoder_rejects_unknown_fields():

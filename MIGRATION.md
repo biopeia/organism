@@ -825,6 +825,15 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - TARGET restore is strict and fail-closed for the progression field: missing, boolean, non-integer, or negative values are rejected. Canonical re-embodiment is represented as an explicit replacement of body/episode/morphology context while preserving Organism identity and longitudinal private state.
 - Scope limitation: this slice establishes the canonical progression/transition envelope only. It does not yet compose cognition execution (#43), motor-authority/action composition (#30), full owner-declared dependency closure (#33), exact complete cognitive continuation (#45), all agency/actuation checkpoint state (#41), or Organism lifecycle termination/dormancy (#61). It therefore does not close MIG-002 (#34) or prove full runtime continuity, scientific efficacy, World durable recovery, or body/somatic semantics.
 
+## Incremental correction: canonical re-embodiment continuity (issue #29)
+
+- Implementation base: `983d1506640b98ec9c914483575fdfac43df98bd`.
+- Finding: the transition boundary allowed an ordinary ACTIVE progression proposal to replace body/episode/morphology context, so re-embodiment was not required to use the explicit lifecycle boundary. Existing lifecycle primitives permitted DORMANT-to-ACTIVE replacement, but tests did not exercise that path through a restored canonical continuation.
+- Disposition: bounded `REWRITE` of the transition validation and owner-level continuation tests. Ordinary accepted progression now rejects any change to the Embodiment context; explicit DORMANT-to-ACTIVE lifecycle transition is the only path for binding a replacement context.
+- Target paths: `src/organism/transition.py`; `tests/test_transition.py`; `tests/test_continuation.py`.
+- Evidence: tests require explicit transition through DORMANT, preserve the same Organism and continuation identities, owner checkpoint and `organism_step`, replace body/episode/morphology context, restore the canonical continuation registry between lifecycle commits, and round-trip the resulting continuation. A negative test rejects implicit body-context replacement through ordinary progression without changing current state.
+- Limits: this proves the Organism owner boundary and its continuation registry preserve the declared longitudinal state across the explicit context replacement. It does not validate Embodiment somatic state, prove complete private-state closure, infer organism death from body/presence lifecycle, or establish World durable recovery, biological efficacy, or full runtime continuity. No historical source implementation or compatibility behavior is retained.
+
 ## Incremental correction: zero action-linked hits cannot imply causal controllability (issue #42)
 
 - Implementation base: `1e6fe3213327c463bfe40ace48c64b606d530e9b`.
