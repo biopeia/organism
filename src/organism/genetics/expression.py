@@ -283,6 +283,8 @@ class ExpressionRegulator:
 def restore_expression_state(
     payload: Mapping[str, object],
     genome: Genome,
+    *,
+    germline: GermlineState | None = None,
 ) -> GeneExpressionState:
     required = {
         "effective_learning_rate",
@@ -386,6 +388,12 @@ def restore_expression_state(
             raise ValueError(f"birth_expression {locus} outside inherited range")
     if not 0.0 <= birth["sensorimotor.spontaneous_activity_baseline"] <= 1.0:
         raise ValueError("birth_expression sensorimotor locus outside [0,1]")
+    expected_birth = GeneExpressionState.from_genome(
+        genome,
+        germline=germline,
+    ).birth_expression
+    if birth != expected_birth:
+        raise ValueError("expression birth expression does not match genome and germline")
     return state
 
 
