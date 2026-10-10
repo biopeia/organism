@@ -118,6 +118,17 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Validation: `uv run --with pytest python -m pytest -q` — 572 passed; `uv build` produced sdist and wheel; the wheel installed into an isolated target directory, imported `organism.cognition.portable_checkpoint`, and the full suite against that isolated installation passed (572 passed); `git diff --check` passed. CI is pending PR publication.
 - Scope limitation: this captures the resident's codec-declared durable internal state when passed by the caller. It does not establish that all Organism callers include it, that model-weight/dependency closure is portable, that a complete Organism continuation is captured, or that cognition is scientifically effective. No source files or scientific assets were modified.
 
+## Incremental slice: sensorimotor checkpoint identity and concurrency (issue #41)
+
+- Target base: `fc8a91c61d865663ba6f9468216171506fd29e7a`.
+- Source repository: `https://github.com/alessbarb/symbiont-lab` (historical, read-only).
+- Source path and symbol: `symbiont/src/symbiont/actuation/sensorimotor.py::CompetenceDevelopmentEngine`; source blob `34f5badb20e6d58e8c59dabf29aef979668879bf`, source commit `51035064ec61be20722e733efc3c5e42653cbd84` as recorded in the extraction inventory above.
+- Target paths: `src/organism/actuation/sensorimotor.py`, `tests/source_unit/actuation/test_sensorimotor.py`.
+- Disposition: `REWRITE` — the target component checkpoint now binds the state to its `organism_id` and persists the effective `max_concurrent` value. Schema v12 requires these fields. Restore rejects another organism, malformed/missing concurrency state, or an explicitly supplied expected concurrency value that differs. With no expected value supplied, restore uses the checkpointed effective value. Pre-v12 payloads remain rejected; no compatibility default or legacy import path is added.
+- Gate state and profile configuration remain external; this slice does not checkpoint `CompetenceGate`, `CompetenceEffectModel`, or caller profile configuration.
+- Validation: focused deterministic-next-output and identity/configuration rejection tests are in `tests/source_unit/actuation/test_sensorimotor.py`; full test/build and PR CI evidence are recorded with the resulting PR.
+- Scope limits: this restores only `CompetenceDevelopmentEngine` state. It does not establish complete Organism continuation, `organism_step`, completeness of caller-supplied checkpoints, World durability, scientific efficacy, or historical behavioral equivalence. No `symbiont-lab` files were changed.
+
 ## Incremental slice: fail-closed outcome-value ledger restore
 
 - Source repository: `https://github.com/alessbarb/symbiont-lab`

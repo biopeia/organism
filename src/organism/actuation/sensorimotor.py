@@ -16,7 +16,7 @@ from .competence import (
 from .types import MotorIntent
 
 _HORIZONS = (1, 4, 16, 64)
-SENSORIMOTOR_SCHEMA_VERSION = 11
+SENSORIMOTOR_SCHEMA_VERSION = 12
 _PRIMITIVE_TICKS = 4
 # Evidence independence and spontaneous motor persistence are distinct clocks.
 # An evidence block must be short enough to reject overlapping samples, while a
@@ -1450,7 +1450,11 @@ class CompetenceDevelopmentEngine:
     def checkpoint(self) -> dict[str, object]:
         return {
             "schema_version": SENSORIMOTOR_SCHEMA_VERSION,
+            "organism_id": self._organism_id,
             "actuator_ids": list(self._ids),
+            # Store the effective bound, not the constructor's optional input:
+            # ``None`` resolves to the exploration-unit ceiling at creation.
+            "max_concurrent": self._max_concurrent,
             "embodiment_fingerprint": self._embodiment_fingerprint,
             "exclusive_actuator_groups": [list(group) for group in self._exclusive_actuator_groups],
             "smoothing": self._smoothing,
@@ -1541,6 +1545,7 @@ class CompetenceDevelopmentEngine:
         actuator_ids: Sequence[str],
         organism_id: str,
         embodiment_fingerprint: str | None = None,
+        expected_max_concurrent: int | None = None,
     ) -> "CompetenceDevelopmentEngine":
         schema = _require_int(
             payload.get("schema_version", -1),
@@ -1553,7 +1558,9 @@ class CompetenceDevelopmentEngine:
         if embodiment_fingerprint is None:
             raise ValueError("sensorimotor restore requires the current embodiment fingerprint")
         required_fields = {
+            "organism_id",
             "actuator_ids",
+            "max_concurrent",
             "embodiment_fingerprint",
             "exclusive_actuator_groups",
             "smoothing",
@@ -1582,6 +1589,12 @@ class CompetenceDevelopmentEngine:
         if not required_fields.issubset(payload):
             raise ValueError("incomplete sensorimotor checkpoint")
 
+        stored_organism_id = payload["organism_id"]
+        if not isinstance(stored_organism_id, str) or not stored_organism_id:
+            raise ValueError("invalid sensorimotor organism identity")
+        if stored_organism_id != organism_id:
+            raise ValueError("sensorimotor organism identity mismatch")
+
         expected = tuple(str(value) for value in actuator_ids)
         stored = tuple(str(value) for value in payload["actuator_ids"])
         if stored != expected:
@@ -1599,10 +1612,23 @@ class CompetenceDevelopmentEngine:
                 raise ValueError("invalid exclusive actuator group")
             exclusive_groups.append(tuple(str(value) for value in raw_group))
 
+        max_concurrent = _require_int(
+            payload["max_concurrent"],
+            field="sensorimotor max_concurrent",
+            minimum=1,
+        )
+        if expected_max_concurrent is not None:
+            expected_max_concurrent = _require_int(
+                expected_max_concurrent,
+                field="expected sensorimotor max_concurrent",
+                minimum=1,
+            )
+            if expected_max_concurrent != max_concurrent:
+                raise ValueError("sensorimotor max_concurrent mismatch")
         learner = cls(
             expected,
             organism_id=organism_id,
-            max_concurrent=None,
+            max_concurrent=max_concurrent,
             smoothing=_require_finite(
                 payload["smoothing"],
                 field="sensorimotor smoothing",
@@ -1612,6 +1638,8 @@ class CompetenceDevelopmentEngine:
             embodiment_fingerprint=embodiment_fingerprint,
             exclusive_actuator_groups=exclusive_groups,
         )
+        if learner._max_concurrent != max_concurrent:
+            raise ValueError("sensorimotor max_concurrent exceeds exploration capacity")
         stored_scope = payload["embodiment_fingerprint"]
         if stored_scope != embodiment_fingerprint:
             raise ValueError("sensorimotor embodiment scope mismatch")
