@@ -18,7 +18,7 @@ All twelve keys below are required, with no unknown keys accepted.
 | `transition` | Required `CognitiveTransitionState` payload; non-null. |
 | `graph` | Required graph payload; `null` is rejected by the composed decoder. |
 | `experience_records` | Required list; empty list is valid. |
-| `safety_state` | Required key; explicit `null` is supported and restores `SafetyState()`; otherwise exact safety object. |
+| `safety_state` | Required key; explicit `null` is supported and remains `None` after restore; otherwise an exact safety object is restored. |
 | `sensory_normalizers` | Required object; empty object is valid. |
 | `generative_resident` | Required key; explicit `null` is supported; otherwise resident payload. |
 | `genome` | Required key; explicit `null` only when `germline_state` and `expression_state` are also `null`. |
@@ -39,7 +39,7 @@ The genetic trio is one conditional all-or-none group. If non-null, each must be
 
 - Each node requires exactly `node_id`, `kind`, `bias`, `tau`, `predicts_node_id`. `predicts_node_id` is explicitly nullable; the other values are required non-null.
 - Each edge requires exactly `source_id`, `target_id`, `kind`, `weight`, `plasticity`, `delay_ticks`, `eligibility`, `support`, `age_ticks`, `stable_ticks`, `last_use_tick`. All are required non-null; numeric/integer/range and graph consistency validation is performed by the graph codec.
-- A non-null `safety_state` requires exactly `consecutive_failures` and `frozen`, both non-null; the former is a non-negative integer and the latter a boolean. `null` has the explicit reset-to-empty-safety meaning stated above.
+- A non-null `safety_state` requires exactly `consecutive_failures` and `frozen`, both non-null; the former is a non-negative integer and the latter a boolean. An explicit `null` is preserved as `None`; it does not construct a `SafetyState()` value.
 - Each `sensory_normalizers` map value requires exactly `mean`, `variance`, and `count`, all non-null. The map itself may be empty.
 
 ### Experience records
