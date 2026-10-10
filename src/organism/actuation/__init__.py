@@ -13,6 +13,7 @@ from .commitment import ActionCommitment, CommitmentStatus
 from .command import motor_command_from_frame
 from .context import ActuatorEvidenceContext
 from .controller import ControllerFrame, SequenceController
+from .domain import ActionDomain, ActionSelection
 from .competence import (
     CompetenceCandidate,
     CompetenceEvidence,
@@ -54,8 +55,10 @@ __all__ = [
     "ActionArbitrator",
     "ActionCommitment",
     "ActionEvaluation",
+    "ActionDomain",
     "ActionJustification",
     "ActionProposal",
+    "ActionSelection",
     "ActionSource",
     "AgencyEstimate",
     "AgencyModel",

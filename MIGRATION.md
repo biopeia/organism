@@ -62,6 +62,16 @@ Validation is recorded in the migration PR and CI. The source repository remains
 |---|---|---|---|
 | `biopeia/organism/src/organism/actuation/surface.py` at issue observation commit `6543188ff302a5f2dc8002c0086252d6061e5310`; independently rechecked at implementation base `b179c40` | `REWRITE` | `src/organism/actuation/surface.py`; `tests/source_unit/actuation/` | Actuator identity was derived from list index. The TARGET API now requires explicit stable effector IDs, preserves them as channel IDs, and fingerprints the ID set independent of input order. Positional count construction is removed, not retained as compatibility. Tests cover permutation and count rejection. This is an owner-local identity correction; it does not establish Embodiment's effector registry, body/episode/morphology correlation, solver-result adoption, unit/range semantics, or cross-repository integration. No `symbiont-lab` files were changed. |
 
+## Incremental rewrite: Organism action authority composition (issue #30)
+
+- Source repository: `https://github.com/biopeia/organism`
+- Source revision: `0567c4060297f163a93c5ef3a0c6687aad633492`
+- Source paths/symbols: `agency/prospective.py::ProspectiveDecision`; `agency/affordance.py::ActionAffordance`; `agency/intention.py::ActionIntent`; `actuation/{action,arbitration,commitment,command,controller,system}.py`
+- Disposition: `REWRITE` — add an Organism-owned `ActionDomain` composition over the existing target contracts. It materializes pending intents only from decisions matched to a supporting current affordance, validates proposal/intent linkage, registers one active commitment in the domain execution scope, binds commands to that commitment, validates commitment provenance at actuation, and closes intent/commitment only from an explicit terminal caller outcome.
+- Target paths: `src/organism/actuation/domain.py`, `src/organism/actuation/system.py`, `src/organism/actuation/__init__.py`, and focused `tests/source_unit/actuation/` coverage.
+- Contract limits: arbitration policy is unchanged; controller, surface, embodiment and causal tick are explicit inputs. No action reward, causal confidence, physical outcome, or scientific efficacy is inferred. `ActionDomain` does not yet claim checkpoint/restart continuation; that remains outside this bounded action-authority slice. The World integration fixture must consume the public composition API before this cross-repository path is complete.
+- Historical source disposition: no legacy implementation or compatibility adapter is introduced. Historical repository remains read-only.
+
 ## Incremental slice: private experience record
 
 - Source repository: `https://github.com/alessbarb/symbiont-lab`
