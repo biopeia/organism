@@ -61,18 +61,35 @@ class GenerativeHypothesis:
     def from_checkpoint(cls, payload: object) -> GenerativeHypothesis:
         if not isinstance(payload, dict):
             raise ValueError("hypothesis checkpoint must be an object")
+        if set(payload) != {
+            "hypothesis_id",
+            "source_episode_ids",
+            "source_model_ids",
+            "uncertainty",
+            "status",
+            "factual_support_refs",
+            "factual_conflict_refs",
+            "reconciliation_count",
+        }:
+            raise ValueError("hypothesis checkpoint fields are incomplete or unknown")
         try:
-            count = payload.get("reconciliation_count", 0)
+            count = payload["reconciliation_count"]
             if isinstance(count, bool) or not isinstance(count, int) or count < 0:
                 raise ValueError("reconciliation_count must be non-negative")
+            for name in (
+                "source_episode_ids", "source_model_ids", "factual_support_refs",
+                "factual_conflict_refs",
+            ):
+                if not isinstance(payload[name], list):
+                    raise ValueError(f"{name} must be a list")
             hypothesis = cls(
                 hypothesis_id=payload["hypothesis_id"],
                 source_episode_ids=tuple(payload["source_episode_ids"]),
                 source_model_ids=tuple(payload["source_model_ids"]),
                 uncertainty=payload["uncertainty"],
                 status=HypothesisStatus(payload["status"]),
-                factual_support_refs=tuple(payload.get("factual_support_refs", ())),
-                factual_conflict_refs=tuple(payload.get("factual_conflict_refs", ())),
+                factual_support_refs=tuple(payload["factual_support_refs"]),
+                factual_conflict_refs=tuple(payload["factual_conflict_refs"]),
             )
             hypothesis._reconciliation_count = count
             return hypothesis

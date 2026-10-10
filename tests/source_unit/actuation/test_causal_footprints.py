@@ -246,6 +246,65 @@ def test_checkpoint_keeps_each_estimate_bound_to_its_atom():
         FootprintRegistry.restore(payload)
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda p: p["versions"][0].update(unexpected=True),
+        lambda p: p["versions"][0].update(version=True),
+        lambda p: p["members"][0]["records"][0].update(entered_tick=True),
+        lambda p: p["members"][0]["records"][0]["estimate"].update(unexpected=True),
+        lambda p: p["members"][0]["records"][0]["estimate"].update(pulses=True),
+        lambda p: p["transitions"].append(dict(p["transitions"][0])),
+    ],
+)
+def test_registry_restore_rejects_nested_shape_and_coercion_errors(mutate):
+    import copy
+
+    registry = FootprintRegistry()
+    registry.update({("channel.a",): {CAUSED: _estimate(0.5)}}, tick=1)
+    payload = copy.deepcopy(registry.checkpoint())
+    mutate(payload)
+    with pytest.raises(ValueError):
+        FootprintRegistry.restore(payload)
+
+
+def test_registry_restore_rejects_boolean_schema_version():
+    payload = FootprintRegistry().checkpoint()
+    payload["schema_version"] = True
+    with pytest.raises(ValueError, match="unsupported"):
+        FootprintRegistry.restore(payload)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("mean_pulse_windows", float("nan")),
+        ("expected_quiet_rate", float("inf")),
+        ("pulses", -1),
+        ("hits", 9),
+        ("passive_hits", -1),
+        ("controllability", 1.1),
+        ("agency", -0.1),
+    ],
+)
+def test_estimate_restore_rejects_nonfinite_or_inconsistent_evidence(field, value):
+    import copy
+
+    registry = FootprintRegistry()
+    registry.update({("channel.a",): {CAUSED: _estimate(0.5)}}, tick=1)
+    payload = copy.deepcopy(registry.checkpoint())
+    payload["members"][0]["records"][0]["estimate"][field] = value
+    with pytest.raises(ValueError):
+        FootprintRegistry.restore(payload)
+
+
+def test_registry_restore_rejects_incomplete_retained_transition_log():
+    payload = FootprintRegistry().checkpoint()
+    payload["transitions_recorded"] = 1
+    with pytest.raises(ValueError, match="retained transition history is incomplete"):
+        FootprintRegistry.restore(payload)
+
+
 def test_wilson_bound():
     assert wilson_lower_bound(0, 10) == 0.0
     assert 0.0 < wilson_lower_bound(5, 10) < 0.5 < wilson_lower_bound(10, 10)

@@ -111,15 +111,15 @@ def restore_germline(
         "inherited_marks",
         "acquired_marks",
         "acquired_capture_enabled",
+        "capture_streaks",
     }
-    allowed = required | {"capture_streaks"}
-    if not required <= set(payload) or not set(payload) <= allowed:
+    if set(payload) != required:
         raise ValueError("germline checkpoint keys mismatch")
     birth = payload["birth_expression"]
     inherited = payload["inherited_marks"]
     acquired = payload["acquired_marks"]
     enabled = payload["acquired_capture_enabled"]
-    raw_streaks = payload.get("capture_streaks", {})
+    raw_streaks = payload["capture_streaks"]
     if (
         not isinstance(birth, Mapping)
         or not isinstance(inherited, list)

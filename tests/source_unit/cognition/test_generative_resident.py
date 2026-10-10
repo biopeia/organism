@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
 
 import pytest
 
@@ -112,6 +113,40 @@ def test_prediction_error_enters_endogenous_agenda_but_waits_for_compatible_mode
     assert target.no_progress_count == 0
     assert resident.last_workspace is not None
     assert len(resident.last_workspace.states) == 1
+
+
+def test_resident_checkpoint_requires_all_emitted_fields_and_rejects_unknowns() -> None:
+    checkpoint = ResidentGenerativeCognition(organism_id="organism.restore").checkpoint()
+    for field in checkpoint:
+        missing = copy.deepcopy(checkpoint)
+        del missing[field]
+        with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+            ResidentGenerativeCognition.from_checkpoint(missing, organism_id="organism.restore")
+    extra = copy.deepcopy(checkpoint)
+    extra["unexpected"] = True
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(extra, organism_id="organism.restore")
+
+
+def test_resident_checkpoint_requires_complete_hypothesis_fields() -> None:
+    resident = ResidentGenerativeCognition(organism_id="organism.restore")
+    checkpoint = resident.checkpoint()
+    checkpoint["hypotheses"] = [{
+        "hypothesis_id": "hypothesis.a",
+        "source_episode_ids": [],
+        "source_model_ids": [],
+        "uncertainty": 0.2,
+        "status": "hypothesized",
+        "factual_support_refs": [],
+        "factual_conflict_refs": [],
+        "target_id": "target.a",
+        "predicted_outcomes": [],
+        "representation_refs": [],
+        "calibration": None,
+    }]
+    del checkpoint["hypotheses"][0]["predicted_outcomes"]
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
 
 
 def test_recurring_conflict_routes_to_counterfactual_without_factual_authority() -> None:

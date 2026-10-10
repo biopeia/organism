@@ -82,6 +82,11 @@ def test_transition_component_checkpoint_rejects_unknown_fields_and_invalid_valu
         CognitiveTransitionState.from_checkpoint_payload(payload)
 
     payload = state.checkpoint_payload()
+    payload["schema_version"] = True
+    with pytest.raises(CognitiveTransitionError, match="unsupported"):
+        CognitiveTransitionState.from_checkpoint_payload(payload)
+
+    payload = state.checkpoint_payload()
     payload["previous_activations"] = [["sense", float("nan")]]
     with pytest.raises(CognitiveTransitionError, match="finite"):
         CognitiveTransitionState.from_checkpoint_payload(payload)

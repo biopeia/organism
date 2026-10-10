@@ -222,6 +222,8 @@ def restore_safety_state(payload: dict[str, Any] | None) -> SafetyState:
         return SafetyState()
     if not isinstance(payload, dict):
         raise GraphError("safety_state checkpoint must be an object")
+    if set(payload) != {"consecutive_failures", "frozen"}:
+        raise GraphError("safety_state checkpoint fields do not match the current schema")
     try:
         failures = _require_nonneg_int(
             payload["consecutive_failures"], "safety_state.consecutive_failures"

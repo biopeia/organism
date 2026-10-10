@@ -2028,11 +2028,11 @@ class CompetenceDevelopmentEngine:
                 for key, value in raw_body.items()
             }
             motor_vector = {
-                key: _finite_unit(
-                    _require_finite(value, field=f"sensorimotor motor vector {key}")
-                )
+                key: _require_finite(value, field=f"sensorimotor motor vector {key}")
                 for key, value in raw_motor.items()
             }
+            if any(not 0.0 <= value <= 1.0 for value in motor_vector.values()):
+                raise ValueError("sensorimotor motor vector values must be within [0, 1]")
             if any(key not in allowed for key in motor_vector):
                 raise ValueError("sensorimotor frame references unknown actuator")
             execution_id = item["execution_primitive_id"]
