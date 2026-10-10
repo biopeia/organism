@@ -851,3 +851,13 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Restore now requires exact top-level and entry schemas, a supported integer schema version, a positive integer capacity, bounded unique signatures, typed opaque references, valid non-negative integer statistics, ordered tick bounds, and internally consistent intensity evidence. Derived family indexes are rebuilt after validation.
 - Tests cover JSON round-trip, post-restore accumulation of new single-command evidence, temporal-statistic round-trip, and rejection of missing/unknown/malformed/inconsistent payloads.
 - Scope limitation: `_by_command` remains intentionally ephemeral and is not checkpointed, so command references from before restore cannot be used to form a new temporal signature after restore. This slice preserves the stored registry statistics and allows new command evidence to continue; it does not establish complete Organism continuation, command-history continuity, scientific efficacy, or close issue #60. No `symbiont-lab` file is changed.
+
+## Incremental correction: strict causal-event payload decoding (issue #60)
+
+- Implementation base: `fca0031fe5acdc0c1bc250ff59401c6348785256`.
+- Finding: `CausalEvent.from_payload` used coercions and silently supplied empty/default state for omitted `produced`, `rule`, and `parameters` fields, although `CausalEvent.payload()` always emits the complete serialized representation.
+- Disposition: `REWRITE` of the existing TARGET payload decoder only; no historical payload compatibility path is added.
+- Target paths: `src/organism/provenance.py::CausalEvent.from_payload`; `tests/source_unit/test_checkpoint_fail_closed.py`.
+- Decoder now requires the exact emitted key set; rejects non-integer/bool ticks, invalid domain/operation types, non-list reference collections, malformed rule/parameters/event identity, and mismatched content-derived event IDs. At the top-level event fields, `null` is valid only for `rule`; parameter values retain their existing scalar-value contract.
+- Tests cover a complete payload round-trip, every omitted field, unknown fields, and malformed/coerced values.
+- Scope limitation: this validates the CausalEvent payload codec only. It does not make the bounded `ProvenanceLog` event ring durable, create a complete Organism checkpoint, or establish full causal-history continuation, scientific efficacy, or complete issue #60 acceptance. No `symbiont-lab` file is changed.
