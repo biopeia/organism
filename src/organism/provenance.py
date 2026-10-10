@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
 RING_CAPACITY = 8192
 MAX_CAUSES = 64
+_EVENT_ID_PATTERN = re.compile(r"event\.[0-9a-f]{24}\Z")
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -244,7 +246,7 @@ class ProvenanceLog:
             causes = raw["caused_by"]
             if (
                 not isinstance(event_id, str)
-                or not event_id
+                or _EVENT_ID_PATTERN.fullmatch(event_id) is None
                 or not isinstance(causes, list)
                 or len(causes) > MAX_CAUSES
             ):
