@@ -1,9 +1,9 @@
-"""Bounded portable composition for extracted Organism-owned cognitive state.
+"""Bounded portable composition for extracted Organism-owned runtime state.
 
 This composes graph structure/quantized learned weights, recurrent activation
-state, and optionally a generative resident's durable internal state. Model
-owners and transient evidence resolvers remain external. It is not a complete
-cognition or Organism checkpoint.
+state, optional genetic state, and optionally a generative resident's durable
+internal state. Model owners and transient evidence resolvers remain external.
+It is not a complete cognition or Organism checkpoint.
 """
 
 from __future__ import annotations
@@ -20,6 +20,16 @@ from organism.checkpoint import (
 )
 from organism.identity import OrganismIdentity
 from organism.memory import ExperienceRecord
+from organism.genetics import GeneExpressionState, Genome, GermlineState
+from organism.genetics.checkpoint import (
+    export_expression,
+    export_genome,
+    export_germline,
+    restore_expression,
+    restore_genome,
+    restore_germline,
+)
+from organism.genetics.schema import DEFAULT_GENOME_SCHEMA, GenomeSchema
 
 from .activation import SensoryNormalizer
 from .checkpoint import (
@@ -42,15 +52,47 @@ class CognitiveRuntimeCheckpointError(ValueError):
     """Raised when a composed cognitive runtime checkpoint is invalid."""
 
 
+def _validate_genetic_state(
+    genome: Genome | None,
+    germline_state: GermlineState | None,
+    expression_state: GeneExpressionState | None,
+) -> None:
+    genetic_values = (genome, germline_state, expression_state)
+    if all(value is None for value in genetic_values):
+        return
+    if any(value is None for value in genetic_values):
+        raise CognitiveRuntimeCheckpointError(
+            "genome, germline_state, and expression_state must be supplied together"
+        )
+    if not isinstance(genome, Genome):
+        raise CognitiveRuntimeCheckpointError("genome must be Genome or None")
+    if not isinstance(germline_state, GermlineState):
+        raise CognitiveRuntimeCheckpointError("germline_state must be GermlineState or None")
+    if not isinstance(expression_state, GeneExpressionState):
+        raise CognitiveRuntimeCheckpointError(
+            "expression_state must be GeneExpressionState or None"
+        )
+    try:
+        restored_germline = restore_germline(export_germline(germline_state), genome)
+        restore_expression(
+            export_expression(expression_state), genome, germline=restored_germline
+        )
+    except (TypeError, ValueError) as exc:
+        raise CognitiveRuntimeCheckpointError(
+            "genetic state is inconsistent with its genome and germline"
+        ) from exc
+
+
 @dataclass(frozen=True, slots=True)
 class CognitiveRuntimeCheckpoint:
     """A bounded composition of Organism-owned cognitive and memory state.
 
-    This payload includes only explicitly supplied cognitive state. A
-    generative resident contributes its durable state, but its model registry
-    and transient factual-evidence resolver are not captured. Restore callers
-    must provide model owners separately when that capability is required.
-    This is not a complete Organism checkpoint.
+    This payload includes only explicitly supplied state. The genome, germline
+    and expression state are an all-or-none unit. A generative resident
+    contributes its durable state, but its model registry and transient
+    factual-evidence resolver are not captured. Restore callers must provide
+    model owners separately when that capability is required. This is not a
+    complete Organism checkpoint.
     """
 
     state: CognitiveTransitionState
@@ -59,6 +101,9 @@ class CognitiveRuntimeCheckpoint:
     safety_state: SafetyState | None = None
     sensory_normalizers: dict[str, SensoryNormalizer] = field(default_factory=dict)
     generative_resident: ResidentGenerativeCognition | None = None
+    genome: Genome | None = None
+    germline_state: GermlineState | None = None
+    expression_state: GeneExpressionState | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, CognitiveTransitionState):
@@ -79,6 +124,24 @@ class CognitiveRuntimeCheckpoint:
             raise CognitiveRuntimeCheckpointError(
                 "generative resident belongs to a different Organism identity"
             )
+        genetic_values = (self.genome, self.germline_state, self.expression_state)
+        if any(value is not None for value in genetic_values) and not all(
+            value is not None for value in genetic_values
+        ):
+            raise CognitiveRuntimeCheckpointError(
+                "genome, germline_state, and expression_state must be supplied together"
+            )
+        if self.genome is not None and not isinstance(self.genome, Genome):
+            raise CognitiveRuntimeCheckpointError("genome must be Genome or None")
+        if self.germline_state is not None and not isinstance(self.germline_state, GermlineState):
+            raise CognitiveRuntimeCheckpointError("germline_state must be GermlineState or None")
+        if self.expression_state is not None and not isinstance(
+            self.expression_state, GeneExpressionState
+        ):
+            raise CognitiveRuntimeCheckpointError(
+                "expression_state must be GeneExpressionState or None"
+            )
+        _validate_genetic_state(self.genome, self.germline_state, self.expression_state)
         if not isinstance(self.sensory_normalizers, dict) or any(
             not isinstance(key, str) or not isinstance(value, SensoryNormalizer)
             for key, value in self.sensory_normalizers.items()
@@ -104,9 +167,12 @@ class CognitiveRuntimeCheckpoint:
             record_ids.add(record.record_id)
 
     def to_bytes(self) -> bytes:
+        # Nested germline/expression values are mutable; revalidate the actual
+        # snapshot being serialized instead of trusting construction-time state.
+        _validate_genetic_state(self.genome, self.germline_state, self.expression_state)
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
-            "schema_version": 4,
+            "schema_version": 5,
             "identity": str(self.state.identity),
             "transition": self.state.checkpoint_payload(),
             "graph": export_graph_checkpoint(self.graph),
@@ -122,6 +188,13 @@ class CognitiveRuntimeCheckpoint:
                 if self.generative_resident is None
                 else self.generative_resident.checkpoint()
             ),
+            "genome": None if self.genome is None else export_genome(self.genome),
+            "germline_state": (
+                None if self.germline_state is None else export_germline(self.germline_state)
+            ),
+            "expression_state": (
+                None if self.expression_state is None else export_expression(self.expression_state)
+            ),
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -132,6 +205,8 @@ class CognitiveRuntimeCheckpoint:
         *,
         kernel_limits: KernelLimits,
         generative_registry: GenerativeModelRegistry | None = None,
+        running_version: tuple[int, int, int] | None = None,
+        genome_schema: GenomeSchema = DEFAULT_GENOME_SCHEMA,
     ) -> CognitiveRuntimeCheckpoint:
         try:
             document = json.loads(payload)
@@ -145,11 +220,16 @@ class CognitiveRuntimeCheckpoint:
                 "safety_state",
                 "sensory_normalizers",
                 "generative_resident",
+                "genome",
+                "germline_state",
+                "expression_state",
             }:
                 raise CognitiveRuntimeCheckpointError("invalid cognitive runtime checkpoint shape")
-            if document["schema"] != "biopeia.organism.cognitive-runtime" or document[
-                "schema_version"
-            ] != 4:
+            if (
+                document["schema"] != "biopeia.organism.cognitive-runtime"
+                or type(document["schema_version"]) is not int
+                or document["schema_version"] != 5
+            ):
                 raise CognitiveRuntimeCheckpointError("unsupported cognitive runtime checkpoint")
             identity = OrganismIdentity.parse(document["identity"])
             state = CognitiveTransitionState.from_checkpoint_payload(document["transition"])
@@ -175,6 +255,39 @@ class CognitiveRuntimeCheckpoint:
                     registry=generative_registry,
                 )
             )
+            raw_genome = document["genome"]
+            raw_germline = document["germline_state"]
+            raw_expression = document["expression_state"]
+            genetic_values = (raw_genome, raw_germline, raw_expression)
+            if all(value is None for value in genetic_values):
+                genome = None
+                germline_state = None
+                expression_state = None
+            elif any(value is None for value in genetic_values):
+                raise CognitiveRuntimeCheckpointError(
+                    "genome, germline_state, and expression_state must be present together"
+                )
+            else:
+                if running_version is None:
+                    raise CognitiveRuntimeCheckpointError(
+                        "running_version is required to restore genetic state"
+                    )
+                if not isinstance(raw_genome, dict):
+                    raise CognitiveRuntimeCheckpointError("genome state must be an object")
+                genome = restore_genome(
+                    raw_genome,
+                    kernel_limits=kernel_limits,
+                    running_version=running_version,
+                    schema=genome_schema,
+                )
+                if not isinstance(raw_germline, dict) or not isinstance(raw_expression, dict):
+                    raise CognitiveRuntimeCheckpointError(
+                        "germline and expression states must be objects"
+                    )
+                germline_state = restore_germline(raw_germline, genome, schema=genome_schema)
+                expression_state = restore_expression(
+                    raw_expression, genome, germline=germline_state
+                )
             return cls(
                 state=state,
                 graph=graph,
@@ -182,6 +295,9 @@ class CognitiveRuntimeCheckpoint:
                 safety_state=safety_state,
                 sensory_normalizers=normalizers,
                 generative_resident=generative_resident,
+                genome=genome,
+                germline_state=germline_state,
+                expression_state=expression_state,
             )
         except CognitiveRuntimeCheckpointError:
             raise
@@ -203,6 +319,8 @@ class CognitiveRuntimeCheckpoint:
         kernel_limits: KernelLimits,
         read_dependency: Callable[[str], bytes] | None = None,
         generative_registry: GenerativeModelRegistry | None = None,
+        running_version: tuple[int, int, int] | None = None,
+        genome_schema: GenomeSchema = DEFAULT_GENOME_SCHEMA,
     ) -> CognitiveRuntimeCheckpoint:
         """Restore the composed payload after validating declared dependencies.
 
@@ -226,6 +344,8 @@ class CognitiveRuntimeCheckpoint:
             checkpoint.private_state,
             kernel_limits=kernel_limits,
             generative_registry=generative_registry,
+            running_version=running_version,
+            genome_schema=genome_schema,
         )
         if restored.state.identity != checkpoint.identity:
             raise CognitiveRuntimeCheckpointError("envelope and private-state identities differ")

@@ -21,6 +21,7 @@ from organism.identity import OrganismIdentity
 from organism.memory import EpistemicStatus, ExperienceRecord, SourceKind
 from organism.cognition.generative import AgendaSource, GenerativeTarget, ResidentGenerativeCognition
 from organism.cognition.generative.registry import GenerativeModelRegistry
+from organism.genetics import EpigeneticMark, GeneExpressionState, GermlineState, create_standard_genome
 
 
 def _graph() -> CognitiveGraph:
@@ -139,13 +140,189 @@ def test_portable_checkpoint_rejects_malformed_safety_and_normalizer_payloads() 
         )
 
 
-def test_portable_checkpoint_schema_v3_is_not_accepted_as_a_current_payload() -> None:
+def test_portable_checkpoint_schema_v4_is_not_accepted_as_a_current_payload() -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
-    document["schema_version"] = 3
+    document["schema_version"] = 4
     with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
         CognitiveRuntimeCheckpoint.from_bytes(
             json.dumps(document).encode(), kernel_limits=KernelLimits()
         )
+
+
+def test_portable_checkpoint_rejects_non_integer_schema_version() -> None:
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    document["schema_version"] = 5.0
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
+
+def _genetic_state():
+    genome = create_standard_genome("portable-genetic-checkpoint")
+    inherited = EpigeneticMark("plasticity.learning_rate.baseline", delta=0.01, strength=0.5)
+    germline = GermlineState.from_genome(
+        genome, inherited_marks=(inherited,), acquired_capture_enabled=True
+    )
+    acquired = EpigeneticMark("structure.growth_threshold.baseline", delta=0.02)
+    germline.acquired_marks[acquired.locus] = acquired
+    expression = GeneExpressionState.from_genome(genome, germline=germline)
+    return genome, germline, expression
+
+
+def test_portable_checkpoint_round_trips_genome_germline_and_expression_as_one_unit() -> None:
+    genome, germline, expression = _genetic_state()
+    original = CognitiveRuntimeCheckpoint(
+        state=_state(),
+        graph=_graph(),
+        genome=genome,
+        germline_state=germline,
+        expression_state=expression,
+    )
+
+    restored = CognitiveRuntimeCheckpoint.from_bytes(
+        original.to_bytes(),
+        kernel_limits=KernelLimits(),
+        running_version=(0, 85, 0),
+    )
+
+    assert restored.genome == genome
+    assert restored.genome is not None
+    assert restored.genome.genome_hash == genome.genome_hash
+    assert restored.germline_state is not None
+    assert restored.germline_state.birth_expression == germline.birth_expression
+    assert restored.germline_state.inherited_marks == germline.inherited_marks
+    assert restored.germline_state.acquired_marks == germline.acquired_marks
+    assert restored.expression_state is not None
+    assert restored.expression_state.as_dict() == expression.as_dict()
+
+
+@pytest.mark.parametrize(
+    "provided",
+    [
+        {"genome": create_standard_genome("partial-genome")},
+        {
+            "genome": create_standard_genome("partial-germline"),
+            "germline_state": GermlineState.from_genome(
+                create_standard_genome("partial-germline")
+            ),
+        },
+    ],
+)
+def test_portable_checkpoint_rejects_partial_genetic_state(provided) -> None:
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="supplied together"):
+        CognitiveRuntimeCheckpoint(state=_state(), graph=_graph(), **provided)
+
+
+def test_portable_checkpoint_genetic_restore_requires_explicit_running_version() -> None:
+    genome, germline, expression = _genetic_state()
+    checkpoint = CognitiveRuntimeCheckpoint(
+        state=_state(),
+        graph=_graph(),
+        genome=genome,
+        germline_state=germline,
+        expression_state=expression,
+    )
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="running_version is required"):
+        CognitiveRuntimeCheckpoint.from_bytes(checkpoint.to_bytes(), kernel_limits=KernelLimits())
+
+
+def test_portable_checkpoint_rejects_tampered_genetic_state() -> None:
+    genome, germline, expression = _genetic_state()
+    checkpoint = CognitiveRuntimeCheckpoint(
+        state=_state(),
+        graph=_graph(),
+        genome=genome,
+        germline_state=germline,
+        expression_state=expression,
+    )
+    document = json.loads(checkpoint.to_bytes())
+    document["genome"]["genotype_hash"] = "0" * len(genome.genotype_hash)
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="malformed cognitive runtime"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(),
+            kernel_limits=KernelLimits(),
+            running_version=(0, 85, 0),
+        )
+
+
+def test_portable_checkpoint_rejects_inconsistent_genetic_state_at_construction() -> None:
+    genome, germline, expression = _genetic_state()
+    expression.birth_expression["plasticity.learning_rate.baseline"] += 0.1
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="genetic state is inconsistent"):
+        CognitiveRuntimeCheckpoint(
+            state=_state(),
+            graph=_graph(),
+            genome=genome,
+            germline_state=germline,
+            expression_state=expression,
+        )
+
+
+def test_portable_checkpoint_rejects_genetic_state_mutated_after_construction() -> None:
+    genome, germline, expression = _genetic_state()
+    checkpoint = CognitiveRuntimeCheckpoint(
+        state=_state(),
+        graph=_graph(),
+        genome=genome,
+        germline_state=germline,
+        expression_state=expression,
+    )
+    # The checkpoint is frozen, but nested domain values are mutable. The
+    # serialized snapshot must therefore be revalidated, not trusted from
+    # construction time.
+    expression.birth_expression["plasticity.learning_rate.baseline"] += 0.1
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="genetic state is inconsistent"):
+        checkpoint.to_bytes()
+
+
+def test_portable_checkpoint_rejects_serialized_partial_genetic_state() -> None:
+    genome, germline, expression = _genetic_state()
+    document = json.loads(
+        CognitiveRuntimeCheckpoint(
+            state=_state(),
+            graph=_graph(),
+            genome=genome,
+            germline_state=germline,
+            expression_state=expression,
+        ).to_bytes()
+    )
+    document["expression_state"] = None
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="present together"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(),
+            kernel_limits=KernelLimits(),
+            running_version=(0, 85, 0),
+        )
+
+
+def test_portable_checkpoint_round_trips_genetics_through_organism_envelope() -> None:
+    genome, germline, expression = _genetic_state()
+    envelope = CognitiveRuntimeCheckpoint(
+        state=_state(),
+        graph=_graph(),
+        genome=genome,
+        germline_state=germline,
+        expression_state=expression,
+    ).to_organism_checkpoint()
+
+    restored = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+        envelope,
+        kernel_limits=KernelLimits(),
+        running_version=(0, 85, 0),
+    )
+
+    assert restored.genome == genome
+    assert restored.germline_state is not None
+    assert restored.germline_state.inherited_marks == germline.inherited_marks
+    assert restored.expression_state is not None
+    assert restored.expression_state.as_dict() == expression.as_dict()
 
 
 def test_cognitive_checkpoint_rejects_identity_mismatch() -> None:
