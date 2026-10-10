@@ -247,7 +247,7 @@ def test_checkpoint_controller_presence_does_not_create_established_competence()
     )
 
     payload = learner.checkpoint()
-    assert payload["schema_version"] == 11
+    assert payload["schema_version"] == 12
     assert payload["primitives"] == []
 
     restored = CompetenceDevelopmentEngine.restore(
@@ -391,6 +391,79 @@ def test_sensorimotor_checkpoint_roundtrip_preserves_learning_state():
         item.maturity for item in learner.cognitive_primitives
     )
     assert all(item.competence_evidence.support >= 2 for item in restored.cognitive_primitives)
+
+
+def test_checkpoint_restore_preserves_identity_and_effective_concurrency_output():
+    ids = _ids(6)
+    learner = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-checkpoint-config",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-checkpoint-config", ids),
+        max_concurrent=1,
+    )
+    for tick in range(17):
+        learner.motor_intents(tick)
+
+    payload = learner.checkpoint()
+    assert payload["schema_version"] == 12
+    assert payload["organism_id"] == "org-checkpoint-config"
+    assert payload["max_concurrent"] == 1
+
+    restored = CompetenceDevelopmentEngine.restore(
+        payload,
+        actuator_ids=ids,
+        organism_id="org-checkpoint-config",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-checkpoint-config", ids),
+        expected_max_concurrent=1,
+    )
+    for tick in range(17, 17 + 24 * 8):
+        assert restored.motor_intents(tick) == learner.motor_intents(tick)
+
+
+def test_restore_rejects_checkpoint_for_another_organism():
+    ids = _ids(4)
+    learner = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-original",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-original", ids),
+    )
+
+    with pytest.raises(ValueError, match="organism identity mismatch"):
+        CompetenceDevelopmentEngine.restore(
+            learner.checkpoint(),
+            actuator_ids=ids,
+            organism_id="org-other",
+            embodiment_fingerprint=_test_embodiment_fingerprint("org-original", ids),
+        )
+
+
+def test_restore_rejects_max_concurrent_mismatch_and_invalid_checkpoint_value():
+    ids = _ids(4)
+    learner = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-config-mismatch",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-config-mismatch", ids),
+        max_concurrent=1,
+    )
+    payload = learner.checkpoint()
+
+    with pytest.raises(ValueError, match="max_concurrent mismatch"):
+        CompetenceDevelopmentEngine.restore(
+            payload,
+            actuator_ids=ids,
+            organism_id="org-config-mismatch",
+            embodiment_fingerprint=_test_embodiment_fingerprint("org-config-mismatch", ids),
+            expected_max_concurrent=2,
+        )
+
+    payload["max_concurrent"] = 0
+    with pytest.raises(ValueError, match="max_concurrent"):
+        CompetenceDevelopmentEngine.restore(
+            payload,
+            actuator_ids=ids,
+            organism_id="org-config-mismatch",
+            embodiment_fingerprint=_test_embodiment_fingerprint("org-config-mismatch", ids),
+        )
 
 
 def test_cognitive_primitive_replays_only_learned_motor_pattern():
@@ -1122,7 +1195,7 @@ def test_exclusive_motor_groups_never_babble_antagonistic_channels_together():
 
     assert seen == set(ids)
     checkpoint = learner.checkpoint()
-    assert checkpoint["schema_version"] == 11
+    assert checkpoint["schema_version"] == 12
     assert checkpoint["exclusive_actuator_groups"] == [list(group) for group in groups]
 
     restored = CompetenceDevelopmentEngine.restore(
@@ -1134,7 +1207,7 @@ def test_exclusive_motor_groups_never_babble_antagonistic_channels_together():
     assert restored._exclusive_actuator_groups == groups
 
 
-@pytest.mark.parametrize("schema_version", [9, 10])
+@pytest.mark.parametrize("schema_version", [9, 10, 11])
 def test_pre_current_sensorimotor_schemas_are_rejected(schema_version):
     ids = _ids(4)
     learner = CompetenceDevelopmentEngine(
