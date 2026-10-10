@@ -2,8 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+
+
+_CHECKPOINT_FIELDS = {"schema_version", "max_relations", "sequential"}
+_EVIDENCE_FIELDS = {
+    "first_competence_id",
+    "second_competence_id",
+    "effect_id",
+    "support",
+    "failures",
+}
+
+
+def _require_non_negative_int(value: object, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
+
+
+def _require_identifier(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} must be a non-empty string")
+    return value
 
 
 @dataclass(slots=True)
@@ -40,9 +62,13 @@ class CompositionEngine:
     SCHEMA_VERSION = 1
 
     def __init__(self, *, max_relations: int = 512) -> None:
-        if max_relations < 1:
+        if (
+            isinstance(max_relations, bool)
+            or not isinstance(max_relations, int)
+            or max_relations < 1
+        ):
             raise ValueError("max_relations must be positive")
-        self._max_relations = int(max_relations)
+        self._max_relations = max_relations
         self._sequential: dict[
             tuple[str, str, str],
             SequentialCompositionEvidence,
@@ -112,37 +138,54 @@ class CompositionEngine:
         }
 
     @classmethod
-    def restore(cls, payload: dict[str, Any]) -> "CompositionEngine":
-        if payload.get("schema_version") != cls.SCHEMA_VERSION:
+    def restore(cls, payload: object) -> "CompositionEngine":
+        if not isinstance(payload, Mapping) or set(payload) != _CHECKPOINT_FIELDS:
+            raise ValueError("invalid composition checkpoint fields")
+        version = payload["schema_version"]
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != cls.SCHEMA_VERSION
+        ):
             raise ValueError("unsupported composition checkpoint")
-        engine = cls(max_relations=int(payload.get("max_relations", 512)))
-        raw = payload.get("sequential", [])
-        if not isinstance(raw, list):
+        max_relations = payload["max_relations"]
+        if (
+            isinstance(max_relations, bool)
+            or not isinstance(max_relations, int)
+            or max_relations < 1
+        ):
+            raise ValueError("invalid composition relation capacity")
+        raw = payload["sequential"]
+        if not isinstance(raw, list) or len(raw) > max_relations:
             raise ValueError("invalid composition checkpoint")
-        for item in raw[: engine._max_relations]:
-            if not isinstance(item, dict):
+        engine = cls(max_relations=max_relations)
+        for item in raw:
+            if not isinstance(item, Mapping) or set(item) != _EVIDENCE_FIELDS:
                 raise ValueError("invalid composition evidence")
             evidence = SequentialCompositionEvidence(
-                first_competence_id=str(item["first_competence_id"]),
-                second_competence_id=str(item["second_competence_id"]),
-                effect_id=str(item["effect_id"]),
-                support=int(item.get("support", 0)),
-                failures=int(item.get("failures", 0)),
+                first_competence_id=_require_identifier(
+                    item["first_competence_id"], field="first_competence_id"
+                ),
+                second_competence_id=_require_identifier(
+                    item["second_competence_id"], field="second_competence_id"
+                ),
+                effect_id=_require_identifier(item["effect_id"], field="effect_id"),
+                support=_require_non_negative_int(item["support"], field="support"),
+                failures=_require_non_negative_int(
+                    item["failures"], field="failures"
+                ),
             )
             if (
-                not evidence.first_competence_id
-                or not evidence.second_competence_id
-                or evidence.first_competence_id == evidence.second_competence_id
+                evidence.first_competence_id == evidence.second_competence_id
                 or not evidence.effect_id.startswith("effect.")
-                or evidence.support < 0
-                or evidence.failures < 0
             ):
                 raise ValueError("invalid composition evidence")
-            engine._sequential[
-                (
-                    evidence.first_competence_id,
-                    evidence.second_competence_id,
-                    evidence.effect_id,
-                )
-            ] = evidence
+            key = (
+                evidence.first_competence_id,
+                evidence.second_competence_id,
+                evidence.effect_id,
+            )
+            if key in engine._sequential:
+                raise ValueError("duplicate composition evidence")
+            engine._sequential[key] = evidence
         return engine
