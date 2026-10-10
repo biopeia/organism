@@ -6,7 +6,10 @@ import json
 import pytest
 
 from organism.actuation.action import MotorCommand
-from organism.actuation.intervention import InterventionSignatureRegistry
+from organism.actuation.intervention import (
+    InterventionSignatureRegistry,
+    opaque_channel_ref,
+)
 
 
 def _recorded_registry() -> InterventionSignatureRegistry:
@@ -35,6 +38,14 @@ def _recorded_registry() -> InterventionSignatureRegistry:
         tick=4,
     )
     return registry
+
+
+def test_intervention_identity_uses_biopeia_target_namespace() -> None:
+    registry = InterventionSignatureRegistry()
+    assert opaque_channel_ref("actuator-a") == "channel.3b5d7d7fa21c752a"
+    assert registry.signature_for_pattern({"actuator-a": 0.5}).signature_id == (
+        "intervention.signature.5fb973a2b7ee8f0663f7974e"
+    )
 
 
 def test_intervention_registry_checkpoint_restores_and_continues_command_evidence() -> None:
@@ -100,7 +111,14 @@ def test_intervention_registry_restore_requires_exact_top_level_schema() -> None
             InterventionSignatureRegistry.restore(invalid)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("version", [True, 2, "1", None])
+def test_intervention_registry_restore_rejects_previous_identity_schema_version() -> None:
+    payload = _recorded_registry().checkpoint()
+    payload["schema_version"] = 1
+    with pytest.raises(ValueError, match="unsupported intervention signature checkpoint"):
+        InterventionSignatureRegistry.restore(payload)
+
+
+@pytest.mark.parametrize("version", [True, 1, "2", None])
 def test_intervention_registry_restore_rejects_unsupported_schema(version: object) -> None:
     payload = _recorded_registry().checkpoint()
     payload["schema_version"] = version

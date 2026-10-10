@@ -11,7 +11,7 @@ from organism.actuation.dimension import ActionDimensionRegistry, opaque_dimensi
 def _checkpoint() -> dict[str, object]:
     channels = ["opaque.channel.a", "opaque.channel.b"]
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "capacity": 4,
         "items": [
             {
@@ -25,6 +25,12 @@ def _checkpoint() -> dict[str, object]:
             }
         ],
     }
+
+
+def test_dimension_identity_uses_biopeia_target_namespace() -> None:
+    assert opaque_dimension_id(["opaque.channel.a", "opaque.channel.b"]) == (
+        "action.dimension.e36227fb25d44ef9"
+    )
 
 
 def test_action_dimension_registry_checkpoint_round_trips_and_rebinds() -> None:
@@ -59,11 +65,18 @@ def test_restore_requires_exact_top_level_shape() -> None:
         ActionDimensionRegistry.restore({**valid, "future": None})
 
 
-@pytest.mark.parametrize("version", [True, "2", None])
+@pytest.mark.parametrize("version", [True, 2, "3", None])
 def test_restore_rejects_invalid_schema_version(version: object) -> None:
     payload = _checkpoint()
     payload["schema_version"] = version
     with pytest.raises(ValueError):
+        ActionDimensionRegistry.restore(payload)
+
+
+def test_restore_rejects_previous_identity_schema_version() -> None:
+    payload = _checkpoint()
+    payload["schema_version"] = 2
+    with pytest.raises(ValueError, match="unsupported action dimension checkpoint"):
         ActionDimensionRegistry.restore(payload)
 
 

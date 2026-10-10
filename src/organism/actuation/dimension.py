@@ -22,7 +22,7 @@ from typing import Any, Iterable, Mapping
 
 from .evidence import OpportunityView
 
-_DIMENSION_SCHEMA = "symbiont-action-dimension-v2"
+_DIMENSION_SCHEMA = "biopeia-action-dimension-v3"
 
 
 def opaque_dimension_id(channel_refs: Iterable[str]) -> str:
@@ -165,7 +165,9 @@ class ActionDimension:
 class ActionDimensionRegistry:
     """Bounded registry of dimensions acquired only from causal evidence."""
 
-    SCHEMA_VERSION = 2
+    # v3 changes the namespace used to derive persisted dimension identities.
+    # Older checkpoints must fail closed rather than retain historical IDs.
+    SCHEMA_VERSION = 3
 
     def __init__(
         self,
