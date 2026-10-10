@@ -12,6 +12,17 @@ This repository is an incremental extraction from the historical
 
 - immutable Organism identity values, including explicit fresh identities for
   branches;
+- an explicit continuation envelope carrying a stable `continuation_id`,
+  Organism step and optional branch ancestry; the envelope itself never claims
+  canonical authority;
+- an Organism-owned compare-and-commit registry API that rejects a second live
+  restore and stale canonical checkpoints within one process-local registry;
+  the registry snapshot is owner state, not a portable authority token, and
+  this implementation does not provide cross-process coordination or global
+  uniqueness across copied stores;
+- a branch operation that requires owner-produced private state under a new
+  `organism_id`, records source checkpoint provenance and requires explicit
+  registry designation before the fork becomes canonical;
 - an owner-opaque, schema-versioned checkpoint byte envelope with integrity
   checks and verified external dependency references;
 - a bounded cognition component checkpoint for recurrent activations and their
