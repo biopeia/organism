@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from organism.actuation.candidate import _MAX_EFFECT_RELATIONS_PER_CANDIDATE, ActuatorCandidateState
+from organism.actuation.context import ActuatorEvidenceContext
 
 
 def test_new_candidate_starts_dormant_with_zero_effect_strength():
@@ -76,6 +77,33 @@ def test_export_restore_round_trip_preserves_established_relations():
     assert restored.actuator_id == "actuator.a"
     assert restored.probing_state == "active"
     assert restored.effect_relations["percept.x"].count == 10
+
+
+@pytest.mark.parametrize("scope", ["global", "context"])
+def test_from_payload_rejects_non_object_pair_accumulator(scope):
+    state = ActuatorCandidateState(actuator_id="actuator.a")
+    if scope == "global":
+        state.observe_effect("percept.x", activation=1.0, delta_percept=0.5)
+    else:
+        context = ActuatorEvidenceContext("body-1", "episode-1", "morph-1", "surface-1")
+        state.observe_context_effect(
+            context, "percept.x", activation=1.0, delta_percept=0.5
+        )
+    payload = state.to_payload()
+
+    if scope == "global":
+        relation = payload["effect_relations"]["percept.x"]
+    else:
+        evidence = next(iter(payload["context_evidence"].values()))
+        relation = evidence["effect_relations"]["percept.x"]
+    replacement = list(relation.items())
+    if scope == "global":
+        payload["effect_relations"]["percept.x"] = replacement
+    else:
+        evidence["effect_relations"]["percept.x"] = replacement
+
+    with pytest.raises(ValueError, match="checkpoint must be an object"):
+        ActuatorCandidateState.from_payload(payload)
 
 
 def test_from_payload_raises_when_effect_relations_exceed_max():

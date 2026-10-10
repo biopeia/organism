@@ -62,8 +62,8 @@ class PairAccumulator:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "PairAccumulator":
         required = {"count", "mean_x", "mean_y", "m2_x", "m2_y", "c_xy"}
-        if not required.issubset(payload):
-            raise ValueError("incomplete pair accumulator checkpoint")
+        if not isinstance(payload, dict) or set(payload) != required:
+            raise ValueError("pair accumulator checkpoint fields do not match schema")
         count = _require_nonneg_int(payload["count"], "count")
         mean_x = _require_finite(payload["mean_x"], "mean_x")
         mean_y = _require_finite(payload["mean_y"], "mean_y")
