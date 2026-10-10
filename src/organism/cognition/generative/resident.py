@@ -204,9 +204,8 @@ class ResidentGenerativeCognition:
             ),
             "hypotheses": [
                 {
-                    # Keep the hypothesis' own versioned checkpoint as the
-                    # single codec for its complete durable state, including
-                    # reconciliation history.
+                    # Use the hypothesis strict checkpoint codec as the single encoding
+                    # for its durable state, including reconciliation history.
                     "hypothesis": hypothesis.checkpoint(),
                     "target_id": self._hypothesis_target[hypothesis.hypothesis_id],
                     "predicted_outcomes": list(
