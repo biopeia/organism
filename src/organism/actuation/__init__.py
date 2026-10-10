@@ -11,6 +11,7 @@ from .arbitration import ActionArbitrator, ArbitrationDecision
 from .binding import CompetenceExecutionBinding, CompetenceExecutionBindingRegistry
 from .commitment import ActionCommitment, CommitmentStatus
 from .command import motor_command_from_frame
+from .context import ActuatorEvidenceContext
 from .controller import ControllerFrame, SequenceController
 from .competence import (
     CompetenceCandidate,
@@ -62,6 +63,7 @@ __all__ = [
     "ActuatorChannel",
     "ActuatorConstitution",
     "ActuatorEvidenceModel",
+    "ActuatorEvidenceContext",
     "ActuatorSurface",
     "ArbitrationDecision",
     "CausalEvidence",
