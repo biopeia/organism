@@ -13,6 +13,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 import json
+from enum import StrEnum
 
 from .checkpoint import InvalidOrganismCheckpoint, OrganismCheckpoint
 from .identity import OrganismIdentity
@@ -24,6 +25,39 @@ class OrganismTransitionError(ValueError):
 
 class InvalidOrganismTransitionCheckpoint(ValueError):
     """A serialized canonical Organism transition state is invalid."""
+
+
+class OrganismLifecycle(StrEnum):
+    """Longitudinal Organism lifecycle, independent of body/presence lifecycle."""
+
+    ACTIVE = "ACTIVE"
+    DORMANT = "DORMANT"
+    TERMINATED = "TERMINATED"
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleTransitionRecord:
+    """Owner-recorded lifecycle transition and opaque request provenance."""
+
+    transition_id: str
+    from_state: OrganismLifecycle
+    to_state: OrganismLifecycle
+    request_ref: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.transition_id, str) or not self.transition_id.strip():
+            raise OrganismTransitionError("lifecycle transition_id must be non-empty")
+        if not isinstance(self.request_ref, str) or not self.request_ref.strip():
+            raise OrganismTransitionError("lifecycle request_ref must be non-empty")
+        if not isinstance(self.from_state, OrganismLifecycle) or not isinstance(self.to_state, OrganismLifecycle):
+            raise OrganismTransitionError("lifecycle transition states must be explicit")
+        if (self.from_state, self.to_state) not in {
+            (OrganismLifecycle.ACTIVE, OrganismLifecycle.DORMANT),
+            (OrganismLifecycle.DORMANT, OrganismLifecycle.ACTIVE),
+            (OrganismLifecycle.ACTIVE, OrganismLifecycle.TERMINATED),
+            (OrganismLifecycle.DORMANT, OrganismLifecycle.TERMINATED),
+        }:
+            raise OrganismTransitionError("invalid or terminal Organism lifecycle transition")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,9 +110,11 @@ class OrganismTransitionState:
     organism_step: int
     embodiment: EmbodimentContextRef | None = None
     world_correlation: WorldCausalCorrelation | None = None
+    lifecycle: OrganismLifecycle | None = None
+    lifecycle_history: tuple[LifecycleTransitionRecord, ...] = ()
 
     SCHEMA = "biopeia.organism-transition"
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __post_init__(self) -> None:
         if not isinstance(self.owner_checkpoint, OrganismCheckpoint):
@@ -101,6 +137,21 @@ class OrganismTransitionState:
             raise OrganismTransitionError(
                 "world_correlation must be WorldCausalCorrelation or None"
             )
+        if not isinstance(self.lifecycle, OrganismLifecycle):
+            raise OrganismTransitionError("lifecycle must be explicitly supplied")
+        if not isinstance(self.lifecycle_history, tuple) or any(
+            not isinstance(record, LifecycleTransitionRecord) for record in self.lifecycle_history
+        ):
+            raise OrganismTransitionError("lifecycle_history must be a tuple of valid records")
+        seen: set[str] = set()
+        expected = OrganismLifecycle.ACTIVE
+        for record in self.lifecycle_history:
+            if record.transition_id in seen or record.from_state is not expected:
+                raise OrganismTransitionError("lifecycle history is duplicated or discontinuous")
+            seen.add(record.transition_id)
+            expected = record.to_state
+        if expected is not self.lifecycle:
+            raise OrganismTransitionError("lifecycle does not match its recorded history")
 
     @property
     def identity(self) -> OrganismIdentity:
@@ -137,6 +188,16 @@ class OrganismTransitionState:
                     "causal_tick": self.world_correlation.causal_tick,
                 }
             ),
+            "lifecycle": self.lifecycle.value,
+            "lifecycle_history": [
+                {
+                    "transition_id": record.transition_id,
+                    "from_state": record.from_state.value,
+                    "to_state": record.to_state.value,
+                    "request_ref": record.request_ref,
+                }
+                for record in self.lifecycle_history
+            ],
         }
         return json.dumps(
             document,
@@ -157,6 +218,8 @@ class OrganismTransitionState:
                 "owner_checkpoint_base64",
                 "embodiment",
                 "world_correlation",
+                "lifecycle",
+                "lifecycle_history",
             }
             if not isinstance(document, dict) or set(document) != expected_keys:
                 raise InvalidOrganismTransitionCheckpoint(
@@ -214,11 +277,29 @@ class OrganismTransitionState:
                     )
                 world_correlation = WorldCausalCorrelation(**raw_world)
 
+            raw_history = document["lifecycle_history"]
+            if not isinstance(raw_history, list):
+                raise InvalidOrganismTransitionCheckpoint("lifecycle_history must be a list")
+            history = []
+            for raw_record in raw_history:
+                if not isinstance(raw_record, dict) or set(raw_record) != {
+                    "transition_id", "from_state", "to_state", "request_ref"
+                }:
+                    raise InvalidOrganismTransitionCheckpoint("lifecycle transition record has an invalid shape")
+                history.append(LifecycleTransitionRecord(
+                    transition_id=raw_record["transition_id"],
+                    from_state=OrganismLifecycle(raw_record["from_state"]),
+                    to_state=OrganismLifecycle(raw_record["to_state"]),
+                    request_ref=raw_record["request_ref"],
+                ))
+
             return cls(
                 owner_checkpoint=owner_checkpoint,
                 organism_step=organism_step,
                 embodiment=embodiment,
                 world_correlation=world_correlation,
+                lifecycle=OrganismLifecycle(document["lifecycle"]),
+                lifecycle_history=tuple(history),
             )
         except InvalidOrganismTransitionCheckpoint:
             raise
@@ -282,10 +363,50 @@ def accept_organism_transition(
         raise OrganismTransitionError(
             "proposed state belongs to a different Organism identity"
         )
+    if current.lifecycle is not OrganismLifecycle.ACTIVE:
+        raise OrganismTransitionError("ordinary progression requires an ACTIVE Organism")
 
     return OrganismTransitionState(
         owner_checkpoint=proposal.owner_checkpoint,
         organism_step=current.organism_step + 1,
         embodiment=proposal.embodiment,
         world_correlation=proposal.world_correlation,
+        lifecycle=current.lifecycle,
+        lifecycle_history=current.lifecycle_history,
+    )
+
+
+def transition_organism_lifecycle(
+    current: OrganismTransitionState,
+    target: OrganismLifecycle,
+    *,
+    transition_id: str,
+    request_ref: str,
+    embodiment: EmbodimentContextRef | None = None,
+) -> OrganismTransitionState:
+    """Apply an explicit lifecycle request without advancing organism_step.
+
+    Body death and World-presence termination are not inputs to this function;
+    neither implies longitudinal Organism termination.
+    """
+    if not isinstance(current, OrganismTransitionState):
+        raise OrganismTransitionError("current must be OrganismTransitionState")
+    if not isinstance(target, OrganismLifecycle):
+        raise OrganismTransitionError("target lifecycle must be explicit")
+    if embodiment is not None and not isinstance(embodiment, EmbodimentContextRef):
+        raise OrganismTransitionError("embodiment must be an EmbodimentContextRef when supplied")
+    if embodiment is not None and not (
+        current.lifecycle is OrganismLifecycle.DORMANT and target is OrganismLifecycle.ACTIVE
+    ):
+        raise OrganismTransitionError(
+            "a new Embodiment context may be bound only when reactivating a DORMANT Organism"
+        )
+    record = LifecycleTransitionRecord(transition_id, current.lifecycle, target, request_ref)
+    return OrganismTransitionState(
+        owner_checkpoint=current.owner_checkpoint,
+        organism_step=current.organism_step,
+        embodiment=embodiment if embodiment is not None else current.embodiment,
+        world_correlation=current.world_correlation,
+        lifecycle=target,
+        lifecycle_history=(*current.lifecycle_history, record),
     )

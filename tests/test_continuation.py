@@ -6,15 +6,19 @@ import pytest
 
 from organism import (
     CanonicalContinuationRegistry,
+    ContinuationError,
     ContinuationId,
     DuplicateCanonicalContinuation,
     InvalidContinuationCheckpoint,
     OrganismCheckpoint,
     OrganismContinuation,
     OrganismIdentity,
+    OrganismLifecycle,
+    EmbodimentContextRef,
     OrganismTransitionState,
     StaleCanonicalContinuation,
     branch_continuation,
+    transition_organism_lifecycle,
 )
 
 
@@ -26,7 +30,7 @@ BRANCH_CONTINUATION = ContinuationId.create(UUID("b0b0b0b0-0000-4000-8000-000000
 
 def continuation(identity=IDENTITY, continuation_id=CONTINUATION, step=0, state=b"private"):
     checkpoint = OrganismCheckpoint(identity, state)
-    transition = OrganismTransitionState(checkpoint, organism_step=step)
+    transition = OrganismTransitionState(checkpoint, organism_step=step, lifecycle=OrganismLifecycle.ACTIVE)
     return OrganismContinuation(transition, continuation_id)
 
 
@@ -62,6 +66,7 @@ def test_branch_requires_new_owner_state_and_records_ancestry():
     branch_state = OrganismTransitionState(
         OrganismCheckpoint(BRANCH_IDENTITY, b"owner-produced branch state"),
         organism_step=4,
+        lifecycle=OrganismLifecycle.ACTIVE,
     )
 
     branch = branch_continuation(
@@ -107,6 +112,88 @@ def test_registry_snapshot_restores_exact_owner_authority_state():
 
     with restored.acquire(initial) as lease:
         assert lease.current == initial
+
+
+def test_registry_commits_lifecycle_without_advancing_organism_step():
+    initial = continuation()
+    registry = CanonicalContinuationRegistry()
+    registry.register_genesis(initial)
+
+    with registry.acquire(initial) as lease:
+        dormant_state = transition_organism_lifecycle(
+            lease.current.state,
+            OrganismLifecycle.DORMANT,
+            transition_id="lifecycle-1",
+            request_ref="owner-request-1",
+        )
+        dormant = OrganismContinuation(dormant_state, lease.current.continuation_id)
+        lease.commit(dormant)
+        assert lease.current.organism_step == initial.organism_step
+        assert lease.current.state.lifecycle is OrganismLifecycle.DORMANT
+
+    with registry.acquire(dormant) as restored:
+        assert restored.current == dormant
+
+
+@pytest.mark.parametrize("lifecycle", [OrganismLifecycle.DORMANT, OrganismLifecycle.TERMINATED])
+def test_registry_rejects_ordinary_step_committed_directly_from_non_active_state(lifecycle):
+    initial = continuation()
+    registry = CanonicalContinuationRegistry()
+    registry.register_genesis(initial)
+    with registry.acquire(initial) as lease:
+        non_active_state = transition_organism_lifecycle(
+            lease.current.state,
+            lifecycle,
+            transition_id="lifecycle-1",
+            request_ref="owner-request-1",
+        )
+        non_active = OrganismContinuation(non_active_state, lease.current.continuation_id)
+        lease.commit(non_active)
+
+        forged_progression_state = OrganismTransitionState(
+            owner_checkpoint=non_active.state.owner_checkpoint,
+            organism_step=non_active.organism_step + 1,
+            lifecycle=lifecycle,
+            lifecycle_history=non_active.state.lifecycle_history,
+        )
+        forged_progression = OrganismContinuation(
+            forged_progression_state, non_active.continuation_id
+        )
+        with pytest.raises(ContinuationError, match="one active step"):
+            lease.commit(forged_progression)
+
+
+def test_registry_allows_reactivation_to_bind_new_embodiment_context():
+    original_context = EmbodimentContextRef("body-a", "episode-a", "morph-1")
+    checkpoint = OrganismCheckpoint(IDENTITY, b"private")
+    initial_state = OrganismTransitionState(
+        checkpoint, organism_step=0, embodiment=original_context,
+        lifecycle=OrganismLifecycle.ACTIVE,
+    )
+    initial = OrganismContinuation(initial_state, CONTINUATION)
+    registry = CanonicalContinuationRegistry()
+    registry.register_genesis(initial)
+    new_context = EmbodimentContextRef("body-b", "episode-b", "morph-2")
+
+    with registry.acquire(initial) as lease:
+        dormant_state = transition_organism_lifecycle(
+            lease.current.state, OrganismLifecycle.DORMANT,
+            transition_id="lifecycle-1", request_ref="owner-request-1",
+        )
+        dormant = OrganismContinuation(dormant_state, CONTINUATION)
+        lease.commit(dormant)
+        active_state = transition_organism_lifecycle(
+            dormant_state, OrganismLifecycle.ACTIVE,
+            transition_id="lifecycle-2", request_ref="reembodiment-request-2",
+            embodiment=new_context,
+        )
+        active = OrganismContinuation(active_state, CONTINUATION)
+        lease.commit(active)
+
+    assert active.identity == initial.identity
+    assert active.organism_step == initial.organism_step
+    assert active.state.owner_checkpoint == initial.state.owner_checkpoint
+    assert active.state.embodiment == new_context
 
 
 def test_registry_checkpoint_decoder_rejects_unknown_fields():

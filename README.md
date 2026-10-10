@@ -20,6 +20,12 @@ This repository is an incremental extraction from the historical
   the registry snapshot is owner state, not a portable authority token, and
   this implementation does not provide cross-process coordination or global
   uniqueness across copied stores;
+- an explicit, persisted Organism lifecycle (`ACTIVE`, `DORMANT`, `TERMINATED`)
+  with transition provenance; lifecycle changes do not advance `organism_step`,
+  and missing/invalid lifecycle data fails closed. A `DORMANT → ACTIVE`
+  reactivation may bind a new identity-only Embodiment context without
+  advancing the Organism step. Provenance references are caller-supplied and
+  do not establish authentication, authorization, or trigger validity;
 - a branch operation that requires owner-produced private state under a new
   `organism_id`, records source checkpoint provenance and requires explicit
   registry designation before the fork becomes canonical;

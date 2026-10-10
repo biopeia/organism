@@ -10,11 +10,13 @@ from organism import (
     InvalidOrganismTransitionCheckpoint,
     OrganismCheckpoint,
     OrganismIdentity,
+    OrganismLifecycle,
     OrganismTransitionError,
     OrganismTransitionProposal,
     OrganismTransitionState,
     WorldCausalCorrelation,
     accept_organism_transition,
+    transition_organism_lifecycle,
 )
 
 
@@ -45,6 +47,7 @@ def state() -> OrganismTransitionState:
             "morphology-r1",
         ),
         world_correlation=WorldCausalCorrelation("world-a", 19),
+        lifecycle=OrganismLifecycle.ACTIVE,
     )
 
 
@@ -172,3 +175,99 @@ def test_dependency_verification_remains_owner_declared() -> None:
             else (_ for _ in ()).throw(KeyError(locator))
         )
     )
+
+
+def test_body_death_or_presence_loss_does_not_implicitly_terminate_organism() -> None:
+    current = state()
+    dormant = transition_organism_lifecycle(
+        current,
+        OrganismLifecycle.DORMANT,
+        transition_id="lifecycle-1",
+        request_ref="owner-request-1",
+    )
+
+    assert dormant.lifecycle is OrganismLifecycle.DORMANT
+    assert dormant.organism_step == current.organism_step
+    assert dormant.identity == current.identity
+    assert dormant.lifecycle_history[-1].request_ref == "owner-request-1"
+
+
+def test_dormant_reembodiment_can_reactivate_same_longitudinal_organism() -> None:
+    dormant = transition_organism_lifecycle(
+        state(), OrganismLifecycle.DORMANT,
+        transition_id="lifecycle-1", request_ref="owner-request-1",
+    )
+    active = transition_organism_lifecycle(
+        dormant, OrganismLifecycle.ACTIVE,
+        transition_id="lifecycle-2", request_ref="reembodiment-request-2",
+    )
+
+    assert active.identity == dormant.identity
+    assert active.owner_checkpoint == dormant.owner_checkpoint
+    assert active.organism_step == dormant.organism_step
+    assert [record.to_state for record in active.lifecycle_history] == [
+        OrganismLifecycle.DORMANT, OrganismLifecycle.ACTIVE
+    ]
+
+
+def test_reactivation_can_bind_new_explicit_embodiment_context() -> None:
+    old = EmbodimentContextRef("body-a", "episode-a", "morph-1")
+    new = EmbodimentContextRef("body-b", "episode-b", "morph-2")
+    current = OrganismTransitionState(
+        owner_checkpoint=state().owner_checkpoint,
+        organism_step=7,
+        embodiment=old,
+        world_correlation=state().world_correlation,
+        lifecycle=OrganismLifecycle.ACTIVE,
+    )
+    dormant = transition_organism_lifecycle(
+        current, OrganismLifecycle.DORMANT,
+        transition_id="lifecycle-1", request_ref="owner-request-1",
+    )
+    active = transition_organism_lifecycle(
+        dormant, OrganismLifecycle.ACTIVE,
+        transition_id="lifecycle-2", request_ref="reembodiment-request-2",
+        embodiment=new,
+    )
+
+    assert active.identity == current.identity
+    assert active.organism_step == current.organism_step
+    assert active.owner_checkpoint == current.owner_checkpoint
+    assert active.embodiment == new
+
+
+@pytest.mark.parametrize("target", [OrganismLifecycle.ACTIVE, OrganismLifecycle.DORMANT])
+def test_terminated_organism_cannot_transition_again(target) -> None:
+    terminated = transition_organism_lifecycle(
+        state(), OrganismLifecycle.TERMINATED,
+        transition_id="lifecycle-1", request_ref="owner-request-1",
+    )
+    with pytest.raises(OrganismTransitionError, match="invalid or terminal"):
+        transition_organism_lifecycle(
+            terminated, target, transition_id="lifecycle-2", request_ref="owner-request-2"
+        )
+
+
+@pytest.mark.parametrize("lifecycle", [OrganismLifecycle.DORMANT, OrganismLifecycle.TERMINATED])
+def test_ordinary_progression_rejected_outside_active(lifecycle) -> None:
+    current = state()
+    if lifecycle is OrganismLifecycle.DORMANT:
+        current = transition_organism_lifecycle(
+            current, lifecycle, transition_id="lifecycle-1", request_ref="owner-request-1"
+        )
+    else:
+        current = transition_organism_lifecycle(
+            current, lifecycle, transition_id="lifecycle-1", request_ref="owner-request-1"
+        )
+    with pytest.raises(OrganismTransitionError, match="requires an ACTIVE"):
+        accept_organism_transition(
+            current,
+            OrganismTransitionProposal(owner_checkpoint=current.owner_checkpoint),
+        )
+
+
+def test_restore_rejects_checkpoint_without_valid_lifecycle() -> None:
+    document = json.loads(state().to_bytes())
+    del document["lifecycle"]
+    with pytest.raises(InvalidOrganismTransitionCheckpoint):
+        OrganismTransitionState.from_bytes(json.dumps(document).encode())
