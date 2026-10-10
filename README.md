@@ -25,6 +25,11 @@ This repository is an incremental extraction from the historical
   weights with recurrent activations inside the generic Organism envelope.
   It excludes labile eligibility, private model artifacts and other cognition
   components; it is not a complete Organism checkpoint.
+- The first scalar-field SENSE boundary accepts only explicitly bound opaque
+  channel/receptor identities, dimensionless `[0, 1]` values, and matching
+  causal/source/body applicability, including the declared sampling frame and
+  meter-based position. Missing configured signals are rejected; the boundary
+  does not assign environmental meaning or prove learning.
 
 ## Development
 
