@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from organism.actuation.evidence import CausalEvidence
 from organism.actuation.footprint import (
     AtomEstimate,
@@ -210,6 +212,24 @@ def test_restored_registry_continues_the_same_causal_history():
     assert restored.transitions() == continuous.transitions()
     assert restored.footprints == continuous.footprints
     assert restored.checkpoint() == continuous.checkpoint()
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (None, "checkpoint must be an object"),
+        ([], "checkpoint must be an object"),
+        ({}, "unsupported footprint registry checkpoint"),
+        ({"schema_version": FootprintRegistry.SCHEMA_VERSION}, "fields are incomplete"),
+        (
+            {**FootprintRegistry().checkpoint(), "unexpected": True},
+            "fields are incomplete or unknown",
+        ),
+    ],
+)
+def test_registry_restore_rejects_absent_or_malformed_checkpoint(payload, message):
+    with pytest.raises(ValueError, match=message):
+        FootprintRegistry.restore(payload)  # type: ignore[arg-type]
 
 
 def test_checkpoint_keeps_each_estimate_bound_to_its_atom():

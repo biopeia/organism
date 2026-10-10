@@ -822,12 +822,23 @@ class FootprintRegistry:
         }
 
     @classmethod
-    def restore(cls, payload: Mapping[str, Any] | None, **options: Any) -> "FootprintRegistry":
-        registry = cls(**options)
-        if payload is None:
-            return registry
+    def restore(cls, payload: Mapping[str, Any], **options: Any) -> "FootprintRegistry":
+        if not isinstance(payload, Mapping):
+            raise ValueError("footprint registry checkpoint must be an object")
         if payload.get("schema_version") != cls.SCHEMA_VERSION:
             raise ValueError("unsupported footprint registry checkpoint")
+        required_fields = {
+            "schema_version",
+            "members",
+            "versions",
+            "pins",
+            "transitions",
+            "transitions_recorded",
+            "live_estimates",
+        }
+        if set(payload) != required_fields:
+            raise ValueError("footprint registry checkpoint fields are incomplete or unknown")
+        registry = cls(**options)
         for raw in payload.get("versions", []):
             source = tuple(str(v) for v in raw["source"])
             registry._versions[source] = int(raw["version"])
