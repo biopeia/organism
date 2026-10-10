@@ -46,8 +46,13 @@ def export_expression(state: GeneExpressionState) -> dict[str, object]:
     return state.as_dict()
 
 
-def restore_expression(payload: Mapping[str, object], genome: Genome) -> GeneExpressionState:
-    return restore_expression_state(payload, genome)
+def restore_expression(
+    payload: Mapping[str, object],
+    genome: Genome,
+    *,
+    germline: GermlineState | None = None,
+) -> GeneExpressionState:
+    return restore_expression_state(payload, genome, germline=germline)
 
 
 def _mark_to_dict(mark: EpigeneticMark) -> dict[str, object]:

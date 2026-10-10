@@ -7,8 +7,11 @@ import pytest
 from organism.genetics import (
     EpigeneticMark,
     GermlineState,
+    GeneExpressionState,
     create_standard_genome,
+    export_expression,
     export_germline,
+    restore_expression,
     restore_germline,
 )
 
@@ -85,7 +88,8 @@ def test_germline_restore_rejects_birth_expression_not_derived_from_genome_and_m
     genome = _genome()
     state = GermlineState.from_genome(genome)
     payload = export_germline(state)
-    payload["birth_expression"]["plasticity.learning_rate.baseline"] = 0.4
+    locus = "plasticity.learning_rate.baseline"
+    payload["birth_expression"][locus] += 0.001
 
     with pytest.raises(ValueError, match="birth expression does not match"):
         restore_germline(payload, genome)
@@ -99,3 +103,28 @@ def test_germline_restore_accepts_birth_expression_derived_with_inherited_mark()
     restored = restore_germline(export_germline(state), genome)
 
     assert restored.birth_expression == state.birth_expression
+
+
+def test_expression_restore_rejects_birth_expression_not_derived_from_genome():
+    genome = _genome()
+    state = GeneExpressionState.from_genome(genome)
+    payload = export_expression(state)
+    locus = "plasticity.learning_rate.baseline"
+    payload["birth_expression"][locus] += 0.001
+
+    with pytest.raises(ValueError, match="birth expression does not match"):
+        restore_expression(payload, genome)
+
+
+def test_expression_restore_accepts_birth_expression_derived_from_inherited_germline():
+    genome = _genome()
+    mark = EpigeneticMark("plasticity.learning_rate.baseline", delta=0.01, strength=0.5)
+    germline = GermlineState.from_genome(genome, inherited_marks=(mark,))
+    expression = GeneExpressionState.from_genome(genome, germline=germline)
+    restored = restore_expression(
+        export_expression(expression),
+        genome,
+        germline=germline,
+    )
+
+    assert restored.as_dict() == expression.as_dict()
