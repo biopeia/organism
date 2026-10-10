@@ -57,6 +57,20 @@ def test_cognition_and_genetics_codecs_both_reject_invalid_genotype_hash(invalid
         )
 
 
+def test_cognition_and_genetics_codecs_both_reject_mismatched_genotype_hash():
+    genome = GenomeCodec().load(VALID_PAYLOAD)
+    payload = export_genome_checkpoint(genome)
+    payload["genotype_hash"] = "0" * len(genome.genotype_hash)
+    with pytest.raises(GenomeError, match="genotype checkpoint hash mismatch"):
+        restore_genome_checkpoint(
+            payload, kernel_limits=KernelLimits(), running_version=_RUNNING_VERSION
+        )
+    with pytest.raises(GenomeError, match="genotype checkpoint hash mismatch"):
+        restore_genome_genetics(
+            payload, kernel_limits=KernelLimits(), running_version=_RUNNING_VERSION
+        )
+
+
 def test_cognition_and_genetics_codecs_both_reject_missing_genotype_hash():
     genome = GenomeCodec().load(VALID_PAYLOAD)
     payload = export_genome_checkpoint(genome)
