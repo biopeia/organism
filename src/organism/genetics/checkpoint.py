@@ -124,6 +124,8 @@ def restore_germline(
         raise ValueError("malformed germline checkpoint")
     if not isinstance(enabled, bool):
         raise ValueError("acquired_capture_enabled must be bool")
+    if any(not isinstance(item, Mapping) for item in (*inherited, *acquired)):
+        raise ValueError("epigenetic mark entries must be objects")
     streaks: dict[str, int] = {}
     for locus, count in raw_streaks.items():
         if (
@@ -135,20 +137,33 @@ def restore_germline(
         ):
             raise ValueError("invalid epigenetic capture persistence checkpoint")
         streaks[locus] = count
-    schema.validate_flat(birth)
-    inherited_marks = tuple(
-        _mark_from_dict(item) for item in inherited if isinstance(item, Mapping)
-    )
-    acquired_marks = tuple(_mark_from_dict(item) for item in acquired if isinstance(item, Mapping))
+    normalized_birth = schema.validate_flat(birth)
+    inherited_marks = tuple(_mark_from_dict(item) for item in inherited)
+    acquired_marks = tuple(_mark_from_dict(item) for item in acquired)
+    for marks, name in (
+        (inherited_marks, "inherited"),
+        (acquired_marks, "acquired"),
+    ):
+        loci = [mark.locus for mark in marks]
+        if len(loci) != len(set(loci)):
+            raise ValueError(f"duplicate {name} epigenetic mark locus")
+    if acquired_marks and not enabled:
+        raise ValueError("acquired marks require acquired capture to be enabled")
     for mark in (*inherited_marks, *acquired_marks):
         if not schema.spec(mark.locus).regulable:
-            raise ValueError(f"epigenetic mark targets non-regulable locus {mark.locus!r}")
+            raise ValueError(
+                f"epigenetic mark targets non-regulable locus {mark.locus!r}"
+            )
     state = GermlineState.from_genome(
         genome,
         inherited_marks=inherited_marks,
         acquired_capture_enabled=enabled,
+        schema=schema,
     )
-    state.birth_expression = {str(k): v for k, v in birth.items()}
+    if normalized_birth != state.birth_expression:
+        raise ValueError(
+            "germline birth expression does not match genome and inherited marks"
+        )
     state.acquired_marks = {mark.locus: mark for mark in acquired_marks}
     state.capture_streaks = streaks
     return state
