@@ -247,18 +247,26 @@ def test_frozen_safety_state_survives_round_trip():
 
 # --- SensoryNormalizer checkpoint ---
 
-from organism.cognition.activation import SensoryNormalizer
+from organism.cognition.activation import MIN_NORMALIZER_SAMPLES, SensoryNormalizer
 from organism.cognition.checkpoint import (
     export_sensory_normalizers,
     restore_sensory_normalizers,
 )
 
 
-def test_unestablished_normalizer_is_not_exported():
+def test_unestablished_normalizer_state_is_preserved_for_continuation():
     normalizers = {"s": SensoryNormalizer()}
     normalizers["s"].normalize(1.0)  # only 1 sample, not established
     payload = export_sensory_normalizers(normalizers)
-    assert "s" not in payload
+    restored = restore_sensory_normalizers(payload)
+    assert restored["s"].mean == pytest.approx(normalizers["s"].mean)
+    assert restored["s"].variance == pytest.approx(normalizers["s"].variance)
+    assert restored["s"].count == normalizers["s"].count
+
+    for value in (1.5, -0.25, 2.0):
+        assert restored["s"].normalize(value) == pytest.approx(
+            normalizers["s"].normalize(value)
+        )
 
 
 def test_established_normalizer_round_trips():
@@ -270,6 +278,38 @@ def test_established_normalizer_round_trips():
     assert restored["s"].mean == pytest.approx(normalizer.mean)
     assert restored["s"].variance == pytest.approx(normalizer.variance)
     assert restored["s"].count == normalizer.count
+
+
+def test_empty_normalizer_mapping_is_a_valid_checkpoint_value():
+    assert restore_sensory_normalizers({}) == {}
+
+
+@pytest.mark.parametrize("payload", [None, [], "{}"])
+def test_normalizer_restore_rejects_non_object_payload(payload):
+    with pytest.raises(GraphError, match="must be an object"):
+        restore_sensory_normalizers(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"s": {"mean": 0.0, "variance": 1.0, "count": MIN_NORMALIZER_SAMPLES, "legacy": 0}},
+        {"s": {"mean": 0.0, "variance": 1.0}},
+        {"s": {"mean": 0.0, "variance": -1.0, "count": MIN_NORMALIZER_SAMPLES}},
+        {"s": {"mean": 10**1000, "variance": 1.0, "count": MIN_NORMALIZER_SAMPLES}},
+        {"": {"mean": 0.0, "variance": 1.0, "count": MIN_NORMALIZER_SAMPLES}},
+    ],
+)
+def test_normalizer_restore_rejects_invalid_or_noncanonical_entries(payload):
+    with pytest.raises(GraphError):
+        restore_sensory_normalizers(payload)
+
+
+def test_normalizer_restore_rejects_non_string_identity():
+    with pytest.raises(GraphError, match="identity"):
+        restore_sensory_normalizers(
+            {1: {"mean": 0.0, "variance": 1.0, "count": MIN_NORMALIZER_SAMPLES}}
+        )
 
 
 def test_tentative_weight_is_exact_in_codec_v4():

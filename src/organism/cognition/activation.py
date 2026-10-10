@@ -25,13 +25,11 @@ class SensoryNormalizer:
     def is_established(self) -> bool:
         """Below MIN_NORMALIZER_SAMPLES, ``mean`` is not yet an aggregate
         statistic -- after the first observation it is literally equal to
-        that raw reading (see ``normalize``'s cold-start branch). A
-        caller persisting this state (e.g. a future checkpoint) must gate
-        export on this, the same discipline every other stat tracker in
-        this codebase already follows (``AdaptiveSenseModel``,
-        ``SelfModel``) -- exporting an unestablished normalizer would
-        persist a value indistinguishable from a single raw telemetry
-        sample, which CLAUDE.md prohibits."""
+        that raw reading (see ``normalize``'s cold-start branch). This
+        threshold controls whether the aggregate is established for
+        interpretation; it does not authorize dropping state from a
+        canonical continuation checkpoint, which must preserve the
+        normalizer's exact running state."""
         return self.count >= MIN_NORMALIZER_SAMPLES
 
     def normalize(self, raw_value: float, *, z_max: float = 4.0, softness: float = 2.0) -> float:

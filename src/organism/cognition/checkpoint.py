@@ -10,7 +10,7 @@ from organism.genetics.genome import (
     _genome_to_plain_dict,
 )
 
-from .activation import MIN_NORMALIZER_SAMPLES, SensoryNormalizer
+from .activation import SensoryNormalizer
 from .graph import CognitiveGraph, GraphError, PlasticEdge, PlasticNode
 from .limits import KernelLimits
 from .metaplasticity import SafetyState
@@ -60,7 +60,10 @@ def restore_genome_checkpoint(
 def _require_finite(value: Any, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise GraphError(f"{field} must be a number")
-    number = float(value)
+    try:
+        number = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise GraphError(f"{field} must be a finite number") from exc
     if not math.isfinite(number):
         raise GraphError(f"{field} must be finite")
     return number
@@ -232,35 +235,39 @@ def restore_safety_state(payload: dict[str, Any] | None) -> SafetyState:
 
 
 def export_sensory_normalizers(normalizers: dict[str, SensoryNormalizer]) -> dict[str, Any]:
-    """Export only established normalizers; younger means can equal raw readings."""
-    return {
+    """Export complete normalizer state for exact runtime continuation."""
+    payload = {
         sense_id: {
             "mean": normalizer.mean,
             "variance": normalizer.variance,
             "count": normalizer.count,
         }
         for sense_id, normalizer in normalizers.items()
-        if normalizer.is_established
     }
+    restore_sensory_normalizers(payload)
+    return payload
 
 
-def restore_sensory_normalizers(payload: dict[str, Any] | None) -> dict[str, SensoryNormalizer]:
-    if not payload:
-        return {}
+def restore_sensory_normalizers(payload: dict[str, Any]) -> dict[str, SensoryNormalizer]:
     if not isinstance(payload, dict):
         raise GraphError("sensory_normalizers checkpoint must be an object")
     restored: dict[str, SensoryNormalizer] = {}
     for sense_id, entry in payload.items():
+        if not isinstance(sense_id, str) or not sense_id:
+            raise GraphError("sensory normalizer identity must be a non-empty string")
         if not isinstance(entry, dict):
             raise GraphError(f"sensory normalizer {sense_id!r} must be an object")
-        count = _require_nonneg_int(entry.get("count"), f"{sense_id}.count")
-        if count < MIN_NORMALIZER_SAMPLES:
+        if set(entry) != {"mean", "variance", "count"}:
             raise GraphError(
-                f"sensory normalizer {sense_id!r} checkpoint count below MIN_NORMALIZER_SAMPLES"
+                f"sensory normalizer {sense_id!r} must contain exactly mean, variance, and count"
             )
+        count = _require_nonneg_int(entry.get("count"), f"{sense_id}.count")
+        variance = _require_finite(entry["variance"], f"{sense_id}.variance")
+        if variance < 0:
+            raise GraphError(f"{sense_id}.variance must be non-negative")
         restored[sense_id] = SensoryNormalizer(
-            mean=_require_finite(entry.get("mean"), f"{sense_id}.mean"),
-            variance=_require_finite(entry.get("variance"), f"{sense_id}.variance"),
+            mean=_require_finite(entry["mean"], f"{sense_id}.mean"),
+            variance=variance,
             count=count,
         )
     return restored
