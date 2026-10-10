@@ -815,3 +815,12 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - One accepted owner transition increments `organism_step` exactly once; validation failure publishes no next state. A World-only causal step does not advance Organism progression because this owner boundary is not invoked.
 - TARGET restore is strict and fail-closed for the progression field: missing, boolean, non-integer, or negative values are rejected. Canonical re-embodiment is represented as an explicit replacement of body/episode/morphology context while preserving Organism identity and longitudinal private state.
 - Scope limitation: this slice establishes the canonical progression/transition envelope only. It does not yet compose cognition execution (#43), motor-authority/action composition (#30), full owner-declared dependency closure (#33), exact complete cognitive continuation (#45), all agency/actuation checkpoint state (#41), or Organism lifecycle termination/dormancy (#61). It therefore does not close MIG-002 (#34) or prove full runtime continuity, scientific efficacy, World durable recovery, or body/somatic semantics.
+
+## Incremental correction: zero action-linked hits cannot imply causal controllability (issue #42)
+
+- Implementation base: `1e6fe3213327c463bfe40ace48c64b606d530e9b`.
+- Finding: `controllability_confidence` could return positive confidence when the queried action had zero effect hits and no alternative windows, because the no-alternative branch depended only on opportunity count.
+- Disposition: bounded `REWRITE` of this invalid zero-evidence case only. The TARGET invariant is that zero action-linked hits yield zero causal-confidence value.
+- Target paths: `src/organism/actuation/model.py::controllability_confidence`; `tests/source_unit/actuation/test_controllability_model.py`.
+- Validation: focused controllability/footprint tests and full Organism suite are recorded in the associated PR.
+- Scope limitation: this does not ratify or validate the positive-confidence estimator, define an evidence window or priors, separate passive from competing active sources, remove the binding fallback in affordance projection, rename other uses of `controllability`, or close issue #42. No legacy behavior or compatibility path is preserved.

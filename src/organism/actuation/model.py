@@ -139,9 +139,12 @@ def controllability_confidence(
     action_n: int, action_hits: int, other_n: int, other_hits: int
 ) -> float:
     """Intervention reliability beyond the alternative rate, times support."""
-    reliability = action_hits / action_n if action_n else 0.0
-    if action_n == 0:
+    # Owner-ratified evidence invariant: a causal-confidence value cannot be
+    # positive without any action-linked observation of the effect.  In
+    # particular, absence of alternatives is not itself evidence of control.
+    if action_n <= 0 or action_hits <= 0:
         return 0.0
+    reliability = action_hits / action_n if action_n else 0.0
     if other_n == 0:
         return min(0.25, action_n / 32.0)
     advantage = reliability - other_hits / other_n
