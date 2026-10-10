@@ -22,7 +22,7 @@ from typing import Any, Mapping, Sequence
 
 from .action import MotorCommand
 
-_SCHEMA = "symbiont-intervention-signature-v1"
+_SCHEMA = "biopeia-intervention-signature-v2"
 # Relative activation buckets (relative to the strongest driven channel).
 # Two buckets separate "dominant" from "secondary" channels without turning
 # smoothing noise into new identities.
@@ -119,7 +119,9 @@ def _intensity_bucket(channels: Mapping[str, float]) -> int:
 class InterventionSignatureRegistry:
     """Bounded organism-internal registry of provisional intervention families."""
 
-    SCHEMA_VERSION = 1
+    # v2 changes the namespace used to derive persisted channel/signature IDs.
+    # Older checkpoints must fail closed rather than retain historical IDs.
+    SCHEMA_VERSION = 2
 
     def __init__(self, *, capacity: int = 512, command_memory: int = 256) -> None:
         if (

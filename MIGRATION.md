@@ -852,6 +852,16 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Validation: exact non-quantized round trips, a multi-step matched learning transition from live/restored graphs, prior codec/schema rejection, malformed-field rejection, full package tests, build, and CI are recorded in the associated PR.
 - Scope limitation: this removes the graph codec's quantization/reset loss only. It does not establish a complete Organism continuation, caller completeness, full dependency closure, or resolve other `#45` omissions such as all structural/plasticity/generative state. It makes no scientific efficacy claim. No `symbiont-lab` file is changed.
 
+## Incremental correction: TARGET actuation identity namespaces (issue #62)
+
+- Source revision: `80d372a186513035f85a769db886e505cabba52d`.
+- Source paths and blob IDs: `symbiont/src/symbiont/actuation/dimension.py` (`04034b2a77c70c2378fcfa655139099b76a95760`); `symbiont/src/symbiont/actuation/intervention.py` (`63f63af5e4cc722846261ed12f6d4010b724458d`).
+- Target base: `ba0011797a6a3b4d48c7731651e50560c4043f18`; target pre-change blob IDs: `src/organism/actuation/dimension.py` (`1abd164acb0410869abfa827eb6597ea856d3d3a`); `src/organism/actuation/intervention.py` (`84fcdeac671ee0ef3632d26f4774d7c11c3b74be`).
+- Disposition: bounded `REWRITE` of the persisted identity namespace only. Action-dimension registry checkpoint schema advances from 2 to 3; intervention-signature registry checkpoint schema advances from 1 to 2. The revised namespaces change derived channel, signature, and dimension IDs. Old component checkpoints fail closed; no aliases or decoder compatibility are provided.
+- Target paths: `src/organism/actuation/{dimension.py,intervention.py}` and the corresponding focused checkpoint tests.
+- Validation: exact expected TARGET identity vectors; round-trip and continuation tests; explicit rejection of prior checkpoint schema versions. Full test/build/CI evidence belongs to the associated PR and must be reported against its exact head.
+- Scope limits: this resolves only the two schema-namespace strings and their persisted derived IDs. It does not disposition the packaged `genome_symbiont_base_v2` resource name, the generative `symbiont_tick` fields, explanatory historical references, or the entire issue #62 inventory. It makes no claim about learned behavior or scientific efficacy. No `symbiont-lab` file is modified.
+
 ## Incremental correction: strict intervention-signature registry restore (issue #60)
 
 - Implementation base: `678d26506e366157c411bd6e82d43f0981e9f8f2`.
