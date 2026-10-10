@@ -135,6 +135,20 @@ class ExperienceRecord:
     def restore(cls, payload: dict[str, Any]) -> "ExperienceRecord":
         if not isinstance(payload, dict):
             raise ValueError("experience checkpoint entry must be an object")
+        required = {
+            "record_id",
+            "organism_id",
+            "tick_class",
+            "context_tokens",
+            "action_token",
+            "outcome_tokens",
+            "epistemic_status",
+            "evidence_refs",
+            "confidence_class",
+            "source_kind",
+        }
+        if set(payload) != required:
+            raise ValueError("experience checkpoint fields do not match the current schema")
         try:
             tick_class = payload["tick_class"]
             confidence_class = payload["confidence_class"]
@@ -142,9 +156,9 @@ class ExperienceRecord:
                 raise ValueError("tick_class must be an integer")
             if isinstance(confidence_class, bool) or not isinstance(confidence_class, int):
                 raise ValueError("confidence_class must be an integer")
-            raw_context = payload.get("context_tokens", [])
-            raw_outcome = payload.get("outcome_tokens", [])
-            raw_evidence = payload.get("evidence_refs", [])
+            raw_context = payload["context_tokens"]
+            raw_outcome = payload["outcome_tokens"]
+            raw_evidence = payload["evidence_refs"]
             if not all(
                 isinstance(value, list) for value in (raw_context, raw_outcome, raw_evidence)
             ):

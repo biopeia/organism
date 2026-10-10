@@ -41,8 +41,14 @@ class CausalRef:
 
     @classmethod
     def from_payload(cls, raw: Iterable[str]) -> "CausalRef":
+        if (
+            not isinstance(raw, (list, tuple))
+            or len(raw) != 2
+            or any(not isinstance(value, str) for value in raw)
+        ):
+            raise ValueError("causal reference must contain exactly two strings")
         kind, ref_id = raw
-        return cls(str(kind), str(ref_id))
+        return cls(kind, ref_id)
 
 
 def _scalar(value: Any) -> float | int | str | bool | None:
@@ -175,17 +181,42 @@ class ProvenanceLog:
         }
 
     @classmethod
-    def restore(cls, payload: Mapping[str, Any] | None) -> "ProvenanceLog":
-        if payload is None:
-            return cls()
-        if payload.get("schema_version") != cls.SCHEMA_VERSION:
+    def restore(cls, payload: Mapping[str, Any]) -> "ProvenanceLog":
+        required = {"schema_version", "capacity", "emitted", "frontier"}
+        if not isinstance(payload, Mapping) or set(payload) != required:
+            raise ValueError("invalid provenance checkpoint fields")
+        version = payload["schema_version"]
+        if isinstance(version, bool) or not isinstance(version, int) or version != cls.SCHEMA_VERSION:
             raise ValueError("unsupported provenance checkpoint")
-        log = cls(capacity=int(payload.get("capacity", RING_CAPACITY)))
-        log.emitted = int(payload.get("emitted", 0))
-        for raw in payload.get("frontier", []):
-            log._frontier[CausalRef.from_payload(raw["ref"])] = (
-                str(raw["event_id"]),
-                tuple(CausalRef.from_payload(item) for item in raw["caused_by"]),
+        capacity = payload["capacity"]
+        emitted = payload["emitted"]
+        frontier = payload["frontier"]
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+            raise ValueError("invalid provenance checkpoint capacity")
+        if isinstance(emitted, bool) or not isinstance(emitted, int) or emitted < 0:
+            raise ValueError("invalid provenance checkpoint emitted count")
+        if not isinstance(frontier, list):
+            raise ValueError("invalid provenance checkpoint frontier")
+        log = cls(capacity=capacity)
+        log.emitted = emitted
+        for raw in frontier:
+            if not isinstance(raw, Mapping) or set(raw) != {"ref", "event_id", "caused_by"}:
+                raise ValueError("invalid provenance checkpoint frontier entry")
+            ref = CausalRef.from_payload(raw["ref"])
+            event_id = raw["event_id"]
+            causes = raw["caused_by"]
+            if (
+                not isinstance(event_id, str)
+                or not event_id
+                or not isinstance(causes, list)
+                or len(causes) > MAX_CAUSES
+            ):
+                raise ValueError("invalid provenance checkpoint frontier entry")
+            if ref in log._frontier:
+                raise ValueError("duplicate provenance checkpoint reference")
+            log._frontier[ref] = (
+                event_id,
+                tuple(CausalRef.from_payload(item) for item in causes),
             )
         return log
 

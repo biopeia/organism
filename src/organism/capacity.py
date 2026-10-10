@@ -76,16 +76,63 @@ class CapacityPressure:
         }
 
     @classmethod
-    def restore(cls, payload: Mapping[str, Any] | None, *, capacity: int) -> "CapacityPressure":
-        """Absent in checkpoints older than Wave 0: counting starts fresh."""
+    def restore(cls, payload: Mapping[str, Any], *, capacity: int) -> "CapacityPressure":
+        """Restore a complete TARGET checkpoint; fresh state uses the constructor."""
+        required = {
+            "schema_version",
+            "capacity",
+            "admissions",
+            "evictions",
+            "promotions",
+            "demotions",
+            "relearned_after_eviction",
+            "recently_evicted",
+        }
+        if not isinstance(payload, Mapping) or set(payload) != required:
+            raise ValueError("invalid capacity-pressure checkpoint fields")
+        if (
+            isinstance(payload["schema_version"], bool)
+            or not isinstance(payload["schema_version"], int)
+            or payload["schema_version"] != cls.SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported capacity-pressure checkpoint")
+        stored_capacity = payload["capacity"]
+        if (
+            isinstance(stored_capacity, bool)
+            or not isinstance(stored_capacity, int)
+            or stored_capacity != capacity
+        ):
+            raise ValueError("capacity-pressure capacity mismatch")
+        counters = (
+            "admissions",
+            "evictions",
+            "promotions",
+            "demotions",
+            "relearned_after_eviction",
+        )
+        for name in counters:
+            value = payload[name]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"invalid capacity-pressure {name}")
+        raw_evicted = payload["recently_evicted"]
+        if (
+            not isinstance(raw_evicted, list)
+            or len(raw_evicted) > RECENT_EVICTIONS
+            or any(
+                not isinstance(key, str)
+                or len(key) != 16
+                or any(char not in "0123456789abcdef" for char in key)
+                for key in raw_evicted
+            )
+            or len(set(raw_evicted)) != len(raw_evicted)
+        ):
+            raise ValueError("invalid capacity-pressure recent evictions")
+
         pressure = cls(capacity)
-        if not isinstance(payload, Mapping):
-            return pressure
-        for name in ("admissions", "evictions", "promotions", "demotions"):
-            setattr(pressure, name, max(0, int(payload.get(name, 0))))
-        pressure.relearned_after_eviction = max(0, int(payload.get("relearned_after_eviction", 0)))
-        for key in list(payload.get("recently_evicted", ()))[-RECENT_EVICTIONS:]:
-            pressure._recently_evicted[str(key)] = None
+        for name in counters:
+            setattr(pressure, name, payload[name])
+        for key in raw_evicted:
+            pressure._recently_evicted[key] = None
         return pressure
 
 

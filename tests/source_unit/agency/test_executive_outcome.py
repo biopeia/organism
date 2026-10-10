@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from organism.agency.executive_outcome import (
@@ -154,7 +156,62 @@ def test_ledger_checkpoint_round_trip_is_exact():
     restored = ExecutiveOutcomeLedger.restore(ledger.checkpoint())
     assert restored.checkpoint() == ledger.checkpoint()
     assert restored.modulation(OTHER, revision=STATE).suppressed
-    assert ExecutiveOutcomeLedger.restore(None).checkpoint()["entries"] == []
+    with pytest.raises(ValueError, match="checkpoint fields"):
+        ExecutiveOutcomeLedger.restore(None)  # type: ignore[arg-type]
+
+
+def test_restore_rejects_missing_malformed_and_inconsistent_required_state():
+    ledger = ExecutiveOutcomeLedger()
+    ledger.record(KEY, _sample(OutcomeClass.POSITIVE))
+    valid = ledger.checkpoint()
+
+    missing = dict(valid)
+    del missing["entries"]
+    with pytest.raises(ValueError, match="checkpoint fields"):
+        ExecutiveOutcomeLedger.restore(missing)
+
+    malformed = {**valid, "counters": {**valid["counters"], "lookups": "1"}}
+    with pytest.raises(ValueError, match="invalid executive outcome counter"):
+        ExecutiveOutcomeLedger.restore(malformed)
+
+
+def test_restore_requires_complete_nested_evidence_and_identity() -> None:
+    ledger = ExecutiveOutcomeLedger()
+    ledger.record(KEY, _sample(OutcomeClass.POSITIVE))
+    valid = ledger.checkpoint()
+
+    malformed_entries = []
+    missing_samples = copy.deepcopy(valid)
+    del missing_samples["entries"][0]["samples"]
+    malformed_entries.append(missing_samples)
+    null_samples = copy.deepcopy(valid)
+    null_samples["entries"][0]["samples"] = None
+    malformed_entries.append(null_samples)
+    missing_suppression = copy.deepcopy(valid)
+    del missing_suppression["entries"][0]["suppression"]
+    malformed_entries.append(missing_suppression)
+    malformed_key = copy.deepcopy(valid)
+    malformed_key["entries"][0]["key"] = [None, "effect.e"]
+    malformed_entries.append(malformed_key)
+    incomplete_sample = copy.deepcopy(valid)
+    del incomplete_sample["entries"][0]["samples"][0]["tick"]
+    malformed_entries.append(incomplete_sample)
+
+    for invalid in malformed_entries:
+        with pytest.raises(ValueError):
+            ExecutiveOutcomeLedger.restore(invalid)
+
+
+def test_restore_validates_suppression_shape_but_accepts_explicit_null() -> None:
+    ledger = ExecutiveOutcomeLedger()
+    ledger.record(KEY, _sample(OutcomeClass.POSITIVE))
+    valid = ledger.checkpoint()
+    assert ExecutiveOutcomeLedger.restore(valid).checkpoint() == valid
+
+    malformed = copy.deepcopy(valid)
+    malformed["entries"][0]["suppression"] = {"invalidated_tick": 2}
+    with pytest.raises(ValueError, match="suppression fields"):
+        ExecutiveOutcomeLedger.restore(malformed)
 
 
 def test_v1_context_keys_are_rejected():

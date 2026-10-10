@@ -184,19 +184,104 @@ class ExecutiveOutcomeEvidence:
 
     @classmethod
     def restore(cls, payload: Mapping[str, Any]) -> "ExecutiveOutcomeEvidence":
+        required = {"samples", "suppression"}
+        if not isinstance(payload, Mapping) or set(payload) != required:
+            raise ValueError("invalid executive outcome evidence fields")
         evidence = cls()
-        raw_samples = payload.get("samples", [])
+        raw_samples = payload["samples"]
         if not isinstance(raw_samples, list) or len(raw_samples) > WINDOW:
             raise ValueError("invalid or unbounded executive outcome samples")
         for raw in raw_samples:
-            values = dict(raw)
-            values["outcome_class"] = OutcomeClass(str(values["outcome_class"]))
-            if values["outcome_class"] is OutcomeClass.NEUTRAL:
+            sample_fields = {
+                "tick",
+                "outcome_class",
+                "reason",
+                "effect_similarity",
+                "prediction_mismatch",
+                "progress_before_failure",
+            }
+            if not isinstance(raw, Mapping) or set(raw) != sample_fields:
+                raise ValueError("invalid executive outcome sample fields")
+            raw_class = raw["outcome_class"]
+            if not isinstance(raw_class, str):
+                raise ValueError("invalid executive outcome class")
+            try:
+                outcome_class = OutcomeClass(raw_class)
+            except ValueError as exc:
+                raise ValueError("invalid executive outcome class") from exc
+            if outcome_class is OutcomeClass.NEUTRAL:
                 raise ValueError("neutral outcomes are never executive evidence")
-            evidence.samples.append(ExecutiveOutcomeSample(**values))
-        raw_suppression = payload.get("suppression")
+            tick = raw["tick"]
+            reason = raw["reason"]
+            if isinstance(tick, bool) or not isinstance(tick, int) or tick < 0:
+                raise ValueError("invalid executive outcome sample tick")
+            if reason is not None and not isinstance(reason, str):
+                raise ValueError("invalid executive outcome sample reason")
+            numeric_fields = (
+                "effect_similarity",
+                "prediction_mismatch",
+                "progress_before_failure",
+            )
+            for name in numeric_fields:
+                value = raw[name]
+                if value is not None and (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                ):
+                    raise ValueError(f"invalid executive outcome sample {name}")
+            evidence.samples.append(
+                ExecutiveOutcomeSample(
+                    tick=tick,
+                    outcome_class=outcome_class,
+                    reason=reason,
+                    effect_similarity=raw["effect_similarity"],
+                    prediction_mismatch=raw["prediction_mismatch"],
+                    progress_before_failure=raw["progress_before_failure"],
+                )
+            )
+        raw_suppression = payload["suppression"]
         if raw_suppression is not None:
-            evidence.suppression = SuppressionEvidence(**dict(raw_suppression))
+            suppression_fields = {
+                "invalidated_tick",
+                "reason",
+                "binding_fingerprint",
+                "executable",
+                "controllability_revision",
+                "agency_revision",
+            }
+            if not isinstance(raw_suppression, Mapping) or set(raw_suppression) != suppression_fields:
+                raise ValueError("invalid executive outcome suppression fields")
+            invalidated_tick = raw_suppression["invalidated_tick"]
+            suppression_reason = raw_suppression["reason"]
+            fingerprint = raw_suppression["binding_fingerprint"]
+            executable = raw_suppression["executable"]
+            if (
+                isinstance(invalidated_tick, bool)
+                or not isinstance(invalidated_tick, int)
+                or invalidated_tick < 0
+                or not isinstance(suppression_reason, str)
+                or not suppression_reason
+                or (fingerprint is not None and not isinstance(fingerprint, str))
+                or not isinstance(executable, bool)
+            ):
+                raise ValueError("invalid executive outcome suppression")
+            for name in ("controllability_revision", "agency_revision"):
+                revision = raw_suppression[name]
+                if revision is not None and (
+                    isinstance(revision, bool)
+                    or not isinstance(revision, int)
+                    or revision < 0
+                ):
+                    raise ValueError("invalid executive outcome suppression revision")
+            evidence.suppression = SuppressionEvidence(
+                invalidated_tick=invalidated_tick,
+                reason=suppression_reason,
+                binding_fingerprint=fingerprint,
+                executable=executable,
+                controllability_revision=raw_suppression["controllability_revision"],
+                agency_revision=raw_suppression["agency_revision"],
+            )
         return evidence
 
 
@@ -366,31 +451,47 @@ class ExecutiveOutcomeLedger:
         }
 
     @classmethod
-    def restore(cls, payload: Mapping[str, Any] | None) -> "ExecutiveOutcomeLedger":
-        ledger = cls()
-        if payload is None:
-            return ledger
+    def restore(cls, payload: Mapping[str, Any]) -> "ExecutiveOutcomeLedger":
+        if not isinstance(payload, Mapping):
+            raise ValueError("invalid executive outcome ledger checkpoint fields")
         version = payload.get("schema_version")
-        if version != cls.SCHEMA_VERSION:
+        if isinstance(version, bool) or not isinstance(version, int) or version != cls.SCHEMA_VERSION:
             raise ValueError("unsupported executive outcome ledger checkpoint")
-        if not {"entries", "counters", "capacity_pressure"}.issubset(payload):
-            raise ValueError("incomplete executive outcome ledger checkpoint")
+        required = {"schema_version", "entries", "counters", "capacity_pressure"}
+        if set(payload) != required:
+            raise ValueError("invalid executive outcome ledger checkpoint fields")
+        ledger = cls()
         entries = payload["entries"]
         if not isinstance(entries, list) or len(entries) > ledger.max_keys:
             raise ValueError("invalid or unbounded executive outcome ledger")
         for raw in entries:
-            key = (str(raw["key"][0]), str(raw["key"][1]))
-            evidence = ExecutiveOutcomeEvidence.restore(raw)
-            existing = ledger._items.get(key)
-            if existing is not None:
-                _merge_into(existing, evidence)
-                ledger._items.move_to_end(key)
-            else:
-                ledger._items[key] = evidence
+            if not isinstance(raw, Mapping) or set(raw) != {"key", "samples", "suppression"}:
+                raise ValueError("invalid executive outcome entry fields")
+            raw_key = raw["key"]
+            if (
+                not isinstance(raw_key, list)
+                or len(raw_key) != 2
+                or any(not isinstance(part, str) or not part for part in raw_key)
+            ):
+                raise ValueError("invalid executive outcome key")
+            key = (raw_key[0], raw_key[1])
+            if key in ledger._items:
+                raise ValueError("duplicate executive outcome key")
+            evidence = ExecutiveOutcomeEvidence.restore(
+                {name: raw[name] for name in ("samples", "suppression")}
+            )
+            ledger._items[key] = evidence
         counters = payload["counters"]
+        if not isinstance(counters, Mapping) or set(counters) != {
+            "keys_created",
+            "keys_evicted",
+            "lookups",
+            "history_hits",
+        }:
+            raise ValueError("invalid executive outcome counters")
         for name in ("keys_created", "keys_evicted", "lookups", "history_hits"):
-            value = int(counters[name])
-            if value < 0 or not math.isfinite(value):
+            value = counters[name]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError("invalid executive outcome counter")
             setattr(ledger, name, value)
         ledger.pressure = CapacityPressure.restore(
