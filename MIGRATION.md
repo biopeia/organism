@@ -97,7 +97,7 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Validation: focused portable-checkpoint tests and the complete Organism repository test suite pass (7 and 566 tests respectively); isolated wheel build/install remains to be recorded separately.
 - Scope limitation: the composition includes only records passed to it. It does not discover or guarantee completeness of an experience ledger, private-model weights, training work, or all Organism longitudinal state. It is not a complete portable Organism continuation.
 
-## Incremental slice: cognitive safety and established sensory normalization state
+## Incremental slice: cognitive safety and sensory normalization state
 
 - Source repository: `https://github.com/alessbarb/symbiont-lab`
 - Source SHA: `80d372a186513035f85a769db886e505cabba52d`
@@ -107,8 +107,9 @@ Validation is recorded in the migration PR and CI. The source repository remains
   - Supporting target files `activation.py` and `metaplasticity.py` are unchanged source copies (source blob IDs `33e7ce9f9b44dfd8b5aa03db1a85e923de7d3143` and `60cd19f498f7f50783bf924ac79c1709e4a50574`, respectively).
 - Target path: `src/organism/cognition/portable_checkpoint.py`
 - Disposition: `SPLIT` — compose two already extracted Organism cognitive-state values in the bounded portable cognitive payload. No mixed bridge runtime, Lab adapter, Embodiment/body state, or World persistence coordinator is copied.
-- Contract: schema version 3 records optional `SafetyState` and only established `SensoryNormalizer` values using the existing codecs. Unestablished normalizers remain omitted under the source codec's existing rule. The prior schema is not accepted by the current reader; no backward-compatibility obligation is implied.
-- Validation: the focused portable and graph checkpoint tests cover round-trip and malformed-state rejection. This composes only explicitly supplied values and does not prove a complete cognitive or Organism continuation, actual caller completeness, model artifact closure, or runtime continuity.
+- Contract history: the initial target schema version 3 followed the historical codec by omitting unestablished normalizers. That behavior was lossy for canonical continuation because their running mean, variance, and count affect subsequent transitions.
+- Current target contract: cognitive runtime checkpoint schema version 7 preserves every supplied normalizer state, including fresh and unestablished values; restore rejects missing, malformed, non-finite, or inconsistent entries. Establishment remains an interpretation threshold, not a persistence filter. Previous checkpoint versions are not accepted; no backward-compatibility obligation is implied.
+- Validation: focused tests cover fresh, unestablished, and established normalizer continuation, malformed-state rejection, and schema-version rejection. This slice does not prove a complete cognitive or Organism continuation, actual caller completeness, model artifact closure, or runtime continuity.
 
 ## Incremental slice: generative resident state in cognitive continuation payload
 

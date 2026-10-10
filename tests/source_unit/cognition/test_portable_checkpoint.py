@@ -101,7 +101,7 @@ def test_cognitive_graph_and_recurrent_state_round_trip_through_organism_envelop
     assert restored_edge.eligibility == original_edge.eligibility
 
 
-def test_portable_checkpoint_composes_safety_and_established_normalizer_state() -> None:
+def test_portable_checkpoint_composes_safety_and_normalizer_state() -> None:
     safety = SafetyState()
     for _ in range(3):
         safety.record_failure()
@@ -122,12 +122,13 @@ def test_portable_checkpoint_composes_safety_and_established_normalizer_state() 
     )
 
     assert restored.safety_state == safety
-    assert set(restored.sensory_normalizers) == {"established"}
+    assert set(restored.sensory_normalizers) == {"established", "tentative"}
     assert restored.sensory_normalizers["established"].mean == pytest.approx(normalizer.mean)
     assert restored.sensory_normalizers["established"].variance == pytest.approx(
         normalizer.variance
     )
     assert restored.sensory_normalizers["established"].count == normalizer.count
+    assert restored.sensory_normalizers["tentative"].count == tentative.count
 
 
 def test_portable_checkpoint_rejects_malformed_safety_and_normalizer_payloads() -> None:
@@ -140,7 +141,23 @@ def test_portable_checkpoint_rejects_malformed_safety_and_normalizer_payloads() 
 
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
     document["sensory_normalizers"] = {
-        "bad": {"mean": 1.0, "variance": 1.0, "count": 1}
+        "bad": {"mean": 1.0, "variance": -1.0, "count": 1}
+    }
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="malformed cognitive runtime"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    document["sensory_normalizers"] = None
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="malformed cognitive runtime"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    document["sensory_normalizers"] = {
+        "huge": {"mean": 10**1000, "variance": 1.0, "count": 1}
     }
     with pytest.raises(CognitiveRuntimeCheckpointError, match="malformed cognitive runtime"):
         CognitiveRuntimeCheckpoint.from_bytes(
@@ -148,9 +165,33 @@ def test_portable_checkpoint_rejects_malformed_safety_and_normalizer_payloads() 
         )
 
 
-def test_portable_checkpoint_schema_v5_is_not_accepted_as_a_current_payload() -> None:
+def test_portable_checkpoint_preserves_unestablished_normalizer_continuation() -> None:
+    normalizer = SensoryNormalizer()
+    normalizer.normalize(1.0)
+    checkpoint = CognitiveRuntimeCheckpoint(
+        _state(),
+        _graph(),
+        sensory_normalizers={"sense": normalizer, "fresh": SensoryNormalizer()},
+    )
+
+    restored = CognitiveRuntimeCheckpoint.from_bytes(
+        checkpoint.to_bytes(), kernel_limits=KernelLimits()
+    )
+
+    restored_normalizer = restored.sensory_normalizers["sense"]
+    assert restored.sensory_normalizers["fresh"].count == 0
+    assert restored_normalizer.mean == pytest.approx(normalizer.mean)
+    assert restored_normalizer.variance == pytest.approx(normalizer.variance)
+    assert restored_normalizer.count == normalizer.count
+    for value in (1.5, -0.25, 2.0):
+        assert restored_normalizer.normalize(value) == pytest.approx(
+            normalizer.normalize(value)
+        )
+
+
+def test_portable_checkpoint_schema_v6_is_not_accepted_as_a_current_payload() -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
-    document["schema_version"] = 5
+    document["schema_version"] = 6
     with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
         CognitiveRuntimeCheckpoint.from_bytes(
             json.dumps(document).encode(), kernel_limits=KernelLimits()
@@ -159,7 +200,7 @@ def test_portable_checkpoint_schema_v5_is_not_accepted_as_a_current_payload() ->
 
 def test_portable_checkpoint_rejects_non_integer_schema_version() -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
-    document["schema_version"] = 5.0
+    document["schema_version"] = 6.0
 
     with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
         CognitiveRuntimeCheckpoint.from_bytes(

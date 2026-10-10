@@ -172,7 +172,7 @@ class CognitiveRuntimeCheckpoint:
         _validate_genetic_state(self.genome, self.germline_state, self.expression_state)
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
-            "schema_version": 6,
+            "schema_version": 7,
             "identity": str(self.state.identity),
             "transition": self.state.checkpoint_payload(),
             "graph": export_graph_checkpoint(self.graph),
@@ -228,7 +228,7 @@ class CognitiveRuntimeCheckpoint:
             if (
                 document["schema"] != "biopeia.organism.cognitive-runtime"
                 or type(document["schema_version"]) is not int
-                or document["schema_version"] != 6
+                or document["schema_version"] != 7
             ):
                 raise CognitiveRuntimeCheckpointError("unsupported cognitive runtime checkpoint")
             identity = OrganismIdentity.parse(document["identity"])
