@@ -23,11 +23,14 @@ from .continuation import (
 from .transition import (
     EmbodimentContextRef,
     InvalidOrganismTransitionCheckpoint,
+    LifecycleTransitionRecord,
+    OrganismLifecycle,
     OrganismTransitionError,
     OrganismTransitionProposal,
     OrganismTransitionState,
     WorldCausalCorrelation,
     accept_organism_transition,
+    transition_organism_lifecycle,
 )
 
 __all__ = [
@@ -49,9 +52,12 @@ __all__ = [
     "branch_continuation",
     "EmbodimentContextRef",
     "InvalidOrganismTransitionCheckpoint",
+    "LifecycleTransitionRecord",
+    "OrganismLifecycle",
     "OrganismTransitionError",
     "OrganismTransitionProposal",
     "OrganismTransitionState",
     "WorldCausalCorrelation",
     "accept_organism_transition",
+    "transition_organism_lifecycle",
 ]

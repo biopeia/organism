@@ -17,7 +17,7 @@ from uuid import UUID
 
 from .checkpoint import InvalidOrganismCheckpoint, OrganismCheckpoint
 from .identity import OrganismIdentity
-from .transition import OrganismTransitionState
+from .transition import OrganismLifecycle, OrganismTransitionState
 
 
 class ContinuationError(ValueError):
@@ -286,8 +286,32 @@ class CanonicalContinuationRegistry:
                 raise StaleCanonicalContinuation("expected canonical continuation is no longer current")
             if proposed.identity != current.identity or proposed.continuation_id != current.continuation_id:
                 raise ContinuationError("canonical advancement must preserve identity and continuation_id")
-            if proposed.ancestry != current.ancestry or proposed.organism_step != current.organism_step + 1:
-                raise ContinuationError("canonical advancement must advance exactly one Organism step")
+            if proposed.ancestry != current.ancestry:
+                raise ContinuationError("canonical advancement cannot alter continuation ancestry")
+            ordinary = (
+                current.state.lifecycle is OrganismLifecycle.ACTIVE
+                and proposed.state.lifecycle is OrganismLifecycle.ACTIVE
+                and proposed.organism_step == current.organism_step + 1
+                and proposed.state.lifecycle == current.state.lifecycle
+                and proposed.state.lifecycle_history == current.state.lifecycle_history
+            )
+            reembodiment_reactivation = (
+                current.state.lifecycle is OrganismLifecycle.DORMANT
+                and proposed.state.lifecycle is OrganismLifecycle.ACTIVE
+                and proposed.state.lifecycle_history[:-1] == current.state.lifecycle_history
+                and proposed.state.lifecycle_history[-1].from_state is OrganismLifecycle.DORMANT
+                and proposed.state.lifecycle_history[-1].to_state is OrganismLifecycle.ACTIVE
+            )
+            lifecycle_only = (
+                proposed.organism_step == current.organism_step
+                and proposed.state.lifecycle != current.state.lifecycle
+                and proposed.state.lifecycle_history[:-1] == current.state.lifecycle_history
+                and proposed.state.owner_checkpoint == current.state.owner_checkpoint
+                and (proposed.state.embodiment == current.state.embodiment or reembodiment_reactivation)
+                and proposed.state.world_correlation == current.state.world_correlation
+            )
+            if not (ordinary or lifecycle_only):
+                raise ContinuationError("canonical commit must be one active step or one lifecycle transition")
             self._records[current.identity] = self._record(proposed)
 
     def _release(self, identity: OrganismIdentity) -> None:
