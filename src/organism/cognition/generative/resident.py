@@ -49,6 +49,24 @@ from .types import (
 )
 from .workspace import GenerativeWorkspace
 
+RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 2
+
+
+def _resident_budget(value: object) -> GenerativeBudget:
+    names = {
+        "max_states",
+        "max_transitions",
+        "max_depth",
+        "max_branches",
+        "max_model_queries",
+    }
+    if not isinstance(value, dict) or set(value) != names:
+        raise ValueError("invalid resident generative budget")
+    try:
+        return GenerativeBudget(**value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid resident generative budget") from exc
+
 
 @dataclass(frozen=True, slots=True)
 class GenerativeStateSnapshot:
@@ -169,9 +187,16 @@ class ResidentGenerativeCognition:
     def checkpoint(self) -> dict[str, object]:
         """Persist durable resident GC state without persisting model owners."""
         return {
-            "schema_version": GENERATIVE_COGNITION_SCHEMA_VERSION,
+            "schema_version": RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION,
             "generative_tick": self.generative_tick,
             "last_symbiont_tick": self.last_symbiont_tick,
+            "budget": {
+                "max_states": self.budget.max_states,
+                "max_transitions": self.budget.max_transitions,
+                "max_depth": self.budget.max_depth,
+                "max_branches": self.budget.max_branches,
+                "max_model_queries": self.budget.max_model_queries,
+            },
             "agenda": self.agenda.checkpoint(),
             "scheduler": self.scheduler.checkpoint(),
             "workspace": (
@@ -232,16 +257,27 @@ class ResidentGenerativeCognition:
             not isinstance(payload, dict)
             or set(payload)
             != {
-                "schema_version", "generative_tick", "last_symbiont_tick", "agenda",
-                "scheduler", "workspace", "hypotheses", "calibration", "generative_use",
+                "schema_version",
+                "generative_tick",
+                "last_symbiont_tick",
+                "budget",
+                "agenda",
+                "scheduler",
+                "workspace",
+                "hypotheses",
+                "calibration",
+                "generative_use",
                 "reconciliation_count", "contradicted_hypothesis_count",
                 "factual_contamination_count",
             }
             or type(payload["schema_version"]) is not int
-            or payload["schema_version"] != GENERATIVE_COGNITION_SCHEMA_VERSION
+            or payload["schema_version"] != RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION
         ):
             raise ValueError("invalid resident generative cognition checkpoint")
         try:
+            restored_budget = _resident_budget(payload["budget"])
+            if budget is not None and budget != restored_budget:
+                raise ValueError("resident checkpoint budget conflicts with supplied budget")
             agenda = GenerativeAgenda.from_checkpoint(payload["agenda"])
             scheduler = GenerativeScheduler.from_checkpoint(payload["scheduler"])
             tick = payload["generative_tick"]
@@ -249,7 +285,7 @@ class ResidentGenerativeCognition:
                 raise ValueError("invalid generative_tick")
             resident = cls(
                 organism_id=organism_id,
-                budget=budget,
+                budget=restored_budget,
                 agenda=agenda,
                 scheduler=scheduler,
                 registry=registry,

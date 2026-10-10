@@ -10,6 +10,7 @@ from organism.cognition.generative import (
     CompetenceEffectGenerativeAdapter,
     GeneratedFeature,
     GeneratedProposal,
+    GenerativeBudget,
     GenerativeContext,
     GenerativeMode,
     GenerativeOperation,
@@ -126,6 +127,50 @@ def test_resident_checkpoint_requires_all_emitted_fields_and_rejects_unknowns() 
     extra["unexpected"] = True
     with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
         ResidentGenerativeCognition.from_checkpoint(extra, organism_id="organism.restore")
+
+
+def test_resident_checkpoint_preserves_effective_budget_and_rejects_conflicting_override() -> None:
+    budget = GenerativeBudget(
+        max_states=4,
+        max_transitions=3,
+        max_depth=2,
+        max_branches=1,
+        max_model_queries=5,
+    )
+    resident = ResidentGenerativeCognition(organism_id="organism.restore", budget=budget)
+
+    checkpoint = resident.checkpoint()
+    restored = ResidentGenerativeCognition.from_checkpoint(
+        checkpoint,
+        organism_id="organism.restore",
+    )
+
+    assert restored.budget == budget
+    restored.step(tick=1, cognition=None, mode=GenerativeMode.IDLE)
+    assert restored.last_workspace is not None
+    assert restored.last_workspace.budget == budget
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(
+            checkpoint,
+            organism_id="organism.restore",
+            budget=GenerativeBudget(),
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda budget: budget.pop("max_states"),
+        lambda budget: budget.__setitem__("max_states", None),
+        lambda budget: budget.__setitem__("unexpected", 1),
+    ],
+)
+def test_resident_checkpoint_rejects_incomplete_or_invalid_budget(change) -> None:
+    checkpoint = ResidentGenerativeCognition(organism_id="organism.restore").checkpoint()
+    change(checkpoint["budget"])
+
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
 
 
 def test_resident_checkpoint_requires_complete_hypothesis_fields() -> None:
