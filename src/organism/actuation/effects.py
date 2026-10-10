@@ -9,12 +9,28 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from ..capacity import CapacityPressure
 
 _ALLOWED_PREFIXES = ("signal.", "latent.", "part.", "channel.", "internal.", "effect.")
+_EFFECT_SPACE_FIELDS = {
+    "schema_version",
+    "max_effects",
+    "support",
+    "footprints",
+    "capacity_pressure",
+}
+_SUPPORT_FIELDS = {"signature", "count"}
+_FOOTPRINT_FIELDS = {"effect_id", "support", "atoms"}
+
+
+def _checkpoint_int(value: object, *, field: str, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"invalid effect-space {field}")
+    return value
 
 
 def _valid_feature_ref(value: str) -> bool:
@@ -169,9 +185,9 @@ class EffectSpace:
     SCHEMA_VERSION = 1
 
     def __init__(self, *, max_effects: int = 512) -> None:
-        if max_effects < 1:
+        if isinstance(max_effects, bool) or not isinstance(max_effects, int) or max_effects < 1:
             raise ValueError("max_effects must be positive")
-        self._max_effects = int(max_effects)
+        self._max_effects = max_effects
         self._support: dict[tuple[tuple[str, int], ...], int] = {}
         self._effects: dict[str, EffectRepresentation] = {}
         # Factorized Effect Representation v1 §14.1: footprint effects are
@@ -318,17 +334,54 @@ class EffectSpace:
         }
 
     @classmethod
-    def restore(cls, payload: dict[str, Any]) -> "EffectSpace":
-        if payload.get("schema_version") != cls.SCHEMA_VERSION:
+    def restore(cls, payload: object) -> "EffectSpace":
+        if not isinstance(payload, Mapping) or set(payload) != _EFFECT_SPACE_FIELDS:
+            raise ValueError("invalid effect-space checkpoint fields")
+        version = payload["schema_version"]
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != cls.SCHEMA_VERSION
+        ):
             raise ValueError("unsupported effect-space checkpoint")
-        obj = cls(max_effects=int(payload.get("max_effects", 512)))
-        for item in payload.get("support", []):
-            if not isinstance(item, dict):
+        max_effects = _checkpoint_int(payload["max_effects"], field="capacity", minimum=1)
+        raw_support = payload["support"]
+        raw_footprints = payload["footprints"]
+        if (
+            not isinstance(raw_support, list)
+            or len(raw_support) > max_effects
+            or not isinstance(raw_footprints, list)
+        ):
+            raise ValueError("invalid effect-space checkpoint collections")
+
+        obj = cls(max_effects=max_effects)
+        for item in raw_support:
+            if not isinstance(item, Mapping) or set(item) != _SUPPORT_FIELDS:
                 raise ValueError("invalid effect-space support")
-            signature = tuple((str(k), int(v)) for k, v in item["signature"])
-            count = int(item["count"])
-            if count < 1:
-                raise ValueError("invalid effect support count")
+            raw_signature = item["signature"]
+            if not isinstance(raw_signature, list) or not raw_signature:
+                raise ValueError("invalid effect-space signature")
+            signature_items: list[tuple[str, int]] = []
+            seen_features: set[str] = set()
+            for pair in raw_signature:
+                if not isinstance(pair, list) or len(pair) != 2:
+                    raise ValueError("invalid effect-space signature entry")
+                feature, bucket = pair
+                if not isinstance(feature, str) or not _valid_feature_ref(feature):
+                    raise ValueError("invalid effect-space feature reference")
+                bucket = _checkpoint_int(bucket, field="signature bucket", minimum=-7)
+                if bucket == 0 or bucket > 7:
+                    raise ValueError("invalid effect-space signature bucket")
+                if feature in seen_features:
+                    raise ValueError("duplicate effect-space signature feature")
+                seen_features.add(feature)
+                signature_items.append((feature, bucket))
+            signature = tuple(signature_items)
+            if tuple(sorted(signature)) != signature:
+                raise ValueError("effect-space signature must be sorted")
+            count = _checkpoint_int(item["count"], field="support count", minimum=1)
+            if signature in obj._support:
+                raise ValueError("duplicate effect-space support")
             obj._support[signature] = count
             effect_id = obj._id(signature)
             obj._effects[effect_id] = EffectRepresentation(
@@ -338,13 +391,34 @@ class EffectSpace:
                 support=count,
                 confidence=min(1.0, count / 8.0),
             )
-        for item in payload.get("footprints", []):
-            obj.register_footprint(
-                str(item["effect_id"]),
-                tuple(EffectAtom(str(f), int(d), int(m)) for f, d, m in item["atoms"]),
-                support=int(item["support"]),
-            )
+        seen_footprints: set[str] = set()
+        for item in raw_footprints:
+            if not isinstance(item, Mapping) or set(item) != _FOOTPRINT_FIELDS:
+                raise ValueError("invalid effect-space footprint")
+            effect_id = item["effect_id"]
+            if not isinstance(effect_id, str) or not effect_id.startswith("effect.entity."):
+                raise ValueError("invalid effect-space footprint id")
+            if effect_id in seen_footprints:
+                raise ValueError("duplicate effect-space footprint")
+            seen_footprints.add(effect_id)
+            support = _checkpoint_int(item["support"], field="footprint support", minimum=1)
+            raw_atoms = item["atoms"]
+            if not isinstance(raw_atoms, list) or not raw_atoms:
+                raise ValueError("invalid effect-space footprint atoms")
+            atoms: list[EffectAtom] = []
+            for atom in raw_atoms:
+                if not isinstance(atom, list) or len(atom) != 3:
+                    raise ValueError("invalid effect-space footprint atom")
+                feature, direction, magnitude = atom
+                if not isinstance(feature, str):
+                    raise ValueError("invalid effect-space atom feature")
+                direction = _checkpoint_int(direction, field="atom direction", minimum=-1)
+                magnitude = _checkpoint_int(magnitude, field="atom magnitude", minimum=1)
+                atoms.append(EffectAtom(feature, direction, magnitude))
+            if len(set(atoms)) != len(atoms):
+                raise ValueError("duplicate effect-space footprint atom")
+            obj.register_footprint(effect_id, tuple(atoms), support=support)
         obj.pressure = CapacityPressure.restore(
-            payload.get("capacity_pressure"), capacity=obj._max_effects
+            payload["capacity_pressure"], capacity=obj._max_effects
         )
         return obj
