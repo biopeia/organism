@@ -7,18 +7,14 @@ knowledge; they must be learned from experienced consequences.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Sequence
 
 from .types import ActuatorId
 
-_SURFACE_SCHEMA = "symbiont-actuator-surface-v3"
-
-
-def _opaque_actuator_id(index: int) -> ActuatorId:
-    digest = sha256(f"{_SURFACE_SCHEMA}:{index}".encode("utf-8")).hexdigest()[:16]
-    return f"actuator.{digest}"
+_SURFACE_SCHEMA = "biopeia-actuator-surface-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,56 +79,50 @@ class ActuatorSurface:
         return value
 
     @classmethod
-    def from_count(
+    def from_effector_ids(
         cls,
-        count: int,
+        effector_ids: Sequence[str],
         *,
         fingerprint_material: str | None = None,
     ) -> "ActuatorSurface":
-        if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= 256:
-            raise ValueError("actuator count must be an int in [0,256]")
+        if isinstance(effector_ids, (str, bytes)):
+            raise ValueError("effector ids must be a sequence, not a scalar string")
+        ids = tuple(effector_ids)
+        if len(ids) > 256 or any(
+            not isinstance(value, str) or not value.strip() for value in ids
+        ):
+            raise ValueError("effector ids must be non-empty and bounded to 256")
+        if len(ids) != len(set(ids)):
+            raise ValueError("effector ids must be unique")
         channels = tuple(
-            ActuatorChannel(
-                slot_id=f"motor_slot.{index}",
-                actuator_id=_opaque_actuator_id(index),
-            )
-            for index in range(count)
+            ActuatorChannel(slot_id=f"effector.{effector_id}", actuator_id=effector_id)
+            for effector_id in ids
         )
-        material = fingerprint_material or f"count:{count}"
-        fingerprint = sha256(f"{_SURFACE_SCHEMA}:{material}".encode("utf-8")).hexdigest()
+        # A collection's iteration order is not identity. Canonicalize only the
+        # fingerprint input; preserve the supplied order for presentation.
+        fingerprint_input = json.dumps(
+            [_SURFACE_SCHEMA, fingerprint_material or "", sorted(ids)],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        fingerprint = sha256(
+            fingerprint_input.encode("utf-8")
+        ).hexdigest()
         return cls(channels=channels, contract_fingerprint=fingerprint)
-
-    @classmethod
-    def from_physical_ports(
-        cls,
-        physical_port_ids: Sequence[str],
-        *,
-        physical_contract: str | None = None,
-    ) -> "ActuatorSurface":
-        ports = tuple(str(value) for value in physical_port_ids)
-        if len(ports) != len(set(ports)) or len(ports) > 256:
-            raise ValueError("physical actuator ports must be unique and bounded")
-        material = physical_contract or "|".join(ports)
-        return cls.from_count(len(ports), fingerprint_material=material)
 
 
 ActuatorConstitution = ActuatorSurface
 
 
 def derive_actuator_constitution(
-    source: int | Sequence[str],
+    effector_ids: Sequence[str],
     *,
-    physical_contract: str | None = None,
+    fingerprint_material: str | None = None,
 ) -> ActuatorConstitution:
-    """Build only the legal opaque command surface for the current body."""
-    if isinstance(source, int) and not isinstance(source, bool):
-        return ActuatorSurface.from_count(
-            source,
-            fingerprint_material=physical_contract,
-        )
-    return ActuatorSurface.from_physical_ports(
-        tuple(source),
-        physical_contract=physical_contract,
+    """Build a command surface keyed by stable, owner-supplied effector IDs."""
+    return ActuatorSurface.from_effector_ids(
+        effector_ids,
+        fingerprint_material=fingerprint_material,
     )
 
 

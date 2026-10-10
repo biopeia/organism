@@ -21,7 +21,7 @@ def _command(surface, actuator_id: str, activation: float) -> MotorCommand:
 
 
 def test_system_hands_committed_command_to_body_boundary_without_interpreting_health():
-    surface = derive_actuator_constitution(1)
+    surface = derive_actuator_constitution(tuple(f"fixture-effector-{index}" for index in range(1)))
     actuator_id = surface.actuator_ids[0]
     actuations = ActuatorSystem().execute_command(
         _command(surface, actuator_id, 0.8),
@@ -33,7 +33,7 @@ def test_system_hands_committed_command_to_body_boundary_without_interpreting_he
 
 
 def test_system_rejects_channel_outside_surface():
-    surface = derive_actuator_constitution(1)
+    surface = derive_actuator_constitution(tuple(f"fixture-effector-{index}" for index in range(1)))
     with pytest.raises(KeyError):
         ActuatorSystem().execute_command(
             _command(surface, "actuator.other", 0.5),
@@ -42,8 +42,8 @@ def test_system_rejects_channel_outside_surface():
 
 
 def test_system_rejects_command_for_another_surface():
-    surface = derive_actuator_constitution(1, physical_contract="surface.a")
-    foreign = derive_actuator_constitution(1, physical_contract="surface.b")
+    surface = derive_actuator_constitution(tuple(f"fixture-effector-{index}" for index in range(1)), fingerprint_material="surface.a")
+    foreign = derive_actuator_constitution(tuple(f"fixture-effector-{index}" for index in range(1)), fingerprint_material="surface.b")
     with pytest.raises(RuntimeError, match="different actuator surface"):
         ActuatorSystem().execute_command(
             _command(foreign, foreign.actuator_ids[0], 0.5),
@@ -52,7 +52,7 @@ def test_system_rejects_command_for_another_surface():
 
 
 def test_surface_is_command_contract_not_body_model():
-    channel = derive_actuator_constitution(1).slots[0]
+    channel = derive_actuator_constitution(tuple(f"fixture-effector-{index}" for index in range(1))).slots[0]
     assert hasattr(channel, "command_min")
     assert hasattr(channel, "command_max")
     assert hasattr(channel, "neutral")
