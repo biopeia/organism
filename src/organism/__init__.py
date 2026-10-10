@@ -8,6 +8,18 @@ from .checkpoint import (
     OrganismCheckpoint,
 )
 from .identity import OrganismIdentity
+from .continuation import (
+    CanonicalContinuationLease,
+    CanonicalContinuationRegistry,
+    ContinuationAncestry,
+    ContinuationError,
+    ContinuationId,
+    DuplicateCanonicalContinuation,
+    InvalidContinuationCheckpoint,
+    OrganismContinuation,
+    StaleCanonicalContinuation,
+    branch_continuation,
+)
 from .transition import (
     EmbodimentContextRef,
     InvalidOrganismTransitionCheckpoint,
@@ -25,6 +37,16 @@ __all__ = [
     "MissingCheckpointDependency",
     "OrganismCheckpoint",
     "OrganismIdentity",
+    "CanonicalContinuationLease",
+    "CanonicalContinuationRegistry",
+    "ContinuationAncestry",
+    "ContinuationError",
+    "ContinuationId",
+    "DuplicateCanonicalContinuation",
+    "InvalidContinuationCheckpoint",
+    "OrganismContinuation",
+    "StaleCanonicalContinuation",
+    "branch_continuation",
     "EmbodimentContextRef",
     "InvalidOrganismTransitionCheckpoint",
     "OrganismTransitionError",
