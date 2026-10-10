@@ -94,6 +94,24 @@ def test_provenance_checkpoint_rejects_malformed_and_duplicate_frontier_refs() -
         ProvenanceLog.restore(duplicate)
 
 
+def test_provenance_checkpoint_rejects_malformed_frontier_event_id() -> None:
+    log = ProvenanceLog()
+    log.emit(
+        CausalEvent(
+            tick=1,
+            domain="organism",
+            operation="test",
+            subject=CausalRef("state", "one"),
+            caused_by=(),
+        )
+    )
+    malformed = copy.deepcopy(log.checkpoint())
+    malformed["frontier"][0]["event_id"] = "not-an-event-id"  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="frontier entry"):
+        ProvenanceLog.restore(malformed)
+
+
 def test_causal_event_payload_round_trips_complete_serialized_state() -> None:
     event = CausalEvent(
         tick=4,

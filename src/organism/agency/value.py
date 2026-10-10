@@ -66,6 +66,14 @@ class OutcomeValueStat:
     last_tick: int
 
     def update(self, value: float) -> None:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not -1.0 <= float(value) <= 1.0
+        ):
+            raise ValueError("value must be finite and within [-1, 1]")
+        value = float(value)
         self.samples += 1
         delta = value - self.mean
         self.mean += delta / self.samples
@@ -136,6 +144,26 @@ class OutcomeValueStat:
             raise ValueError("m2 must be non-negative in outcome-value stat")
         if stat.positive + stat.negative > stat.samples:
             raise ValueError("sign counts exceed samples in outcome-value stat")
+        if stat.samples == 1 and stat.m2 != 0.0:
+            raise ValueError("single-sample m2 must be zero in outcome-value stat")
+        mean_lower_bound = -stat.negative / stat.samples
+        mean_upper_bound = stat.positive / stat.samples
+        if (
+            stat.mean < mean_lower_bound
+            and not math.isclose(stat.mean, mean_lower_bound, rel_tol=1e-12, abs_tol=1e-12)
+        ) or (
+            stat.mean > mean_upper_bound
+            and not math.isclose(stat.mean, mean_upper_bound, rel_tol=1e-12, abs_tol=1e-12)
+        ):
+            raise ValueError("mean is inconsistent with sign counts in outcome-value stat")
+        # Every observed value is bounded to [-1, 1]. The population variance
+        # is therefore at most 1 - mean**2 (Bhatia-Davis); Welford's m2 is
+        # samples times that population variance, up to floating-point error.
+        m2_upper_bound = stat.samples * (1.0 - stat.mean * stat.mean)
+        if stat.m2 > m2_upper_bound and not math.isclose(
+            stat.m2, m2_upper_bound, rel_tol=1e-12, abs_tol=1e-12
+        ):
+            raise ValueError("m2 is inconsistent with bounded observations in outcome-value stat")
         return stat
 
 

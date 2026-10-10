@@ -10,6 +10,7 @@ from organism.agency.value import (
     MAX_CONTEXTUAL_OUTCOME_VALUES,
     MAX_OUTCOME_VALUES,
     OutcomeValueLedger,
+    OutcomeValueStat,
     context_key_for,
 )
 
@@ -237,6 +238,50 @@ def test_restore_rejects_corrupted_entry_instead_of_returning_partial_ledger():
     }
     with pytest.raises(ValueError, match="invalid outcome-value stat checkpoint"):
         OutcomeValueLedger.restore(checkpoint)
+
+
+@pytest.mark.parametrize(
+    "stat, message",
+    [
+        (
+            {"samples": 1, "mean": 0.2, "m2": 1.0, "positive": 1, "negative": 0, "last_tick": 0},
+            "single-sample m2",
+        ),
+        (
+            {"samples": 1, "mean": -0.5, "m2": 0.0, "positive": 1, "negative": 0, "last_tick": 0},
+            "sign counts",
+        ),
+        (
+            {"samples": 2, "mean": 0.0, "m2": 3.0, "positive": 1, "negative": 1, "last_tick": 0},
+            "bounded observations",
+        ),
+    ],
+)
+def test_restore_rejects_inconsistent_welford_aggregates(stat, message):
+    with pytest.raises(ValueError, match=message):
+        OutcomeValueStat.restore(stat)
+
+
+def test_outcome_value_stat_update_enforces_restore_value_domain():
+    stat = OutcomeValueStat(
+        samples=0, mean=0.0, m2=0.0, positive=0, negative=0, last_tick=0
+    )
+    stat.update(0.25)
+    assert OutcomeValueStat.restore(stat.checkpoint()).checkpoint() == stat.checkpoint()
+    for invalid in (True, float("nan"), float("inf"), -1.01, 1.01):
+        with pytest.raises(ValueError, match="finite and within"):
+            stat.update(invalid)  # type: ignore[arg-type]
+
+
+def test_welford_roundtrip_allows_floating_point_sign_bound_error():
+    stat = OutcomeValueStat(
+        samples=0, mean=0.0, m2=0.0, positive=0, negative=0, last_tick=0
+    )
+    for value in (1.0, 1.0, 0.0):
+        stat.update(value)
+
+    restored = OutcomeValueStat.restore(stat.checkpoint())
+    assert restored.checkpoint() == stat.checkpoint()
 
 
 def test_restore_rejects_global_checkpoint_over_capacity_without_truncation():
