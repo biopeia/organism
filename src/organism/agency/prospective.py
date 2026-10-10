@@ -18,6 +18,7 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, replace
 
 from .affordance import ActionAffordance
+from .checkpoint import PROSPECTIVE_AGENCY_SCHEMA_VERSION
 from .executive_outcome import ExecutiveModulation
 from .intention import AdmissionRoute
 from .policy import EvaluatedCandidate, ProspectivePolicy
@@ -200,7 +201,7 @@ class ProspectiveAgency:
 
     def checkpoint(self) -> dict[str, object]:
         return {
-            "schema_version": 1,
+            "schema_version": PROSPECTIVE_AGENCY_SCHEMA_VERSION,
             "outcome_value_ledger": self._ledger.checkpoint(),
         }
 
@@ -216,7 +217,7 @@ class ProspectiveAgency:
         if not isinstance(payload, dict):
             raise ValueError("invalid prospective agency checkpoint")
         version = payload.get("schema_version")
-        if version != 1:
+        if version != PROSPECTIVE_AGENCY_SCHEMA_VERSION:
             raise ValueError(
                 f"unsupported prospective agency checkpoint schema version: {version!r}"
             )

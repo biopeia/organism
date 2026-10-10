@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from organism.agency.checkpoint import PROSPECTIVE_AGENCY_SCHEMA_VERSION
 from organism.agency.policy import ProspectivePolicy
 from organism.agency.prospective import ProspectiveAgency
 from organism.agency.types import (
@@ -222,6 +223,7 @@ def test_checkpoint_roundtrip_preserves_ledger():
 
     agency = _make_agency(ledger=ledger)
     checkpoint = agency.checkpoint()
+    assert checkpoint["schema_version"] == PROSPECTIVE_AGENCY_SCHEMA_VERSION
 
     policy = ProspectivePolicy(
         organism_id="test-org",
