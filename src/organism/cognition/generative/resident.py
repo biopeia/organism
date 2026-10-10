@@ -49,7 +49,7 @@ from .types import (
 )
 from .workspace import GenerativeWorkspace
 
-RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 2
+RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 3
 
 
 def _resident_budget(value: object) -> GenerativeBudget:

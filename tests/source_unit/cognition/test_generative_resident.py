@@ -129,6 +129,14 @@ def test_resident_checkpoint_requires_all_emitted_fields_and_rejects_unknowns() 
         ResidentGenerativeCognition.from_checkpoint(extra, organism_id="organism.restore")
 
 
+def test_resident_checkpoint_rejects_pre_ordered_tracker_schema() -> None:
+    checkpoint = ResidentGenerativeCognition(organism_id="organism.restore").checkpoint()
+    checkpoint["schema_version"] = 2
+
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
+
+
 def test_resident_checkpoint_preserves_effective_budget_and_rejects_conflicting_override() -> None:
     budget = GenerativeBudget(
         max_states=4,
