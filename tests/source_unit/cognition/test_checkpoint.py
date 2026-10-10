@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 from organism.cognition.checkpoint import export_genome_checkpoint, restore_genome_checkpoint
+from organism.genetics.checkpoint import restore_genome as restore_genome_genetics
 from organism.cognition.genome import GenomeCodec, GenomeError
 from organism.cognition.limits import KernelLimits
 
@@ -34,10 +35,54 @@ def test_valid_genome_round_trips_exactly():
     assert restored.genome_hash == genome.genome_hash
 
 
-def test_exported_payload_carries_genome_hash():
+def test_exported_payload_carries_both_required_genome_hashes():
     genome = GenomeCodec().load(VALID_PAYLOAD)
     payload = export_genome_checkpoint(genome)
     assert payload["genome_hash"] == genome.genome_hash
+    assert payload["genotype_hash"] == genome.genotype_hash
+
+
+@pytest.mark.parametrize("invalid_value", [None, 1, ""])
+def test_cognition_and_genetics_codecs_both_reject_invalid_genotype_hash(invalid_value):
+    genome = GenomeCodec().load(VALID_PAYLOAD)
+    payload = export_genome_checkpoint(genome)
+    payload["genotype_hash"] = invalid_value
+    with pytest.raises(GenomeError):
+        restore_genome_checkpoint(
+            payload, kernel_limits=KernelLimits(), running_version=_RUNNING_VERSION
+        )
+    with pytest.raises(GenomeError):
+        restore_genome_genetics(
+            payload, kernel_limits=KernelLimits(), running_version=_RUNNING_VERSION
+        )
+
+
+def test_cognition_and_genetics_codecs_both_reject_mismatched_genotype_hash():
+    genome = GenomeCodec().load(VALID_PAYLOAD)
+    payload = export_genome_checkpoint(genome)
+    payload["genotype_hash"] = "0" * len(genome.genotype_hash)
+    with pytest.raises(GenomeError, match="genotype checkpoint hash mismatch"):
+        restore_genome_checkpoint(
+            payload, kernel_limits=KernelLimits(), running_version=_RUNNING_VERSION
+        )
+    with pytest.raises(GenomeError, match="genotype checkpoint hash mismatch"):
+        restore_genome_genetics(
+            payload, kernel_limits=KernelLimits(), running_version=_RUNNING_VERSION
+        )
+
+
+def test_cognition_and_genetics_codecs_both_reject_missing_genotype_hash():
+    genome = GenomeCodec().load(VALID_PAYLOAD)
+    payload = export_genome_checkpoint(genome)
+    del payload["genotype_hash"]
+    with pytest.raises(GenomeError):
+        restore_genome_checkpoint(
+            payload, kernel_limits=KernelLimits(), running_version=_RUNNING_VERSION
+        )
+    with pytest.raises(GenomeError):
+        restore_genome_genetics(
+            payload, kernel_limits=KernelLimits(), running_version=_RUNNING_VERSION
+        )
 
 
 def test_tampered_payload_is_rejected_on_restore():

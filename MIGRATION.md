@@ -751,3 +751,12 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Target paths: `src/organism/genetics/checkpoint.py::restore_germline`; `tests/source_unit/genetics/test_checkpoint.py`.
 - Validation: focused and full target test suites, package build, and `git diff --check` are recorded in the associated pull request.
 - Scope limit: this slice validates only the germline codec's internal serialized-state consistency. It does not add genome, expression, or germline data to a portable Organism checkpoint; reconcile the separate genome codecs; change expression restore semantics; or establish genetic, reproductive, or scientific efficacy. The remaining findings in issue #50 remain open.
+
+
+## Incremental correction: require genotype hash in both genome restore codecs
+
+- Source finding: `biopeia/docs` finding F-0087, recorded against `biopeia/organism@fc8a91c61d865663ba6f9468216171506fd29e7a`; implementation base: `266b5be2b3e46cbfe97a3343eca2034c76fc1ae2`.
+- Finding: `src/organism/genetics/checkpoint.py::restore_genome` rejected absent/non-string genome hashes, while `src/organism/cognition/checkpoint.py::restore_genome_checkpoint` accepted an absent `genotype_hash`.
+- Disposition: `REWRITE` of the cognition restore validation only; both codecs now require a string `genotype_hash` and compare it to the decoded genome. Regression tests verify missing/malformed hash rejection in both paths.
+- Validation and review: recorded in the associated PR after exact-base tests and build.
+- Scope limitation: this aligns hash-presence/integrity validation only. It does not compose genome, expression, or germline into a portable Organism checkpoint; does not resolve other F-0087 germline/expression findings; and makes no biological-equivalence or scientific-efficacy claim.

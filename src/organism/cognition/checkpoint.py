@@ -88,6 +88,8 @@ def restore_genome_checkpoint(
         raise GenomeError("genome checkpoint payload must be an object with a genome_hash")
     persisted_hash = payload["genome_hash"]
     persisted_genotype_hash = payload.get("genotype_hash")
+    if not isinstance(persisted_genotype_hash, str):
+        raise GenomeError("genome checkpoint hashes are required")
     genome_fields = {
         key: value for key, value in payload.items() if key not in {"genome_hash", "genotype_hash"}
     }
@@ -95,7 +97,7 @@ def restore_genome_checkpoint(
     genome = codec.load(genome_fields)
     if genome.genome_hash != persisted_hash:
         raise GenomeError("genome checkpoint hash mismatch -- payload may be corrupted or tampered")
-    if persisted_genotype_hash is not None and persisted_genotype_hash != genome.genotype_hash:
+    if persisted_genotype_hash != genome.genotype_hash:
         raise GenomeError(
             "genotype checkpoint hash mismatch -- payload may be corrupted or tampered"
         )
