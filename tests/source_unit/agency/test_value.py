@@ -184,9 +184,9 @@ def test_checkpoint_roundtrip_preserves_statistics_and_context():
     assert restored.contextual_outcome_count == 1
 
 
-def test_restore_accepts_v1_global_checkpoint():
+def test_restore_accepts_current_global_only_checkpoint():
     checkpoint = {
-        "schema_version": 1,
+        "schema_version": 2,
         "stats": {
             "outcome.valid": {
                 "samples": 5,
@@ -197,6 +197,7 @@ def test_restore_accepts_v1_global_checkpoint():
                 "last_tick": 10,
             }
         },
+        "context_stats": [],
     }
     restored = OutcomeValueLedger.restore(checkpoint)
     estimate = restored.estimate("outcome.valid")
@@ -204,9 +205,13 @@ def test_restore_accepts_v1_global_checkpoint():
     assert restored.contextual_outcome_count == 0
 
 
-def test_restore_fails_closed_on_unknown_schema():
+def test_restore_fails_closed_on_unsupported_and_legacy_schema():
     with pytest.raises(ValueError, match="schema"):
         OutcomeValueLedger.restore({"schema_version": 99, "stats": {}})
+    with pytest.raises(ValueError, match="schema"):
+        OutcomeValueLedger.restore(
+            {"schema_version": 1, "stats": {}, "context_stats": []}
+        )
 
 
 def test_restore_fails_on_non_dict():
@@ -216,7 +221,7 @@ def test_restore_fails_on_non_dict():
 
 def test_restore_rejects_corrupted_entry_instead_of_returning_partial_ledger():
     checkpoint = {
-        "schema_version": 1,
+        "schema_version": 2,
         "stats": {
             "outcome.valid": {
                 "samples": 5,
@@ -228,6 +233,7 @@ def test_restore_rejects_corrupted_entry_instead_of_returning_partial_ledger():
             },
             "outcome.corrupted": "not a dict",
         },
+        "context_stats": [],
     }
     with pytest.raises(ValueError, match="invalid outcome-value stat checkpoint"):
         OutcomeValueLedger.restore(checkpoint)
@@ -235,7 +241,7 @@ def test_restore_rejects_corrupted_entry_instead_of_returning_partial_ledger():
 
 def test_restore_rejects_global_checkpoint_over_capacity_without_truncation():
     checkpoint = {
-        "schema_version": 1,
+        "schema_version": 2,
         "stats": {
             f"outcome.{index}": {
                 "samples": 1,
@@ -247,6 +253,7 @@ def test_restore_rejects_global_checkpoint_over_capacity_without_truncation():
             }
             for index in range(MAX_OUTCOME_VALUES + 1)
         },
+        "context_stats": [],
     }
     with pytest.raises(ValueError, match="global capacity"):
         OutcomeValueLedger.restore(checkpoint)

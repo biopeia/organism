@@ -2,11 +2,28 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from ...capacity import CapacityPressure
 from .types import bounded_identifier, bounded_tuple, unit_interval
+
+
+def _checkpoint_int(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    return value
+
+
+def _checkpoint_number(value: object, name: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise ValueError(f"{name} must be finite numeric")
+    return float(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,23 +247,46 @@ class GenerativeUseTracker:
     def from_checkpoint(cls, payload: object) -> "GenerativeUseTracker":
         if not isinstance(payload, dict):
             raise ValueError("generative-use checkpoint must be an object")
-        raw = payload.get("representations", [])
+        if set(payload) != {"representations", "capacity_pressure", "sterile_reactivations"}:
+            raise ValueError("generative-use checkpoint fields are incomplete or unknown")
+        raw = payload["representations"]
         if not isinstance(raw, list) or len(raw) > cls.MAX_REPRESENTATIONS:
             raise ValueError("invalid generative-use representation collection")
         tracker = cls()
+        seen_representations: set[str] = set()
         for item in raw:
             if not isinstance(item, dict):
                 raise ValueError("invalid generative-use representation")
+            if set(item) != {
+                "representation_ref",
+                "activation_count",
+                "episode_ids",
+                "source_refs",
+                "hypothesis_count",
+                "disagreement_sum",
+                "disagreement_count",
+                "last_use_tick",
+            }:
+                raise ValueError("generative-use representation fields are incomplete or unknown")
             representation_ref = bounded_identifier(
-                item.get("representation_ref"), name="representation_ref"
+                item["representation_ref"], name="representation_ref"
             )
-            activation_count = int(item.get("activation_count", 0))
-            hypothesis_count = int(item.get("hypothesis_count", 0))
-            disagreement_sum = float(item.get("disagreement_sum", 0.0))
-            disagreement_count = int(item.get("disagreement_count", 0))
+            if representation_ref in seen_representations:
+                raise ValueError("duplicate generative-use representation")
+            seen_representations.add(representation_ref)
+            activation_count = _checkpoint_int(item["activation_count"], "activation_count")
+            hypothesis_count = _checkpoint_int(item["hypothesis_count"], "hypothesis_count")
+            disagreement_sum = _checkpoint_number(item["disagreement_sum"], "disagreement_sum")
+            disagreement_count = _checkpoint_int(item["disagreement_count"], "disagreement_count")
             last_use_tick = item.get("last_use_tick")
-            episode_ids = tuple(item.get("episode_ids", ()))
-            source_refs = tuple(item.get("source_refs", ()))
+            if not isinstance(item["episode_ids"], list) or not isinstance(item["source_refs"], list):
+                raise ValueError("generative-use episode_ids and source_refs must be lists")
+            if any(not isinstance(value, str) for value in (*item["episode_ids"], *item["source_refs"])):
+                raise ValueError("generative-use references must be strings")
+            episode_ids = tuple(item["episode_ids"])
+            source_refs = tuple(item["source_refs"])
+            if len(set(episode_ids)) != len(episode_ids) or len(set(source_refs)) != len(source_refs):
+                raise ValueError("generative-use references must be unique")
             if (
                 activation_count < 0
                 or hypothesis_count < 0
@@ -277,13 +317,19 @@ class GenerativeUseTracker:
             if last_use_tick is not None:
                 tracker._last_use_tick[representation_ref] = last_use_tick
         tracker.pressure = CapacityPressure.restore(
-            payload.get("capacity_pressure"), capacity=cls.MAX_REPRESENTATIONS
+            payload["capacity_pressure"], capacity=cls.MAX_REPRESENTATIONS
         )
-        tracker.sterile_reactivations = {
-            str(ref): max(0, int(count))
-            for ref, count in dict(payload.get("sterile_reactivations", {})).items()
-            if ref in tracker._activation_counts
-        }
+        raw_sterile = payload["sterile_reactivations"]
+        if not isinstance(raw_sterile, dict):
+            raise ValueError("sterile_reactivations must be an object")
+        tracker.sterile_reactivations = {}
+        for ref, count in raw_sterile.items():
+            bounded_identifier(ref, name="sterile reactivation representation_ref")
+            if ref not in tracker._activation_counts:
+                raise ValueError("sterile reactivation references unknown representation")
+            tracker.sterile_reactivations[ref] = _checkpoint_int(count, "sterile reactivation count")
+            if tracker.sterile_reactivations[ref] < 0:
+                raise ValueError("sterile reactivation count must be non-negative")
         return tracker
 
     def _drop(self, representation_ref: str) -> None:

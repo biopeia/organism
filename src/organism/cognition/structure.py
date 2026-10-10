@@ -139,50 +139,78 @@ class StructuralPlasticity:
             tentative_lifetime_ticks=tentative_lifetime_ticks,
             cooldown_ticks=cooldown_ticks,
         )
-        if not payload:
-            return model
         if not isinstance(payload, Mapping):
             raise ValueError("structural plasticity checkpoint must be an object")
+        if set(payload) != {
+            "coactivation_counts", "motor_association_counts", "cooldown_until"
+        }:
+            raise ValueError("structural plasticity checkpoint fields do not match the current schema")
 
         allowed = set(allowed_node_ids)
-        raw_counts = payload.get("coactivation_counts", [])
+        raw_counts = payload["coactivation_counts"]
         if not isinstance(raw_counts, list):
             raise ValueError("coactivation_counts must be a list")
         max_pairs = len(allowed) * max(0, len(allowed) - 1)
-        for entry in raw_counts[:max_pairs]:
-            if not isinstance(entry, Mapping):
+        if len(raw_counts) > max_pairs:
+            raise ValueError("coactivation_counts exceed the allowed node-pair bound")
+        for entry in raw_counts:
+            if not isinstance(entry, Mapping) or set(entry) != {"source_id", "target_id", "count"}:
                 raise ValueError("coactivation count entry must be an object")
-            source_id = str(entry["source_id"])
-            target_id = str(entry["target_id"])
+            source_id = entry["source_id"]
+            target_id = entry["target_id"]
+            if (
+                not isinstance(source_id, str)
+                or not source_id
+                or not isinstance(target_id, str)
+                or not target_id
+            ):
+                raise ValueError("coactivation node identities must be non-empty strings")
             raw_count: Any = entry["count"]
             if isinstance(raw_count, bool) or not isinstance(raw_count, int) or raw_count < 1:
                 raise ValueError("coactivation count must be a positive integer")
-            if source_id in allowed and target_id in allowed and source_id != target_id:
-                model._coactivation_counts[(source_id, target_id)] = raw_count
+            if source_id not in allowed or target_id not in allowed or source_id == target_id:
+                raise ValueError("coactivation checkpoint references an invalid node pair")
+            pair = (source_id, target_id)
+            if pair in model._coactivation_counts:
+                raise ValueError("duplicate coactivation checkpoint pair")
+            model._coactivation_counts[pair] = raw_count
 
-        raw_motor_counts = payload.get("motor_association_counts", [])
+        raw_motor_counts = payload["motor_association_counts"]
         if not isinstance(raw_motor_counts, list):
             raise ValueError("motor_association_counts must be a list")
-        for entry in raw_motor_counts[:max_pairs]:
-            if not isinstance(entry, Mapping):
+        if len(raw_motor_counts) > max_pairs:
+            raise ValueError("motor_association_counts exceed the allowed node-pair bound")
+        for entry in raw_motor_counts:
+            if not isinstance(entry, Mapping) or set(entry) != {"source_id", "target_id", "count"}:
                 raise ValueError("motor association count entry must be an object")
-            source_id = str(entry["source_id"])
-            target_id = str(entry["target_id"])
+            source_id = entry["source_id"]
+            target_id = entry["target_id"]
+            if (
+                not isinstance(source_id, str)
+                or not source_id
+                or not isinstance(target_id, str)
+                or not target_id
+            ):
+                raise ValueError("motor association node identities must be non-empty strings")
             raw_count: Any = entry["count"]
             if isinstance(raw_count, bool) or not isinstance(raw_count, int) or raw_count < 1:
                 raise ValueError("motor association count must be a positive integer")
-            if source_id in allowed and target_id in allowed and source_id != target_id:
-                model._motor_association_counts[(source_id, target_id)] = raw_count
+            if source_id not in allowed or target_id not in allowed or source_id == target_id:
+                raise ValueError("motor association checkpoint references an invalid node pair")
+            pair = (source_id, target_id)
+            if pair in model._motor_association_counts:
+                raise ValueError("duplicate motor association checkpoint pair")
+            model._motor_association_counts[pair] = raw_count
 
-        raw_cooldowns = payload.get("cooldown_until", {})
+        raw_cooldowns = payload["cooldown_until"]
         if not isinstance(raw_cooldowns, Mapping):
             raise ValueError("cooldown_until must be an object")
         for node_id, raw_until in raw_cooldowns.items():
             if isinstance(raw_until, bool) or not isinstance(raw_until, int) or raw_until < 0:
                 raise ValueError("cooldown tick must be a non-negative integer")
-            node_id = str(node_id)
-            if node_id in allowed:
-                model._cooldown_until[node_id] = raw_until
+            if not isinstance(node_id, str) or not node_id or node_id not in allowed:
+                raise ValueError("cooldown checkpoint references an unknown node")
+            model._cooldown_until[node_id] = raw_until
 
         return model
 

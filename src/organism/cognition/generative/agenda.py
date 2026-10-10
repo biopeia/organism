@@ -171,13 +171,21 @@ class GenerativeAgenda:
         """Restore an agenda without accepting external target metadata."""
         if not isinstance(payload, dict):
             raise ValueError("agenda checkpoint must be an object")
+        if set(payload) != {
+            "max_targets",
+            "max_reselection_without_progress",
+            "suppression_duration",
+            "agenda_contamination_count",
+            "targets",
+        }:
+            raise ValueError("agenda checkpoint fields are incomplete or unknown")
         try:
             agenda = cls(
                 max_targets=payload["max_targets"],
                 max_reselection_without_progress=payload["max_reselection_without_progress"],
                 suppression_duration=payload["suppression_duration"],
             )
-            contamination_count = payload.get("agenda_contamination_count", 0)
+            contamination_count = payload["agenda_contamination_count"]
             if (
                 isinstance(contamination_count, bool)
                 or not isinstance(contamination_count, int)
@@ -409,6 +417,25 @@ def _target_payload(target: GenerativeTarget) -> dict[str, object]:
 def _target_from_payload(value: object) -> GenerativeTarget:
     if not isinstance(value, dict):
         raise ValueError("agenda target must be an object")
+    if set(value) != {
+        "target_id",
+        "source",
+        "source_refs",
+        "created_tick",
+        "uncertainty",
+        "persistence",
+        "recurrence",
+        "estimated_resolvability",
+        "last_selected_tick",
+        "selection_count",
+        "last_progress_tick",
+        "status",
+        "no_progress_count",
+        "suppressed_until",
+    }:
+        raise ValueError("agenda target fields are incomplete or unknown")
+    if not isinstance(value["source_refs"], list):
+        raise ValueError("agenda target source_refs must be a list")
     return GenerativeTarget(
         target_id=value["target_id"],
         source=AgendaSource(value["source"]),
@@ -417,13 +444,13 @@ def _target_from_payload(value: object) -> GenerativeTarget:
         uncertainty=value["uncertainty"],
         persistence=value["persistence"],
         recurrence=value["recurrence"],
-        estimated_resolvability=value.get("estimated_resolvability"),
-        last_selected_tick=value.get("last_selected_tick"),
-        selection_count=value.get("selection_count", 0),
-        last_progress_tick=value.get("last_progress_tick"),
-        status=TargetStatus(value.get("status", TargetStatus.ELIGIBLE.value)),
-        no_progress_count=value.get("no_progress_count", 0),
-        suppressed_until=value.get("suppressed_until"),
+        estimated_resolvability=value["estimated_resolvability"],
+        last_selected_tick=value["last_selected_tick"],
+        selection_count=value["selection_count"],
+        last_progress_tick=value["last_progress_tick"],
+        status=TargetStatus(value["status"]),
+        no_progress_count=value["no_progress_count"],
+        suppressed_until=value["suppressed_until"],
     )
 
 

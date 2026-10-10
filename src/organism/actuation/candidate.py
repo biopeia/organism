@@ -58,8 +58,10 @@ class ActuatorContextEvidence:
         raw_relations = payload["effect_relations"]
         if not isinstance(raw_relations, dict):
             raise ValueError("context effect_relations must be an object")
+        if any(not isinstance(raw, dict) for raw in raw_relations.values()):
+            raise ValueError("context effect relation checkpoint must be an object")
         relations = {
-            percept_id: PairAccumulator.from_payload(dict(raw))
+            percept_id: PairAccumulator.from_payload(raw)
             for percept_id, raw in raw_relations.items()
         }
         if len(relations) > _MAX_EFFECT_RELATIONS_PER_CANDIDATE:
@@ -227,8 +229,10 @@ class ActuatorCandidateState:
         raw_relations = payload["effect_relations"]
         if not isinstance(raw_relations, dict):
             raise ValueError("effect_relations must be an object")
+        if any(not isinstance(raw, dict) for raw in raw_relations.values()):
+            raise ValueError("effect relation checkpoint must be an object")
         effect_relations = {
-            percept_id: PairAccumulator.from_payload(dict(raw))
+            percept_id: PairAccumulator.from_payload(raw)
             for percept_id, raw in raw_relations.items()
         }
         if len(effect_relations) > _MAX_EFFECT_RELATIONS_PER_CANDIDATE:
@@ -240,10 +244,12 @@ class ActuatorCandidateState:
         raw_context_evidence = payload["context_evidence"]
         if not isinstance(raw_context_evidence, dict):
             raise ValueError("context_evidence must be an object")
+        if any(not isinstance(raw, dict) for raw in raw_context_evidence.values()):
+            raise ValueError("context evidence checkpoint must be an object")
         if len(raw_context_evidence) > _MAX_CONTEXTS_PER_CANDIDATE:
             raise ValueError("context_evidence exceeds configured retention bound")
         context_evidence = {
-            context_key: ActuatorContextEvidence.from_payload(dict(raw_evidence))
+            context_key: ActuatorContextEvidence.from_payload(raw_evidence)
             for context_key, raw_evidence in raw_context_evidence.items()
         }
         if any(

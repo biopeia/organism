@@ -1379,6 +1379,7 @@ def test_motor_primitive_restore_rejects_unknown_checkpoint_fields():
         ("coerced_exploration_id", "invalid sensorimotor exploration identity"),
         ("unordered_frames", "frame ticks must be strictly increasing"),
         ("empty_frame_execution_id", "invalid sensorimotor frame primitive id"),
+        ("out_of_range_frame_motor", "motor vector values must be within"),
     ],
 )
 def test_sensorimotor_restore_rejects_missing_or_malformed_persisted_state(mutation, error):
@@ -1390,6 +1391,8 @@ def test_sensorimotor_restore_rejects_missing_or_malformed_persisted_state(mutat
     )
     if mutation in {"coerced_frame_flag", "empty_frame_execution_id"}:
         learner.observe(tick=1, body_state={}, motor_vector={})
+    if mutation == "out_of_range_frame_motor":
+        learner.observe(tick=1, body_state={}, motor_vector={"actuator.0": 0.5})
     if mutation == "unordered_frames":
         learner.observe(tick=1, body_state={}, motor_vector={})
         learner.observe(tick=2, body_state={}, motor_vector={})
@@ -1433,6 +1436,8 @@ def test_sensorimotor_restore_rejects_missing_or_malformed_persisted_state(mutat
         payload["frame_history"][0]["tick"] = 3
     elif mutation == "empty_frame_execution_id":
         payload["frame_history"][0]["execution_primitive_id"] = ""
+    elif mutation == "out_of_range_frame_motor":
+        payload["frame_history"][0]["motor_vector"]["actuator.0"] = 1.5
 
     with pytest.raises(ValueError, match=error):
         CompetenceDevelopmentEngine.restore(

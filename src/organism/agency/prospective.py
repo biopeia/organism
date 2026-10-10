@@ -217,11 +217,13 @@ class ProspectiveAgency:
         if not isinstance(payload, dict):
             raise ValueError("invalid prospective agency checkpoint")
         version = payload.get("schema_version")
-        if version != PROSPECTIVE_AGENCY_SCHEMA_VERSION:
+        if type(version) is not int or version != PROSPECTIVE_AGENCY_SCHEMA_VERSION:
             raise ValueError(
                 f"unsupported prospective agency checkpoint schema version: {version!r}"
             )
-        ledger_payload = payload.get("outcome_value_ledger", {})
+        if set(payload) != {"schema_version", "outcome_value_ledger"}:
+            raise ValueError("invalid prospective agency checkpoint shape")
+        ledger_payload = payload["outcome_value_ledger"]
         ledger = OutcomeValueLedger.restore(ledger_payload)
         return cls(
             organism_id=organism_id,

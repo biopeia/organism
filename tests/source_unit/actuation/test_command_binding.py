@@ -141,3 +141,30 @@ def test_binding_rejects_frame_from_another_commitment_and_tick():
                 command_id="command.x",
                 issued_at_tick=tick,
             )
+
+
+def test_action_commitment_restore_round_trips_active_and_terminal_state():
+    active = _commitment()
+    assert ActionCommitment.restore(active.checkpoint()).checkpoint() == active.checkpoint()
+
+    terminal = _commitment()
+    terminal.terminate(tick=14, status=CommitmentStatus.COMPLETED, reason="finished")
+    assert ActionCommitment.restore(terminal.checkpoint()).checkpoint() == terminal.checkpoint()
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"schema_version": True},
+        {"status": CommitmentStatus.COMPLETED.value},
+        {"ended_tick": 11},
+        {"status": CommitmentStatus.COMPLETED.value, "ended_tick": 14},
+        {"status": CommitmentStatus.ACTIVE.value, "end_reason": "unexpected"},
+        {"status": CommitmentStatus.COMPLETED.value, "ended_tick": 14, "end_reason": None},
+    ],
+)
+def test_action_commitment_restore_rejects_invalid_schema_or_lifecycle(updates):
+    payload = _commitment().checkpoint()
+    payload.update(updates)
+    with pytest.raises(ValueError):
+        ActionCommitment.restore(payload)

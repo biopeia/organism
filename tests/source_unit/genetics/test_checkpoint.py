@@ -8,12 +8,15 @@ from organism.genetics import (
     EpigeneticMark,
     GermlineState,
     GeneExpressionState,
+    ExpressionRegulator,
+    RegulatorySignals,
     create_standard_genome,
     export_expression,
     export_germline,
     restore_expression,
     restore_germline,
 )
+from organism.genetics.expression import restore_expression_state
 
 
 def _genome():
@@ -39,6 +42,15 @@ def test_germline_checkpoint_round_trip_preserves_derived_state():
     restored = restore_germline(payload, genome)
 
     assert export_germline(restored) == payload
+
+
+def test_germline_restore_rejects_omitted_persisted_capture_streaks():
+    genome = _genome()
+    payload = export_germline(GermlineState.from_genome(genome))
+    del payload["capture_streaks"]
+
+    with pytest.raises(ValueError, match="keys mismatch"):
+        restore_germline(payload, genome)
 
 
 @pytest.mark.parametrize("field", ["inherited_marks", "acquired_marks"])
@@ -128,3 +140,50 @@ def test_expression_restore_accepts_birth_expression_derived_from_inherited_germ
     )
 
     assert restored.as_dict() == expression.as_dict()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("exploration_drive", 1.1), ("exploration_drive", float("nan"))],
+)
+def test_expression_state_restore_rejects_out_of_range_values(field, value):
+    genome = _genome()
+    payload = export_expression(GeneExpressionState.from_genome(genome))
+    payload[field] = value
+    with pytest.raises(ValueError):
+        restore_expression_state(payload, genome)
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1, float("nan"), float("inf")])
+def test_expression_state_restore_rejects_invalid_regulatory_activation(value):
+    genome = _genome()
+    payload = export_expression(GeneExpressionState.from_genome(genome))
+    payload["regulatory_activation"]["mismatch_pressure"] = value
+    with pytest.raises(ValueError):
+        restore_expression_state(payload, genome)
+
+
+def test_expression_restore_rejects_truncated_activation_after_update():
+    genome = _genome()
+    initial = GeneExpressionState.from_genome(genome)
+    updated = ExpressionRegulator().update(
+        genome, initial, RegulatorySignals(uncertainty=0.5)
+    )
+    payload = export_expression(updated)
+    assert payload["update_count"] == 1
+    assert set(payload["regulatory_activation"]) == {
+        "mismatch_pressure", "resource_pressure"
+    }
+    payload["regulatory_activation"] = {}
+
+    with pytest.raises(ValueError, match="fields do not match update_count"):
+        restore_expression_state(payload, genome)
+
+
+def test_expression_restore_rejects_activation_on_never_updated_state():
+    genome = _genome()
+    payload = export_expression(GeneExpressionState.from_genome(genome))
+    payload["regulatory_activation"] = {"mismatch_pressure": 0.0}
+
+    with pytest.raises(ValueError, match="fields do not match update_count"):
+        restore_expression_state(payload, genome)

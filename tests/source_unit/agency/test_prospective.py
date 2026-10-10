@@ -260,6 +260,23 @@ def test_restore_fails_closed_on_wrong_schema():
         )
 
 
+def test_restore_requires_emitted_checkpoint_fields_and_rejects_unknown_fields():
+    policy = ProspectivePolicy(
+        organism_id="test-org",
+        min_model_confidence=0.1,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    checkpoint = _make_agency().checkpoint()
+    missing = dict(checkpoint)
+    del missing["outcome_value_ledger"]
+    with pytest.raises(ValueError):
+        ProspectiveAgency.restore(missing, organism_id="test-org", policy=policy)
+    extra = {**checkpoint, "unexpected": True}
+    with pytest.raises(ValueError):
+        ProspectiveAgency.restore(extra, organism_id="test-org", policy=policy)
+
+
 def test_deliberate_on_death_then_no_active_model():
     agency = _make_agency()
     decision = agency.deliberate(

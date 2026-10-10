@@ -245,6 +245,11 @@ def test_frozen_safety_state_survives_round_trip():
     assert restored.consecutive_failures == 3
 
 
+def test_safety_state_restore_rejects_unknown_fields():
+    with pytest.raises(GraphError, match="fields do not match"):
+        restore_safety_state({"consecutive_failures": 0, "frozen": False, "extra": 1})
+
+
 # --- SensoryNormalizer checkpoint ---
 
 from organism.cognition.activation import MIN_NORMALIZER_SAMPLES, SensoryNormalizer

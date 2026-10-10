@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Mapping
 
 
 class CommitmentStatus(StrEnum):
@@ -101,7 +101,7 @@ class ActionCommitment:
     @classmethod
     def restore(
         cls,
-        payload: dict[str, Any],
+        payload: Mapping[str, Any],
     ) -> "ActionCommitment":
         required = {
             "schema_version",
@@ -121,9 +121,13 @@ class ActionCommitment:
             "ended_tick",
             "end_reason",
         }
-        if set(payload) != required:
+        if not isinstance(payload, Mapping) or set(payload) != required:
             raise ValueError("action commitment checkpoint fields do not match the current schema")
-        if payload["schema_version"] != cls.SCHEMA_VERSION:
+        if (
+            isinstance(payload["schema_version"], bool)
+            or not isinstance(payload["schema_version"], int)
+            or payload["schema_version"] != cls.SCHEMA_VERSION
+        ):
             raise ValueError("unsupported action commitment checkpoint schema")
         for field in ("commitment_id", "proposal_id", "controller_id", "surface_fingerprint"):
             value = payload[field]
@@ -154,6 +158,16 @@ class ActionCommitment:
             payload["interruptibility"], (int, float)
         ):
             raise ValueError("action commitment interruptibility must be numeric")
+        status = CommitmentStatus(payload["status"])
+        ended_tick = payload["ended_tick"]
+        end_reason = payload["end_reason"]
+        if status is CommitmentStatus.ACTIVE:
+            if ended_tick is not None or end_reason is not None:
+                raise ValueError("active action commitment cannot have terminal fields")
+        elif ended_tick is None or end_reason is None:
+            raise ValueError("terminal action commitment requires ended_tick and end_reason")
+        elif ended_tick < payload["started_tick"]:
+            raise ValueError("action commitment end tick precedes its start")
         obj = cls(
             commitment_id=payload["commitment_id"],
             proposal_id=payload["proposal_id"],
@@ -167,8 +181,8 @@ class ActionCommitment:
             interruptibility=float(payload["interruptibility"]),
             minimum_duration=payload["minimum_duration"],
             maximum_duration=payload["maximum_duration"],
-            status=CommitmentStatus(payload["status"]),
+            status=status,
         )
-        obj.ended_tick = payload["ended_tick"]
-        obj.end_reason = payload["end_reason"]
+        obj.ended_tick = ended_tick
+        obj.end_reason = end_reason
         return obj

@@ -281,7 +281,7 @@ class OutcomeValueLedger:
 
     @classmethod
     def restore(cls, payload: object) -> "OutcomeValueLedger":
-        """Restore a complete v1 global or v2 contextual ledger.
+        """Restore the current complete contextual ledger checkpoint.
 
         Restoration fails closed: malformed entries and over-limit checkpoints
         are rejected instead of returning a silently partial ledger.
@@ -289,15 +289,17 @@ class OutcomeValueLedger:
         if not isinstance(payload, dict):
             raise ValueError("invalid outcome-value ledger checkpoint")
         version = payload.get("schema_version")
-        if version not in {1, cls._SCHEMA_VERSION}:
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != cls._SCHEMA_VERSION
+        ):
             raise ValueError(f"unsupported outcome-value ledger schema version: {version!r}")
-        expected_fields = {"schema_version", "stats"}
-        if version == cls._SCHEMA_VERSION:
-            expected_fields.add("context_stats")
+        expected_fields = {"schema_version", "stats", "context_stats"}
         if set(payload) != expected_fields:
             raise ValueError("invalid outcome-value ledger checkpoint shape")
 
-        raw_stats = payload.get("stats", {})
+        raw_stats = payload["stats"]
         if not isinstance(raw_stats, dict):
             raise ValueError("invalid outcome-value ledger stats checkpoint")
         if len(raw_stats) > MAX_OUTCOME_VALUES:
@@ -314,37 +316,36 @@ class OutcomeValueLedger:
             except (ValueError, TypeError, KeyError) as exc:
                 raise ValueError(f"invalid outcome-value stat for {outcome_id!r}") from exc
 
-        if version == cls._SCHEMA_VERSION:
-            raw_context = payload["context_stats"]
-            if not isinstance(raw_context, list):
-                raise ValueError("invalid contextual outcome-value checkpoint")
-            if len(raw_context) > MAX_CONTEXTUAL_OUTCOME_VALUES:
-                raise ValueError("outcome-value ledger exceeds contextual capacity")
-            for item in raw_context:
-                if not isinstance(item, dict) or set(item) != {
-                    "context_key", "outcome_id", "stat"
-                }:
-                    raise ValueError("invalid contextual outcome-value entry shape")
-                context_key = item.get("context_key")
-                outcome_id = item.get("outcome_id")
-                raw_stat = item.get("stat")
-                if (
-                    not _valid_context_key(context_key)
-                    or not isinstance(outcome_id, str)
-                    or not outcome_id
-                    or len(outcome_id) > 128
-                    or not isinstance(raw_stat, dict)
-                ):
-                    raise ValueError("invalid contextual outcome-value entry")
-                key = (context_key, outcome_id)
-                if key in ledger._context_stats:
-                    raise ValueError("duplicate contextual outcome-value entry")
-                try:
-                    ledger._context_stats[key] = OutcomeValueStat.restore(raw_stat)
-                except (ValueError, TypeError, KeyError) as exc:
-                    raise ValueError(
-                        f"invalid contextual outcome-value stat for {outcome_id!r}"
-                    ) from exc
+        raw_context = payload["context_stats"]
+        if not isinstance(raw_context, list):
+            raise ValueError("invalid contextual outcome-value checkpoint")
+        if len(raw_context) > MAX_CONTEXTUAL_OUTCOME_VALUES:
+            raise ValueError("outcome-value ledger exceeds contextual capacity")
+        for item in raw_context:
+            if not isinstance(item, dict) or set(item) != {
+                "context_key", "outcome_id", "stat"
+            }:
+                raise ValueError("invalid contextual outcome-value entry shape")
+            context_key = item.get("context_key")
+            outcome_id = item.get("outcome_id")
+            raw_stat = item.get("stat")
+            if (
+                not _valid_context_key(context_key)
+                or not isinstance(outcome_id, str)
+                or not outcome_id
+                or len(outcome_id) > 128
+                or not isinstance(raw_stat, dict)
+            ):
+                raise ValueError("invalid contextual outcome-value entry")
+            key = (context_key, outcome_id)
+            if key in ledger._context_stats:
+                raise ValueError("duplicate contextual outcome-value entry")
+            try:
+                ledger._context_stats[key] = OutcomeValueStat.restore(raw_stat)
+            except (ValueError, TypeError, KeyError) as exc:
+                raise ValueError(
+                    f"invalid contextual outcome-value stat for {outcome_id!r}"
+                ) from exc
         return ledger
 
 

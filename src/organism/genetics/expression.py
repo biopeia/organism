@@ -309,14 +309,28 @@ def restore_expression_state(
             raise ValueError(f"{name} must be finite numeric")
         return float(value)
 
+    count = payload["update_count"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError("update_count must be a non-negative int")
+
     raw_activation = payload["regulatory_activation"]
     if not isinstance(raw_activation, Mapping):
         raise ValueError("regulatory_activation must be an object")
+    expected_activation_keys = (
+        set() if count == 0 else {"mismatch_pressure", "resource_pressure"}
+    )
+    if set(raw_activation) != expected_activation_keys:
+        raise ValueError("regulatory_activation fields do not match update_count")
     activation: dict[str, float] = {}
     for key, value in raw_activation.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("regulatory activation values must be numeric")
-        activation[str(key)] = _unit(float(value))
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise ValueError("regulatory activation values must be finite and within [0, 1]")
+        activation[key] = float(value)
 
     raw_birth = payload["birth_expression"]
     if not isinstance(raw_birth, Mapping):
@@ -338,16 +352,16 @@ def restore_expression_state(
             raise ValueError("birth_expression values must be finite")
         birth[locus] = float(value)
 
-    count = payload["update_count"]
-    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-        raise ValueError("update_count must be a non-negative int")
+    exploration_drive = finite("exploration_drive")
+    if not 0.0 <= exploration_drive <= 1.0:
+        raise ValueError("exploration_drive must be within [0, 1]")
 
     state = GeneExpressionState(
         effective_learning_rate=finite("effective_learning_rate"),
         effective_structural_plasticity=finite("effective_structural_plasticity"),
         effective_growth_threshold=finite("effective_growth_threshold"),
         effective_pruning_threshold=finite("effective_pruning_threshold"),
-        exploration_drive=_unit(finite("exploration_drive")),
+        exploration_drive=exploration_drive,
         birth_expression=birth,
         regulatory_activation=activation,
         update_count=count,

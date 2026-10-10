@@ -325,7 +325,58 @@ def _estimate_payload(estimate: AtomEstimate | None) -> dict[str, Any] | None:
 
 
 def _estimate_from(payload: Mapping[str, Any] | None) -> AtomEstimate | None:
-    return AtomEstimate(**payload) if payload is not None else None
+    if payload is None:
+        return None
+    fields = {
+        "atom", "pulses", "hits", "mean_pulse_windows", "passive_windows",
+        "passive_hits", "expected_quiet_rate", "pulse_rate_lower_bound",
+        "controllability", "agency", "estimated_tick", "last_pulse_tick",
+        "pulse_commitments", "passive_tick_range",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != fields:
+        raise ValueError("footprint estimate fields do not match the current schema")
+    if not isinstance(payload["atom"], str) or not payload["atom"]:
+        raise ValueError("footprint estimate atom must be a non-empty string")
+    for field in ("pulses", "hits", "passive_windows", "passive_hits", "estimated_tick", "last_pulse_tick"):
+        if isinstance(payload[field], bool) or not isinstance(payload[field], int):
+            raise ValueError(f"footprint estimate {field} must be an integer")
+    for field in (
+        "mean_pulse_windows", "expected_quiet_rate", "pulse_rate_lower_bound",
+        "controllability", "agency",
+    ):
+        if isinstance(payload[field], bool) or not isinstance(payload[field], (int, float)):
+            raise ValueError(f"footprint estimate {field} must be numeric")
+        if not math.isfinite(float(payload[field])):
+            raise ValueError(f"footprint estimate {field} must be finite")
+    if payload["pulses"] < 1 or not 1 <= payload["hits"] <= payload["pulses"]:
+        raise ValueError("footprint estimate pulse/hit counts are inconsistent")
+    if payload["passive_windows"] < 0 or not 0 <= payload["passive_hits"] <= payload["passive_windows"]:
+        raise ValueError("footprint estimate passive counts are inconsistent")
+    if payload["mean_pulse_windows"] <= 0:
+        raise ValueError("footprint estimate mean_pulse_windows must be positive")
+    for field in ("expected_quiet_rate", "pulse_rate_lower_bound", "controllability", "agency"):
+        if not 0.0 <= float(payload[field]) <= 1.0:
+            raise ValueError(f"footprint estimate {field} must be within [0, 1]")
+    for field in ("estimated_tick", "last_pulse_tick"):
+        if payload[field] < -1:
+            raise ValueError(f"footprint estimate {field} must be >= -1")
+    commitments = payload["pulse_commitments"]
+    if not isinstance(commitments, (list, tuple)) or any(
+        not isinstance(item, str) or not item for item in commitments
+    ):
+        raise ValueError("footprint estimate pulse_commitments must be strings")
+    passive_range = payload["passive_tick_range"]
+    if passive_range is not None and (
+        not isinstance(passive_range, (list, tuple))
+        or len(passive_range) != 2
+        or any(isinstance(item, bool) or not isinstance(item, int) for item in passive_range)
+    ):
+        raise ValueError("footprint estimate passive_tick_range must be two integers or null")
+    if passive_range is not None and (passive_range[0] < 0 or passive_range[1] < passive_range[0]):
+        raise ValueError("footprint estimate passive_tick_range is invalid")
+    if len(commitments) > min(payload["pulses"], MAX_ANCESTRY_PULSES):
+        raise ValueError("footprint estimate pulse ancestry exceeds its retained bound")
+    return AtomEstimate(**payload)
 
 
 def _record_payload(record: MemberRecord) -> dict[str, Any]:
@@ -337,10 +388,18 @@ def _record_payload(record: MemberRecord) -> dict[str, Any]:
 
 
 def _record_from(payload: Mapping[str, Any]) -> MemberRecord:
-    estimate = AtomEstimate(**payload["estimate"])
+    if not isinstance(payload, Mapping) or set(payload) != {"atom", "entered_tick", "estimate"}:
+        raise ValueError("footprint member record fields do not match the current schema")
+    if not isinstance(payload["atom"], str) or not payload["atom"]:
+        raise ValueError("footprint member atom must be a non-empty string")
+    if isinstance(payload["entered_tick"], bool) or not isinstance(payload["entered_tick"], int):
+        raise ValueError("footprint member entered_tick must be an integer")
+    estimate = _estimate_from(payload["estimate"])
+    if estimate is None:
+        raise ValueError("footprint member estimate is required")
     if estimate.atom != payload["atom"]:
         raise ValueError("footprint member and its estimate disagree on the atom")
-    return MemberRecord(str(payload["atom"]), int(payload["entered_tick"]), estimate)
+    return MemberRecord(payload["atom"], payload["entered_tick"], estimate)
 
 
 def block_replicated_members(
@@ -825,8 +884,6 @@ class FootprintRegistry:
     def restore(cls, payload: Mapping[str, Any], **options: Any) -> "FootprintRegistry":
         if not isinstance(payload, Mapping):
             raise ValueError("footprint registry checkpoint must be an object")
-        if payload.get("schema_version") != cls.SCHEMA_VERSION:
-            raise ValueError("unsupported footprint registry checkpoint")
         required_fields = {
             "schema_version",
             "members",
@@ -836,52 +893,129 @@ class FootprintRegistry:
             "transitions_recorded",
             "live_estimates",
         }
+        if (
+            isinstance(payload.get("schema_version"), bool)
+            or not isinstance(payload.get("schema_version"), int)
+            or payload.get("schema_version") != cls.SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported footprint registry checkpoint")
         if set(payload) != required_fields:
             raise ValueError("footprint registry checkpoint fields are incomplete or unknown")
+
+        def integer(value: Any, field: str, *, minimum: int = 0) -> int:
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ValueError(f"footprint checkpoint {field} must be an integer >= {minimum}")
+            return value
+
+        def source(value: Any) -> tuple[str, ...]:
+            if not isinstance(value, (list, tuple)) or any(
+                not isinstance(item, str) or not item for item in value
+            ):
+                raise ValueError("footprint checkpoint source must be a sequence of non-empty strings")
+            return tuple(value)
+
+        def records(value: Any) -> tuple[MemberRecord, ...]:
+            if not isinstance(value, list):
+                raise ValueError("footprint checkpoint members must be a list")
+            restored = tuple(_record_from(item) for item in value)
+            if len({record.atom for record in restored}) != len(restored):
+                raise ValueError("footprint checkpoint contains duplicate member atoms")
+            return restored
+
+        for field in ("members", "versions", "pins", "transitions", "live_estimates"):
+            if not isinstance(payload[field], list):
+                raise ValueError(f"footprint checkpoint {field} must be a list")
+        if len(payload["transitions"]) > cls.TRANSITION_LOG:
+            raise ValueError("footprint checkpoint transition log exceeds its retained bound")
+        transition_count = integer(payload["transitions_recorded"], "transitions_recorded")
+        if len(payload["transitions"]) != min(transition_count, cls.TRANSITION_LOG):
+            raise ValueError("footprint checkpoint retained transition history is incomplete")
+
         registry = cls(**options)
-        for raw in payload.get("versions", []):
-            source = tuple(str(v) for v in raw["source"])
-            registry._versions[source] = int(raw["version"])
-            registry._version_ticks[source] = int(raw.get("since_tick", -1))
-        for raw in payload.get("members", []):
-            records = [_record_from(item) for item in raw["records"]]
-            registry._members[tuple(str(v) for v in raw["source"])] = {
-                record.atom: record for record in records
-            }
-        for raw in payload.get("pins", []):
-            members = tuple(_record_from(item) for item in raw["members"])
+        for raw in payload["versions"]:
+            if not isinstance(raw, Mapping) or set(raw) != {"source", "version", "since_tick"}:
+                raise ValueError("footprint version fields do not match the current schema")
+            key = source(raw["source"])
+            if key in registry._versions:
+                raise ValueError("footprint checkpoint contains duplicate version sources")
+            registry._versions[key] = integer(raw["version"], "version")
+            registry._version_ticks[key] = integer(raw["since_tick"], "since_tick", minimum=-1)
+        for raw in payload["members"]:
+            if not isinstance(raw, Mapping) or set(raw) != {"source", "version", "records"}:
+                raise ValueError("footprint source member fields do not match the current schema")
+            key = source(raw["source"])
+            if key in registry._members:
+                raise ValueError("footprint checkpoint contains duplicate member sources")
+            member_records = records(raw["records"])
+            version = integer(raw["version"], "member version")
+            if registry._versions.get(key) != version:
+                raise ValueError("footprint member version does not match its source version")
+            registry._members[key] = {record.atom: record for record in member_records}
+        for raw in payload["pins"]:
+            if not isinstance(raw, Mapping) or set(raw) != {
+                "footprint", "source", "entity_id", "version", "pinned_tick", "members"
+            }:
+                raise ValueError("pinned footprint fields do not match the current schema")
+            if any(not isinstance(raw[field], str) or not raw[field] for field in ("footprint", "entity_id")):
+                raise ValueError("pinned footprint identities must be non-empty strings")
+            key = source(raw["source"])
+            members = records(raw["members"])
             pin = PinnedFootprintSnapshot(
-                footprint=str(raw["footprint"]),
-                source=tuple(str(v) for v in raw["source"]),
-                entity_id=str(raw["entity_id"]),
-                version=int(raw["version"]),
-                pinned_tick=int(raw["pinned_tick"]),
+                footprint=raw["footprint"],
+                source=key,
+                entity_id=raw["entity_id"],
+                version=integer(raw["version"], "pin version"),
+                pinned_tick=integer(raw["pinned_tick"], "pinned_tick"),
                 members=members,
             )
-            if footprint_id(pin.atoms) != pin.footprint:
+            if pin.entity_id != footprint_entity_id(pin.source) or footprint_id(pin.atoms) != pin.footprint:
                 raise ValueError("pinned footprint content does not match its identity")
+            if pin.footprint in registry._pins:
+                raise ValueError("footprint checkpoint contains duplicate pins")
             registry._pins[pin.footprint] = pin
-        for raw in payload.get("transitions", [])[-cls.TRANSITION_LOG :]:
+        transition_fields = {
+            "tick", "kind", "source", "entity_id", "version", "footprint_before",
+            "footprint_after", "atom", "previous_member", "margin", "estimate",
+        }
+        for raw in payload["transitions"]:
+            if not isinstance(raw, Mapping) or set(raw) != transition_fields:
+                raise ValueError("footprint transition fields do not match the current schema")
+            for field in ("entity_id",):
+                if not isinstance(raw[field], str) or not raw[field]:
+                    raise ValueError(f"footprint transition {field} must be a non-empty string")
+            for field in ("footprint_before", "footprint_after", "atom"):
+                if raw[field] is not None and not isinstance(raw[field], str):
+                    raise ValueError(f"footprint transition {field} must be a string or null")
+            if raw["previous_member"] is not None and not isinstance(raw["previous_member"], bool):
+                raise ValueError("footprint transition previous_member must be boolean or null")
+            if raw["margin"] is not None and (
+                isinstance(raw["margin"], bool) or not isinstance(raw["margin"], (int, float))
+            ):
+                raise ValueError("footprint transition margin must be numeric or null")
+            estimate = _estimate_from(raw["estimate"])
             registry._transitions.append(
                 FootprintTransition(
-                    tick=int(raw["tick"]),
+                    tick=integer(raw["tick"], "transition tick"),
                     kind=TransitionKind(raw["kind"]),
-                    source=tuple(str(v) for v in raw["source"]),
-                    entity_id=str(raw["entity_id"]),
-                    version=int(raw["version"]),
-                    footprint_before=raw.get("footprint_before"),
-                    footprint_after=raw.get("footprint_after"),
-                    atom=raw.get("atom"),
-                    previous_member=raw.get("previous_member"),
+                    source=source(raw["source"]),
+                    entity_id=raw["entity_id"],
+                    version=integer(raw["version"], "transition version"),
+                    footprint_before=raw["footprint_before"],
+                    footprint_after=raw["footprint_after"],
+                    atom=raw["atom"],
+                    previous_member=raw["previous_member"],
                     margin=raw.get("margin"),
-                    estimate=_estimate_from(raw.get("estimate")),
+                    estimate=estimate,
                 )
             )
-        registry.transitions_recorded = int(payload.get("transitions_recorded", 0))
-        for raw in payload.get("live_estimates", []):
-            registry._live_estimates[tuple(str(v) for v in raw["source"])] = tuple(
-                CausalRef.from_payload(item) for item in raw["refs"]
-            )
+        registry.transitions_recorded = transition_count
+        for raw in payload["live_estimates"]:
+            if not isinstance(raw, Mapping) or set(raw) != {"source", "refs"}:
+                raise ValueError("live footprint estimate fields do not match the current schema")
+            key = source(raw["source"])
+            if key in registry._live_estimates or not isinstance(raw["refs"], list):
+                raise ValueError("footprint checkpoint live estimates are duplicated or malformed")
+            registry._live_estimates[key] = tuple(CausalRef.from_payload(item) for item in raw["refs"])
         return registry
 
 

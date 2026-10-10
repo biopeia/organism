@@ -92,9 +92,11 @@ class CognitiveTransitionState:
             "schema", "schema_version", "identity", "last_causal_tick", "previous_activations"
         }:
             raise CognitiveTransitionError("invalid cognitive transition checkpoint shape")
-        if payload["schema"] != "biopeia.organism.cognitive-transition" or payload[
-            "schema_version"
-        ] != 1:
+        if (
+            payload["schema"] != "biopeia.organism.cognitive-transition"
+            or type(payload["schema_version"]) is not int
+            or payload["schema_version"] != 1
+        ):
             raise CognitiveTransitionError("unsupported cognitive transition checkpoint")
         raw_activations = payload["previous_activations"]
         if not isinstance(raw_activations, list):

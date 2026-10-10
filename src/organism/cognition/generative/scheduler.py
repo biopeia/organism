@@ -49,11 +49,11 @@ class GenerativeScheduler:
 
     @classmethod
     def from_checkpoint(cls, payload: object) -> GenerativeScheduler:
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or set(payload) != {"quotas", "used"}:
             raise ValueError("scheduler checkpoint must be an object")
         try:
             raw_quotas = payload["quotas"]
-            if not isinstance(raw_quotas, dict):
+            if not isinstance(raw_quotas, dict) or set(raw_quotas) != {mode.value for mode in GenerativeMode}:
                 raise ValueError("scheduler quotas must be an object")
             scheduler = cls(
                 online_quota=raw_quotas[GenerativeMode.ONLINE.value],
@@ -64,7 +64,7 @@ class GenerativeScheduler:
             if not isinstance(raw_used, list):
                 raise ValueError("scheduler usage must be a list")
             for item in raw_used:
-                if not isinstance(item, dict):
+                if not isinstance(item, dict) or set(item) != {"tick", "mode", "count"}:
                     raise ValueError("scheduler usage entry must be an object")
                 tick = item["tick"]
                 count = item["count"]
@@ -78,6 +78,10 @@ class GenerativeScheduler:
                 ):
                     raise ValueError("invalid scheduler usage entry")
                 mode = GenerativeMode(item["mode"])
+                if (tick, mode) in scheduler._used:
+                    raise ValueError("duplicate scheduler usage entry")
+                if count > scheduler._quotas[mode]:
+                    raise ValueError("scheduler usage exceeds quota")
                 scheduler._used[(tick, mode)] = count
             return scheduler
         except (KeyError, TypeError, ValueError) as exc:

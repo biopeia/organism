@@ -230,7 +230,15 @@ class ResidentGenerativeCognition:
     ) -> "ResidentGenerativeCognition":
         if (
             not isinstance(payload, dict)
-            or payload.get("schema_version") != GENERATIVE_COGNITION_SCHEMA_VERSION
+            or set(payload)
+            != {
+                "schema_version", "generative_tick", "last_symbiont_tick", "agenda",
+                "scheduler", "workspace", "hypotheses", "calibration", "generative_use",
+                "reconciliation_count", "contradicted_hypothesis_count",
+                "factual_contamination_count",
+            }
+            or type(payload["schema_version"]) is not int
+            or payload["schema_version"] != GENERATIVE_COGNITION_SCHEMA_VERSION
         ):
             raise ValueError("invalid resident generative cognition checkpoint")
         try:
@@ -247,7 +255,7 @@ class ResidentGenerativeCognition:
                 registry=registry,
             )
             resident.generative_tick = tick
-            last_symbiont_tick = payload.get("last_symbiont_tick", 0)
+            last_symbiont_tick = payload["last_symbiont_tick"]
             if (
                 isinstance(last_symbiont_tick, bool)
                 or not isinstance(last_symbiont_tick, int)
@@ -255,7 +263,7 @@ class ResidentGenerativeCognition:
             ):
                 raise ValueError("invalid last_symbiont_tick")
             resident.last_symbiont_tick = last_symbiont_tick
-            raw_workspace = payload.get("workspace")
+            raw_workspace = payload["workspace"]
             if raw_workspace is not None:
                 resident.last_workspace = restore_workspace(
                     {
@@ -267,16 +275,16 @@ class ResidentGenerativeCognition:
                     raise ValueError("generative workspace belongs to another organism")
 
             resident.calibration = PredictionCalibration.from_checkpoint(
-                payload.get("calibration", {"buckets": []})
+                payload["calibration"]
             )
             resident.consolidator = GenerativeConsolidator(
                 tracker=GenerativeUseTracker.from_checkpoint(
-                    payload.get("generative_use", {"representations": []})
+                    payload["generative_use"]
                 )
             )
-            raw_reconciliations = payload.get("reconciliation_count", 0)
-            raw_contradicted = payload.get("contradicted_hypothesis_count", 0)
-            raw_contamination = payload.get("factual_contamination_count", 0)
+            raw_reconciliations = payload["reconciliation_count"]
+            raw_contradicted = payload["contradicted_hypothesis_count"]
+            raw_contamination = payload["factual_contamination_count"]
             for name, value in (
                 ("reconciliation_count", raw_reconciliations),
                 ("contradicted_hypothesis_count", raw_contradicted),
@@ -288,43 +296,55 @@ class ResidentGenerativeCognition:
             resident.contradicted_hypothesis_count = raw_contradicted
             resident.factual_contamination_count = raw_contamination
 
-            raw_hypotheses = payload.get("hypotheses", [])
+            raw_hypotheses = payload["hypotheses"]
             if not isinstance(raw_hypotheses, list) or len(raw_hypotheses) > 128:
                 raise ValueError("invalid generative hypothesis collection")
             for item in raw_hypotheses:
-                if not isinstance(item, dict):
+                hypothesis_keys = {
+                    "hypothesis_id", "source_episode_ids", "source_model_ids", "uncertainty",
+                    "status", "factual_support_refs", "factual_conflict_refs", "target_id",
+                    "predicted_outcomes", "representation_refs", "calibration",
+                }
+                if not isinstance(item, dict) or set(item) != hypothesis_keys:
                     raise ValueError("invalid generative hypothesis")
+                for name in ("source_episode_ids", "source_model_ids", "factual_support_refs", "factual_conflict_refs", "predicted_outcomes", "representation_refs"):
+                    if not isinstance(item[name], list):
+                        raise ValueError(f"hypothesis {name} must be a list")
                 hypothesis = GenerativeHypothesis(
                     hypothesis_id=item["hypothesis_id"],
-                    source_episode_ids=tuple(item.get("source_episode_ids", ())),
-                    source_model_ids=tuple(item.get("source_model_ids", ())),
+                    source_episode_ids=tuple(item["source_episode_ids"]),
+                    source_model_ids=tuple(item["source_model_ids"]),
                     uncertainty=item["uncertainty"],
-                    status=HypothesisStatus(
-                        item.get("status", HypothesisStatus.HYPOTHESIZED.value)
-                    ),
-                    factual_support_refs=tuple(item.get("factual_support_refs", ())),
-                    factual_conflict_refs=tuple(item.get("factual_conflict_refs", ())),
+                    status=HypothesisStatus(item["status"]),
+                    factual_support_refs=tuple(item["factual_support_refs"]),
+                    factual_conflict_refs=tuple(item["factual_conflict_refs"]),
                 )
+                if hypothesis.hypothesis_id in resident.hypotheses:
+                    raise ValueError("duplicate generative hypothesis id")
                 resident.hypotheses[hypothesis.hypothesis_id] = hypothesis
                 target_id = item["target_id"]
                 if not isinstance(target_id, str) or not target_id:
                     raise ValueError("hypothesis target_id must be non-empty")
                 resident._hypothesis_target[hypothesis.hypothesis_id] = target_id
                 resident._hypothesis_outcomes[hypothesis.hypothesis_id] = tuple(
-                    item.get("predicted_outcomes", ())
+                    item["predicted_outcomes"]
                 )
                 resident._hypothesis_representations[hypothesis.hypothesis_id] = tuple(
-                    item.get("representation_refs", ())
+                    item["representation_refs"]
                 )
-                raw_calibration = item.get("calibration")
+                raw_calibration = item["calibration"]
                 if raw_calibration is not None:
-                    if not isinstance(raw_calibration, dict):
+                    if not isinstance(raw_calibration, dict) or set(raw_calibration) != {"model_id", "operation", "depth", "uncertainty"}:
+                        raise ValueError("invalid hypothesis calibration metadata")
+                    if not isinstance(raw_calibration["model_id"], str) or type(raw_calibration["depth"]) is not int or raw_calibration["depth"] < 0:
+                        raise ValueError("invalid hypothesis calibration metadata")
+                    if isinstance(raw_calibration["uncertainty"], bool) or not isinstance(raw_calibration["uncertainty"], (int, float)):
                         raise ValueError("invalid hypothesis calibration metadata")
                     resident._hypothesis_calibration[hypothesis.hypothesis_id] = (
-                        str(raw_calibration["model_id"]),
+                        raw_calibration["model_id"],
                         GenerativeOperation(raw_calibration["operation"]),
-                        int(raw_calibration["depth"]),
-                        float(raw_calibration["uncertainty"]),
+                        raw_calibration["depth"],
+                        raw_calibration["uncertainty"],
                     )
             return resident
         except (KeyError, TypeError, ValueError) as exc:
