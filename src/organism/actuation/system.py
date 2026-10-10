@@ -8,10 +8,10 @@ from .surface import ActuatorSurface
 from .types import Actuation
 
 
-class ActuatorSystem:
-    """Validate and hand a committed command across the opaque body boundary."""
+class _ActuatorSystem:
+    """Private low-level executor called only by the registered ActionDomain."""
 
-    def execute_command(
+    def _execute_command(
         self,
         command: MotorCommand,
         surface: ActuatorSurface,

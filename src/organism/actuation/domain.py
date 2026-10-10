@@ -13,6 +13,7 @@ from ..agency.executive_outcome import (
     ExecutiveOutcomeLedger,
     ExecutiveOutcomeSample,
     OutcomeClass,
+    classify_outcome,
 )
 from ..agency.affordance import ActionAffordance
 from ..agency.intention import ActionIntent, IntentStatus
@@ -23,7 +24,7 @@ from .commitment import ActionCommitment, CommitmentStatus
 from .command import motor_command_from_frame
 from .controller import ControllerFrame, SequenceController
 from .surface import ActuatorSurface
-from .system import ActuatorSystem
+from .system import _ActuatorSystem
 from .types import Actuation
 
 
@@ -40,11 +41,10 @@ class ActionDomain:
         self,
         *,
         arbitrator: ActionArbitrator | None = None,
-        actuator_system: ActuatorSystem | None = None,
         outcome_ledger: ExecutiveOutcomeLedger | None = None,
     ) -> None:
         self._arbitrator = arbitrator or ActionArbitrator()
-        self._actuator_system = actuator_system or ActuatorSystem()
+        self._actuator_system = _ActuatorSystem()
         self._outcome_ledger = outcome_ledger
         self._intents: dict[str, ActionIntent] = {}
         self._commitments: dict[str, ActionCommitment] = {}
@@ -68,7 +68,12 @@ class ActionDomain:
         embodiment_id: str | None,
         tick: int,
     ) -> ActionIntent:
-        """Materialize one already-admitted decision as a pending intent."""
+        """Materialize a decision emitted by the trusted Organism admission boundary.
+
+        This checks internal consistency; it does not authenticate caller-provided
+        affordance provenance. The canonical cognition/admission composition owns
+        that guarantee.
+        """
         if not isinstance(decision, ProspectiveDecision):
             raise TypeError("ActionDomain requires an admitted ProspectiveDecision")
         if not isinstance(supporting_affordance, ActionAffordance):
@@ -88,8 +93,7 @@ class ActionDomain:
             raise ValueError("intent embodiment does not match its supporting affordance")
         if intent_id in self._intents:
             raise ValueError("intent_id is already registered")
-        if isinstance(tick, bool) or not isinstance(tick, int) or tick < 0:
-            raise ValueError("tick must be a non-negative causal tick")
+        _validate_causal_tick(tick, minimum=0, field="tick")
         intent = ActionIntent(
             intent_id=intent_id,
             competence_id=decision.competence_id,
@@ -126,7 +130,10 @@ class ActionDomain:
         maximum_duration: int | None,
     ) -> ActionSelection:
         """Arbitrate and create one commitment from explicit execution inputs."""
+        _validate_causal_tick(tick, minimum=0, field="tick")
         current = self.active_commitment
+        if current is not None:
+            _validate_causal_tick(tick, minimum=current.started_tick, field="tick")
         decision = self._arbitrator.choose(proposals=proposals, current=current, tick=tick)
         if decision.proposal is None:
             return ActionSelection(decision=decision, commitment=current)
@@ -137,6 +144,7 @@ class ActionDomain:
         intent = self._intents.get(proposal.intent_id)
         if intent is None or intent.status is not IntentStatus.PENDING:
             raise ValueError("selected proposal does not reference a pending registered intent")
+        _validate_causal_tick(tick, minimum=intent.created_tick, field="tick")
         if proposal.competence_id != intent.competence_id:
             raise ValueError("proposal competence does not match its admitted intent")
         if proposal.effect_target_id != intent.anticipated_effect_id:
@@ -186,9 +194,11 @@ class ActionDomain:
         tick: int,
         command_id: str,
     ) -> MotorCommand:
+        _validate_causal_tick(tick, minimum=0, field="tick")
         commitment = self.active_commitment
         if commitment is None or self._commitments.get(commitment.commitment_id) is not commitment:
             raise RuntimeError("no registered active action commitment")
+        _validate_causal_tick(tick, minimum=commitment.started_tick, field="tick")
         frame = controller.frame(commitment, tick=tick)
         return motor_command_from_frame(
             commitment,
@@ -209,7 +219,7 @@ class ActionDomain:
             or command.embodiment_id != commitment.embodiment_id
         ):
             raise RuntimeError("motor command provenance does not match its commitment")
-        return self._actuator_system.execute_command(command, surface, commitment=commitment)
+        return self._actuator_system._execute_command(command, surface, commitment=commitment)
 
     def close(
         self,
@@ -230,13 +240,38 @@ class ActionDomain:
         intent = self._intents.get(commitment.intent_id or "")
         if intent is None or intent.status is not IntentStatus.ACTIVE:
             raise RuntimeError("active commitment has no active registered intent")
-        if status not in {IntentStatus.SATISFIED, IntentStatus.FAILED, IntentStatus.INVALIDATED}:
-            raise ValueError("terminal close requires satisfied, failed, or invalidated intent")
-        if tick < commitment.started_tick:
-            raise ValueError("close tick precedes commitment")
+        if status not in {
+            IntentStatus.SATISFIED,
+            IntentStatus.FAILED,
+            IntentStatus.INVALIDATED,
+            IntentStatus.INTERRUPTED,
+        }:
+            raise ValueError(
+                "terminal close requires satisfied, failed, invalidated, or interrupted intent"
+            )
+        _validate_causal_tick(
+            tick,
+            minimum=max(commitment.started_tick, intent.last_progress_tick),
+            field="tick",
+        )
         if outcome is not None:
+            if not isinstance(outcome, ExecutiveOutcomeSample):
+                raise TypeError("outcome must be an ExecutiveOutcomeSample")
+            _validate_causal_tick(outcome.tick, minimum=0, field="outcome.tick")
             if outcome.tick != tick:
                 raise ValueError("outcome tick must match the terminal action tick")
+            if outcome.reason != reason:
+                raise ValueError("outcome reason must match the terminal action reason")
+            if outcome.outcome_class is not OutcomeClass.NEUTRAL:
+                expected_class = classify_outcome(
+                    status=status.value,
+                    reason=reason,
+                    # A non-neutral terminal sample is only admissible when the
+                    # relation was valid at the beginning of the action.
+                    binding_valid_at_start=True,
+                )
+                if outcome.outcome_class is not expected_class:
+                    raise ValueError("outcome class contradicts terminal status/reason")
             if outcome.outcome_class is not OutcomeClass.NEUTRAL:
                 if self._outcome_ledger is None:
                     raise RuntimeError("outcome evidence supplied without an outcome ledger")
@@ -248,14 +283,11 @@ class ActionDomain:
             IntentStatus.SATISFIED: CommitmentStatus.COMPLETED,
             IntentStatus.FAILED: CommitmentStatus.FAILED,
             IntentStatus.INVALIDATED: CommitmentStatus.INVALIDATED,
+            IntentStatus.INTERRUPTED: CommitmentStatus.INTERRUPTED,
         }[status]
-        commitment.terminate(tick=tick, status=commitment_status, reason=reason)
-        intent.transition(status, tick=tick, reason=reason)
-        self._active_commitment_id = None
-        self._closed_commitments.add(commitment_id)
-        if outcome is not None:
-            if outcome.outcome_class is OutcomeClass.NEUTRAL:
-                return
+        # Validate the evidence contract before changing lifecycle state. This
+        # prevents an invalid suppression record from stranding a closed action.
+        if outcome is not None and outcome.outcome_class is not OutcomeClass.NEUTRAL:
             assert self._outcome_ledger is not None
             assert intent.anticipated_effect_id is not None
             self._outcome_ledger.record(
@@ -263,6 +295,15 @@ class ActionDomain:
                 outcome,
                 revision=causal_revision,
             )
+        commitment.terminate(tick=tick, status=commitment_status, reason=reason)
+        intent.transition(status, tick=tick, reason=reason)
+        self._active_commitment_id = None
+        self._closed_commitments.add(commitment_id)
+
+
+def _validate_causal_tick(value: object, *, minimum: int, field: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"{field} must be an integer causal tick >= {minimum}")
 
 
 __all__ = ["ActionDomain", "ActionSelection"]

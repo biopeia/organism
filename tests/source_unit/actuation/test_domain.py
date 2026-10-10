@@ -250,3 +250,109 @@ def test_no_proposal_does_not_issue_or_create_a_commitment():
     assert selection.commitment is None
     assert domain.active_commitment is None
 
+
+@pytest.mark.parametrize("tick", [True, 4.0, -1])
+def test_admission_rejects_non_integer_or_negative_causal_tick(tick):
+    domain = ActionDomain()
+    with pytest.raises(ValueError, match="integer causal tick"):
+        domain.admit(
+            _decision(),
+            supporting_affordance=_affordance(),
+            intent_id="intent.1",
+            context_ref="context.1",
+            embodiment_id="embodiment.1",
+            tick=tick,
+        )
+
+
+@pytest.mark.parametrize("tick", [True, 4.0, 3])
+def test_selection_rejects_invalid_tick_or_tick_before_intent_creation(tick):
+    domain = ActionDomain()
+    surface = derive_actuator_constitution(("effector.left",))
+    domain.admit(
+        _decision(),
+        supporting_affordance=_affordance(),
+        intent_id="intent.1",
+        context_ref="context.1",
+        embodiment_id="embodiment.1",
+        tick=4,
+    )
+    with pytest.raises(ValueError, match="integer causal tick"):
+        domain.select_and_commit(
+            (_proposal(),),
+            tick=tick,
+            commitment_id="commitment.1",
+            controller_id="controller.1",
+            surface=surface,
+            embodiment_id="embodiment.1",
+            interruptibility=1.0,
+            minimum_duration=0,
+            maximum_duration=None,
+        )
+
+
+def test_close_rejects_outcome_that_contradicts_terminal_status_before_mutation():
+    domain, intent, commitment, _ = _active_domain()
+    contradictory = ExecutiveOutcomeSample(
+        tick=6,
+        outcome_class=OutcomeClass.POSITIVE,
+        reason="repeated_high_mismatch",
+        effect_similarity=1.0,
+        prediction_mismatch=0.0,
+        progress_before_failure=None,
+    )
+    with pytest.raises(ValueError, match="contradicts terminal status/reason"):
+        domain.close(
+            commitment.commitment_id,
+            status=IntentStatus.FAILED,
+            tick=6,
+            reason="repeated_high_mismatch",
+            outcome=contradictory,
+        )
+    assert intent.status is IntentStatus.ACTIVE
+    assert commitment.active
+    assert domain.active_commitment is commitment
+    assert domain._outcome_ledger.get(("competence.walk", "effect.displacement")) is None
+
+
+def test_close_rejects_mismatched_reason_and_non_integer_tick_without_mutation():
+    domain, intent, commitment, _ = _active_domain()
+    sample = ExecutiveOutcomeSample(
+        tick=6,
+        outcome_class=OutcomeClass.POSITIVE,
+        reason="anticipated_effect_observed",
+        effect_similarity=1.0,
+        prediction_mismatch=0.0,
+        progress_before_failure=None,
+    )
+    with pytest.raises(ValueError, match="outcome reason"):
+        domain.close(
+            commitment.commitment_id,
+            status=IntentStatus.SATISFIED,
+            tick=6,
+            reason="different_reason",
+            outcome=sample,
+        )
+    with pytest.raises(ValueError, match="integer causal tick"):
+        domain.close(
+            commitment.commitment_id,
+            status=IntentStatus.SATISFIED,
+            tick=True,
+            reason="anticipated_effect_observed",
+        )
+    assert intent.status is IntentStatus.ACTIVE
+    assert commitment.active
+
+
+def test_interrupted_commitment_can_be_closed_without_outcome_evidence():
+    domain, intent, commitment, _ = _active_domain()
+    domain.close(
+        commitment.commitment_id,
+        status=IntentStatus.INTERRUPTED,
+        tick=6,
+        reason="operator_interruption",
+    )
+    assert intent.status is IntentStatus.INTERRUPTED
+    assert commitment.status.value == "interrupted"
+    assert domain.active_commitment is None
+
