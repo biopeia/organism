@@ -263,6 +263,24 @@ def test_portable_checkpoint_rejects_inconsistent_genetic_state_at_construction(
         )
 
 
+def test_portable_checkpoint_rejects_genetic_state_mutated_after_construction() -> None:
+    genome, germline, expression = _genetic_state()
+    checkpoint = CognitiveRuntimeCheckpoint(
+        state=_state(),
+        graph=_graph(),
+        genome=genome,
+        germline_state=germline,
+        expression_state=expression,
+    )
+    # The checkpoint is frozen, but nested domain values are mutable. The
+    # serialized snapshot must therefore be revalidated, not trusted from
+    # construction time.
+    expression.birth_expression["plasticity.learning_rate.baseline"] += 0.1
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="genetic state is inconsistent"):
+        checkpoint.to_bytes()
+
+
 def test_portable_checkpoint_rejects_serialized_partial_genetic_state() -> None:
     genome, germline, expression = _genetic_state()
     document = json.loads(

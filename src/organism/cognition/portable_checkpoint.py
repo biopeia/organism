@@ -52,6 +52,37 @@ class CognitiveRuntimeCheckpointError(ValueError):
     """Raised when a composed cognitive runtime checkpoint is invalid."""
 
 
+def _validate_genetic_state(
+    genome: Genome | None,
+    germline_state: GermlineState | None,
+    expression_state: GeneExpressionState | None,
+) -> None:
+    genetic_values = (genome, germline_state, expression_state)
+    if all(value is None for value in genetic_values):
+        return
+    if any(value is None for value in genetic_values):
+        raise CognitiveRuntimeCheckpointError(
+            "genome, germline_state, and expression_state must be supplied together"
+        )
+    if not isinstance(genome, Genome):
+        raise CognitiveRuntimeCheckpointError("genome must be Genome or None")
+    if not isinstance(germline_state, GermlineState):
+        raise CognitiveRuntimeCheckpointError("germline_state must be GermlineState or None")
+    if not isinstance(expression_state, GeneExpressionState):
+        raise CognitiveRuntimeCheckpointError(
+            "expression_state must be GeneExpressionState or None"
+        )
+    try:
+        restored_germline = restore_germline(export_germline(germline_state), genome)
+        restore_expression(
+            export_expression(expression_state), genome, germline=restored_germline
+        )
+    except (TypeError, ValueError) as exc:
+        raise CognitiveRuntimeCheckpointError(
+            "genetic state is inconsistent with its genome and germline"
+        ) from exc
+
+
 @dataclass(frozen=True, slots=True)
 class CognitiveRuntimeCheckpoint:
     """A bounded composition of Organism-owned cognitive and memory state.
@@ -110,20 +141,7 @@ class CognitiveRuntimeCheckpoint:
             raise CognitiveRuntimeCheckpointError(
                 "expression_state must be GeneExpressionState or None"
             )
-        if self.genome is not None:
-            try:
-                restored_germline = restore_germline(
-                    export_germline(self.germline_state), self.genome
-                )
-                restore_expression(
-                    export_expression(self.expression_state),
-                    self.genome,
-                    germline=restored_germline,
-                )
-            except (TypeError, ValueError) as exc:
-                raise CognitiveRuntimeCheckpointError(
-                    "genetic state is inconsistent with its genome and germline"
-                ) from exc
+        _validate_genetic_state(self.genome, self.germline_state, self.expression_state)
         if not isinstance(self.sensory_normalizers, dict) or any(
             not isinstance(key, str) or not isinstance(value, SensoryNormalizer)
             for key, value in self.sensory_normalizers.items()
@@ -149,6 +167,9 @@ class CognitiveRuntimeCheckpoint:
             record_ids.add(record.record_id)
 
     def to_bytes(self) -> bytes:
+        # Nested germline/expression values are mutable; revalidate the actual
+        # snapshot being serialized instead of trusting construction-time state.
+        _validate_genetic_state(self.genome, self.germline_state, self.expression_state)
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
             "schema_version": 5,
