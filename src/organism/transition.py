@@ -365,6 +365,10 @@ def accept_organism_transition(
         )
     if current.lifecycle is not OrganismLifecycle.ACTIVE:
         raise OrganismTransitionError("ordinary progression requires an ACTIVE Organism")
+    if proposal.embodiment != current.embodiment:
+        raise OrganismTransitionError(
+            "Embodiment context may change only through an explicit DORMANT-to-ACTIVE lifecycle transition"
+        )
 
     return OrganismTransitionState(
         owner_checkpoint=proposal.owner_checkpoint,

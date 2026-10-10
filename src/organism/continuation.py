@@ -294,6 +294,7 @@ class CanonicalContinuationRegistry:
                 and proposed.organism_step == current.organism_step + 1
                 and proposed.state.lifecycle == current.state.lifecycle
                 and proposed.state.lifecycle_history == current.state.lifecycle_history
+                and proposed.state.embodiment == current.state.embodiment
             )
             reembodiment_reactivation = (
                 current.state.lifecycle is OrganismLifecycle.DORMANT

@@ -116,20 +116,49 @@ def test_reembodiment_preserves_identity_and_longitudinal_state() -> None:
         "morphology-r2",
     )
 
-    accepted = accept_organism_transition(
+    dormant = transition_organism_lifecycle(
         current,
-        OrganismTransitionProposal(
-            owner_checkpoint=current.owner_checkpoint,
-            embodiment=replacement_body,
-            world_correlation=WorldCausalCorrelation("world-a", 20),
-        ),
+        OrganismLifecycle.DORMANT,
+        transition_id="lifecycle-1",
+        request_ref="body-a-terminated",
+    )
+    accepted = transition_organism_lifecycle(
+        dormant,
+        OrganismLifecycle.ACTIVE,
+        transition_id="lifecycle-2",
+        request_ref="replacement-body-accepted",
+        embodiment=replacement_body,
     )
 
     assert accepted.identity == current.identity
     assert accepted.owner_checkpoint == current.owner_checkpoint
-    assert accepted.organism_step == current.organism_step + 1
+    assert accepted.organism_step == current.organism_step
     assert accepted.embodiment == replacement_body
     assert current.embodiment != replacement_body
+
+
+def test_ordinary_transition_cannot_replace_embodiment_context() -> None:
+    current = state()
+    replacement_body = EmbodimentContextRef(
+        "body-b",
+        "episode-b",
+        "morphology-r2",
+    )
+
+    with pytest.raises(OrganismTransitionError, match="lifecycle transition"):
+        accept_organism_transition(
+            current,
+            OrganismTransitionProposal(
+                owner_checkpoint=current.owner_checkpoint,
+                embodiment=replacement_body,
+                world_correlation=WorldCausalCorrelation("world-a", 20),
+            ),
+        )
+
+    assert current.organism_step == 7
+    assert current.embodiment == EmbodimentContextRef(
+        "body-a", "episode-a", "morphology-r1"
+    )
 
 
 def test_transition_checkpoint_round_trips_progression_and_context() -> None:
