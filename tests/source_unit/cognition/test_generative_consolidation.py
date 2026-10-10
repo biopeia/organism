@@ -1,3 +1,5 @@
+import pytest
+
 from organism.cognition.generative import GenerativeConsolidator
 
 
@@ -168,3 +170,46 @@ def test_last_generative_use_tick_survives_checkpoint():
     restored = GenerativeUseTracker.from_checkpoint(tracker.checkpoint())
 
     assert restored.last_use_tick("r0") == 41
+
+
+def test_generative_use_checkpoint_preserves_representation_eviction_order():
+    from organism.cognition.generative.consolidation import GenerativeUseTracker
+
+    uninterrupted = GenerativeUseTracker()
+    # Insert in reverse lexical order so a sorted checkpoint changes which
+    # representation is oldest when the bounded tracker reaches capacity.
+    refs = tuple(f"r{index:03d}" for index in reversed(range(256)))
+    for index, ref in enumerate(refs):
+        uninterrupted.record(
+            representation_ref=ref,
+            episode_id=f"e{index}",
+            state_id=f"s{index}",
+        )
+
+    restored = GenerativeUseTracker.from_checkpoint(uninterrupted.checkpoint())
+    uninterrupted.record(
+        representation_ref="r-new",
+        episode_id="e-new",
+        state_id="s-new",
+    )
+    restored.record(
+        representation_ref="r-new",
+        episode_id="e-new",
+        state_id="s-new",
+    )
+
+    assert "r255" not in uninterrupted.representation_refs
+    assert "r255" not in restored.representation_refs
+    assert uninterrupted.checkpoint() == restored.checkpoint()
+
+
+def test_generative_use_checkpoint_rejects_incomplete_eviction_order():
+    from organism.cognition.generative.consolidation import GenerativeUseTracker
+
+    tracker = GenerativeUseTracker()
+    tracker.record(representation_ref="r0", episode_id="e0", state_id="s0")
+    payload = tracker.checkpoint()
+    payload["eviction_order"] = []
+
+    with pytest.raises(ValueError, match="eviction order"):
+        GenerativeUseTracker.from_checkpoint(payload)

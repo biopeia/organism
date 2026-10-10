@@ -226,6 +226,7 @@ class GenerativeUseTracker:
 
     def checkpoint(self) -> dict[str, object]:
         return {
+            "schema_version": 1,
             "representations": [
                 {
                     "representation_ref": representation_ref,
@@ -239,6 +240,10 @@ class GenerativeUseTracker:
                 }
                 for representation_ref in sorted(self._activation_counts)
             ],
+            # `record()` evicts the oldest admitted representation when the
+            # bounded tracker is full. Preserve that semantic insertion order
+            # independently of the canonical ordering used for row encoding.
+            "eviction_order": list(self._activation_counts),
             "capacity_pressure": self.pressure.checkpoint(),
             "sterile_reactivations": dict(sorted(self.sterile_reactivations.items())),
         }
@@ -247,13 +252,25 @@ class GenerativeUseTracker:
     def from_checkpoint(cls, payload: object) -> "GenerativeUseTracker":
         if not isinstance(payload, dict):
             raise ValueError("generative-use checkpoint must be an object")
-        if set(payload) != {"representations", "capacity_pressure", "sterile_reactivations"}:
+        if set(payload) != {
+            "schema_version",
+            "representations",
+            "eviction_order",
+            "capacity_pressure",
+            "sterile_reactivations",
+        } or type(payload["schema_version"]) is not int or payload["schema_version"] != 1:
             raise ValueError("generative-use checkpoint fields are incomplete or unknown")
         raw = payload["representations"]
         if not isinstance(raw, list) or len(raw) > cls.MAX_REPRESENTATIONS:
             raise ValueError("invalid generative-use representation collection")
+        raw_order = payload["eviction_order"]
+        if not isinstance(raw_order, list) or len(raw_order) != len(raw):
+            raise ValueError("invalid generative-use eviction order")
+        if any(not isinstance(ref, str) for ref in raw_order):
+            raise ValueError("generative-use eviction order entries must be strings")
         tracker = cls()
         seen_representations: set[str] = set()
+        rows_by_ref: dict[str, dict[str, object]] = {}
         for item in raw:
             if not isinstance(item, dict):
                 raise ValueError("invalid generative-use representation")
@@ -274,6 +291,11 @@ class GenerativeUseTracker:
             if representation_ref in seen_representations:
                 raise ValueError("duplicate generative-use representation")
             seen_representations.add(representation_ref)
+            rows_by_ref[representation_ref] = item
+        if len(set(raw_order)) != len(raw_order) or set(raw_order) != seen_representations:
+            raise ValueError("generative-use eviction order must match representations exactly")
+        for representation_ref in raw_order:
+            item = rows_by_ref[representation_ref]
             activation_count = _checkpoint_int(item["activation_count"], "activation_count")
             hypothesis_count = _checkpoint_int(item["hypothesis_count"], "hypothesis_count")
             disagreement_sum = _checkpoint_number(item["disagreement_sum"], "disagreement_sum")
