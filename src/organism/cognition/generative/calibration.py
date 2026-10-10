@@ -122,7 +122,10 @@ class PredictionCalibration:
                 or any(not 0.0 <= error <= 1.0 for error in errors)
             ):
                 raise ValueError("invalid calibration bucket values")
-            obj._buckets[(model_id, operation, depth_bucket, uncertainty_bucket)] = [
+            key = (model_id, operation, depth_bucket, uncertainty_bucket)
+            if key in obj._buckets:
+                raise ValueError("duplicate calibration bucket")
+            obj._buckets[key] = [
                 float(prediction_count),
                 float(comparable_count),
                 uncertainty_sum,
