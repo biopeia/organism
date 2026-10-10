@@ -8,6 +8,15 @@ from .checkpoint import (
     OrganismCheckpoint,
 )
 from .identity import OrganismIdentity
+from .transition import (
+    EmbodimentContextRef,
+    InvalidOrganismTransitionCheckpoint,
+    OrganismTransitionError,
+    OrganismTransitionProposal,
+    OrganismTransitionState,
+    WorldCausalCorrelation,
+    accept_organism_transition,
+)
 
 __all__ = [
     "CheckpointDependency",
@@ -16,4 +25,11 @@ __all__ = [
     "MissingCheckpointDependency",
     "OrganismCheckpoint",
     "OrganismIdentity",
+    "EmbodimentContextRef",
+    "InvalidOrganismTransitionCheckpoint",
+    "OrganismTransitionError",
+    "OrganismTransitionProposal",
+    "OrganismTransitionState",
+    "WorldCausalCorrelation",
+    "accept_organism_transition",
 ]

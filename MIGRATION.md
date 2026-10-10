@@ -787,3 +787,14 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Target paths: `src/organism/actuation/binding.py`; `tests/source_unit/agency/test_competence_availability.py`.
 - Validation: focused registry tests, the full Organism package suite, package build, and `git diff --check` are recorded in the associated pull request.
 - Scope limitation: this preserves only undrained registry transition records across this component checkpoint. It does not assemble an aggregate portable Organism checkpoint, resolve other F-0102 findings, or establish complete Organism continuation, durable World recovery, or scientific efficacy. Issue #41 remains open for its other findings.
+
+
+## Incremental TARGET slice: canonical Organism transition boundary (issue #29)
+
+- Implementation base: `20634a7d27e8834cd65c96f8bd44087d603aebc8`.
+- Disposition: fresh TARGET `REWRITE` / composition boundary; no legacy `symbiont_tick` compatibility or source-runtime port.
+- Target paths: `src/organism/transition.py`, `tests/test_transition.py`.
+- The new immutable owner boundary carries `organism_step`, an opaque `OrganismCheckpoint`, optional World causal correlation, and an identity-only Embodiment context reference. World tick remains correlation only and is never aliased to `organism_step`.
+- One accepted owner transition increments `organism_step` exactly once; validation failure publishes no next state. A World-only causal step does not advance Organism progression because this owner boundary is not invoked.
+- TARGET restore is strict and fail-closed for the progression field: missing, boolean, non-integer, or negative values are rejected. Canonical re-embodiment is represented as an explicit replacement of body/episode/morphology context while preserving Organism identity and longitudinal private state.
+- Scope limitation: this slice establishes the canonical progression/transition envelope only. It does not yet compose cognition execution (#43), motor-authority/action composition (#30), full owner-declared dependency closure (#33), exact complete cognitive continuation (#45), all agency/actuation checkpoint state (#41), or Organism lifecycle termination/dormancy (#61). It therefore does not close MIG-002 (#34) or prove full runtime continuity, scientific efficacy, World durable recovery, or body/somatic semantics.
