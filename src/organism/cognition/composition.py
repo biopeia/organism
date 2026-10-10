@@ -19,6 +19,12 @@ from .learning import (
     compute_prediction_errors,
     update_eligibility,
 )
+from .sense_input import (
+    OpaqueSenseSignal,
+    SenseChannelBinding,
+    SenseProvenance,
+    bind_opaque_sense_signals,
+)
 from .transition import CognitiveTransitionState, advance_cognition
 from .types import EdgeKind, NodeKind
 
@@ -210,4 +216,31 @@ def compose_cognition_transition(
         frame=frame,
         prediction_errors=errors,
         stages=tuple(stages),
+    )
+
+
+def compose_cognition_from_sense_signals(
+    state: CognitiveTransitionState,
+    graph: CognitiveGraph,
+    bindings: tuple[SenseChannelBinding, ...],
+    signals: tuple[OpaqueSenseSignal, ...],
+    *,
+    expected_provenance: SenseProvenance,
+    learning: tuple[EdgeLearningInstruction, ...] = (),
+) -> CognitionComposition:
+    """Validate opaque inputs, then stage one cognition candidate.
+
+    Input binding and cognition execution are kept within the same owner-side
+    operation, so callers cannot accidentally publish a transition after
+    validating a different signal set.
+    """
+    node_inputs = bind_opaque_sense_signals(
+        graph, bindings, signals, expected_provenance=expected_provenance
+    )
+    return compose_cognition_transition(
+        state,
+        graph,
+        node_inputs,
+        causal_tick=expected_provenance.causal_tick,
+        learning=learning,
     )
