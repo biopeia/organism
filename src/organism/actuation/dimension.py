@@ -341,7 +341,7 @@ class ActionDimensionRegistry:
     @classmethod
     def restore(
         cls,
-        payload: Mapping[str, Any] | None,
+        payload: Mapping[str, Any],
         *,
         policy: ActionDimensionDiscoveryPolicy | None = None,
     ) -> "ActionDimensionRegistry":
@@ -349,20 +349,27 @@ class ActionDimensionRegistry:
 
         Only the current acquired-dimension schema is restorable.
         """
-        if payload is None:
-            return cls(policy=policy)
-        if payload.get("schema_version") != cls.SCHEMA_VERSION:
+        if not isinstance(payload, Mapping) or set(payload) != {
+            "schema_version",
+            "capacity",
+            "items",
+        }:
+            raise ValueError("invalid action dimension checkpoint shape")
+        if (
+            type(payload["schema_version"]) is not int
+            or payload["schema_version"] != cls.SCHEMA_VERSION
+        ):
             raise ValueError("unsupported action dimension checkpoint")
-        if not {"capacity", "items"}.issubset(payload):
-            raise ValueError("incomplete action dimension checkpoint")
-        obj = cls(capacity=int(payload["capacity"]), policy=policy)
+        capacity = payload["capacity"]
+        if type(capacity) is not int or capacity < 1:
+            raise ValueError("invalid action dimension capacity")
+        obj = cls(capacity=capacity, policy=policy)
         raw = payload["items"]
         if not isinstance(raw, list) or len(raw) > obj.capacity:
             raise ValueError("invalid or unbounded action dimensions")
+        seen_dimension_ids: set[str] = set()
         for entry in raw:
-            if not isinstance(entry, Mapping):
-                raise ValueError("invalid action dimension entry")
-            required_entry_fields = {
+            entry_fields = {
                 "dimension_id",
                 "intervention_signature_refs",
                 "channel_refs",
@@ -371,28 +378,62 @@ class ActionDimensionRegistry:
                 "confidence",
                 "usage_count",
             }
-            if not required_entry_fields.issubset(entry):
-                raise ValueError("incomplete action dimension entry")
-            channels = tuple(sorted(str(value) for value in entry["channel_refs"]))
-            dimension_id = str(entry["dimension_id"])
+            if not isinstance(entry, Mapping) or set(entry) != entry_fields:
+                raise ValueError("invalid action dimension entry")
+            channel_values = entry["channel_refs"]
+            signature_values = entry["intervention_signature_refs"]
+            surfaces = entry["verified_surfaces"]
+            if (
+                not isinstance(channel_values, list)
+                or not channel_values
+                or any(type(value) is not str or not value for value in channel_values)
+                or channel_values != sorted(set(channel_values))
+            ):
+                raise ValueError("invalid action dimension channels")
+            if (
+                not isinstance(signature_values, list)
+                or not signature_values
+                or any(type(value) is not str or not value for value in signature_values)
+                or signature_values != sorted(set(signature_values))
+            ):
+                raise ValueError("invalid action dimension signatures")
+            if (
+                not isinstance(surfaces, list)
+                or not surfaces
+                or any(type(value) is not str or not value for value in surfaces)
+                or surfaces != sorted(set(surfaces))
+            ):
+                raise ValueError("invalid action dimension surfaces")
+            if type(entry["dimension_id"]) is not str:
+                raise ValueError("invalid action dimension identity")
+            if type(entry["usage_count"]) is not int or entry["usage_count"] < 0:
+                raise ValueError("invalid action dimension usage count")
+            for name in ("controllability", "confidence"):
+                if (
+                    type(entry[name]) not in (int, float)
+                    or not math.isfinite(entry[name])
+                ):
+                    raise ValueError(f"invalid action dimension {name}")
+                if not 0.0 <= entry[name] <= 1.0:
+                    raise ValueError(f"invalid action dimension {name}")
+            channels = tuple(channel_values)
+            dimension_id = entry["dimension_id"]
             if dimension_id != opaque_dimension_id(channels):
                 raise ValueError("action dimension identity does not match its grounding")
+            if dimension_id in seen_dimension_ids:
+                raise ValueError("duplicate action dimension identity")
+            seen_dimension_ids.add(dimension_id)
             obj._items[dimension_id] = ActionDimension(
                 dimension_id=dimension_id,
-                intervention_signature_refs=tuple(
-                    sorted(str(value) for value in entry["intervention_signature_refs"])
-                ),
+                intervention_signature_refs=tuple(signature_values),
                 availability=False,
-                controllability=float(entry["controllability"]),
-                confidence=float(entry["confidence"]),
-                usage_count=int(entry["usage_count"]),
+                controllability=entry["controllability"],
+                confidence=entry["confidence"],
+                usage_count=entry["usage_count"],
                 embodiment_bound=False,
             )
             obj._channels[dimension_id] = channels
-            surfaces = entry["verified_surfaces"]
-            if not isinstance(surfaces, list) or not surfaces:
-                raise ValueError("action dimension lacks the surfaces that grounded it")
-            obj._verified_surfaces[dimension_id] = frozenset(str(value) for value in surfaces)
+            obj._verified_surfaces[dimension_id] = frozenset(surfaces)
         return obj
 
 
