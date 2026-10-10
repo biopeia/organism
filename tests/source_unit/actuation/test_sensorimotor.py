@@ -1255,6 +1255,206 @@ def test_current_checkpoint_rejects_different_body_scope():
         )
 
 
+def test_motor_primitive_restore_requires_its_original_body_scope():
+    payload = {
+        "primitive_id": "primitive.test",
+        "embodiment_fingerprint": "body-a",
+        "sequence": [
+            [["actuator.0", 1]],
+            [["actuator.1", 1]],
+            [["actuator.2", 1]],
+            [["actuator.3", 1]],
+        ],
+        "samples": 2,
+        "effect_mean": 0.1,
+        "effect_variance": 0.01,
+        "controllability": 0.5,
+        "directional_consistency": 0.75,
+    }
+
+    restored = MotorPrimitive.restore(
+        payload,
+        allowed_ids=set(_ids(4)),
+        embodiment_fingerprint="body-a",
+    )
+    assert restored.embodiment_fingerprint == "body-a"
+
+    for invalid_scope in (None, ""):
+        invalid = {**payload, "embodiment_fingerprint": invalid_scope}
+        with pytest.raises(ValueError, match="invalid motor primitive embodiment scope"):
+            MotorPrimitive.restore(
+                invalid,
+                allowed_ids=set(_ids(4)),
+                embodiment_fingerprint="body-b",
+            )
+
+    missing_scope = dict(payload)
+    del missing_scope["embodiment_fingerprint"]
+    with pytest.raises(ValueError, match="invalid motor primitive checkpoint fields"):
+        MotorPrimitive.restore(
+            missing_scope,
+            allowed_ids=set(_ids(4)),
+            embodiment_fingerprint="body-b",
+        )
+
+    with pytest.raises(ValueError, match="embodiment scope mismatch"):
+        MotorPrimitive.restore(
+            payload,
+            allowed_ids=set(_ids(4)),
+            embodiment_fingerprint="body-b",
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["samples", "effect_mean", "effect_variance", "controllability", "directional_consistency"],
+)
+def test_motor_primitive_restore_rejects_missing_persisted_evidence(field):
+    payload = {
+        "primitive_id": "primitive.test",
+        "embodiment_fingerprint": "body-a",
+        "sequence": [
+            [["actuator.0", 1]],
+            [["actuator.1", 1]],
+            [["actuator.2", 1]],
+            [["actuator.3", 1]],
+        ],
+        "samples": 2,
+        "effect_mean": 0.1,
+        "effect_variance": 0.01,
+        "controllability": 0.5,
+        "directional_consistency": 0.75,
+    }
+    del payload[field]
+
+    with pytest.raises(ValueError, match="invalid motor primitive checkpoint fields"):
+        MotorPrimitive.restore(
+            payload,
+            allowed_ids=set(_ids(4)),
+            embodiment_fingerprint="body-a",
+        )
+
+
+def test_motor_primitive_restore_rejects_unknown_checkpoint_fields():
+    payload = {
+        "primitive_id": "primitive.test",
+        "embodiment_fingerprint": "body-a",
+        "sequence": [
+            [["actuator.0", 1]],
+            [["actuator.1", 1]],
+            [["actuator.2", 1]],
+            [["actuator.3", 1]],
+        ],
+        "samples": 2,
+        "effect_mean": 0.1,
+        "effect_variance": 0.01,
+        "controllability": 0.5,
+        "directional_consistency": 0.75,
+        "unrecognized": "must not be ignored",
+    }
+
+    with pytest.raises(ValueError, match="invalid motor primitive checkpoint fields"):
+        MotorPrimitive.restore(
+            payload,
+            allowed_ids=set(_ids(4)),
+            embodiment_fingerprint="body-a",
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        ("missing_passive_effect", "incomplete sensorimotor checkpoint"),
+        ("partial_running_stat", "invalid running-stat checkpoint fields"),
+        ("malformed_horizon_entry", "invalid sensorimotor horizon statistic entry"),
+        ("missing_horizon_count", "invalid sensorimotor horizon counts"),
+        ("unknown_replay", "sensorimotor replay references an unknown primitive"),
+        ("bool_inactive_replay_step", "sensorimotor replay step must be an integer"),
+        ("float_inactive_replay_step", "sensorimotor replay step must be an integer"),
+        ("coerced_frame_flag", "invalid sensorimotor frame discovery eligibility"),
+        ("duplicate_historical_id", "duplicate historical primitive identity or sequence"),
+        ("extra_episode_field", "invalid sensorimotor episode end entry"),
+        ("duplicate_episode_sequence", "duplicate sensorimotor episode end sequence"),
+        ("coerced_actuator_id", "invalid stored sensorimotor actuator identities"),
+        ("coerced_exploration_id", "invalid sensorimotor exploration identity"),
+        ("unordered_frames", "frame ticks must be strictly increasing"),
+        ("empty_frame_execution_id", "invalid sensorimotor frame primitive id"),
+    ],
+)
+def test_sensorimotor_restore_rejects_missing_or_malformed_persisted_state(mutation, error):
+    ids = _ids(4)
+    learner = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-fail-closed-state",
+        embodiment_fingerprint="body-a",
+    )
+    if mutation in {"coerced_frame_flag", "empty_frame_execution_id"}:
+        learner.observe(tick=1, body_state={}, motor_vector={})
+    if mutation == "unordered_frames":
+        learner.observe(tick=1, body_state={}, motor_vector={})
+        learner.observe(tick=2, body_state={}, motor_vector={})
+    payload = learner.checkpoint()
+
+    if mutation == "missing_passive_effect":
+        del payload["passive_effect_stat"]
+    elif mutation == "partial_running_stat":
+        payload["passive_effect_stat"] = {"count": 0}
+    elif mutation == "malformed_horizon_entry":
+        payload["horizon_stats"] = [None]
+    elif mutation == "missing_horizon_count":
+        del payload["horizon_counts"]["1"]
+    elif mutation == "unknown_replay":
+        payload["replay_id"] = "not-present"
+        payload["replay_step"] = 0
+        payload["replay_source"] = "cognition"
+    elif mutation == "bool_inactive_replay_step":
+        payload["replay_step"] = False
+    elif mutation == "float_inactive_replay_step":
+        payload["replay_step"] = 0.0
+    elif mutation == "coerced_frame_flag":
+        payload["frame_history"][0]["discovery_eligible"] = "false"
+    elif mutation == "duplicate_historical_id":
+        candidate = {
+            "primitive_id": "historical-1",
+            "embodiment_fingerprint": "body-a",
+            "sequence": [[(ids[0], 1)]] * 4,
+        }
+        payload["historical_candidates"] = [candidate, dict(candidate)]
+    elif mutation == "extra_episode_field":
+        payload["episode_end_ticks"] = [{"sequence": [[(ids[0], 1)]] * 4, "tick": 2, "extra": 1}]
+    elif mutation == "duplicate_episode_sequence":
+        row = {"sequence": [[(ids[0], 1)]] * 4, "tick": 2}
+        payload["episode_end_ticks"] = [row, dict(row)]
+    elif mutation == "coerced_actuator_id":
+        payload["actuator_ids"][0] = 3
+    elif mutation == "coerced_exploration_id":
+        payload["exploration_ids"] = [3]
+    elif mutation == "unordered_frames":
+        payload["frame_history"][0]["tick"] = 3
+    elif mutation == "empty_frame_execution_id":
+        payload["frame_history"][0]["execution_primitive_id"] = ""
+
+    with pytest.raises(ValueError, match=error):
+        CompetenceDevelopmentEngine.restore(
+            payload,
+            actuator_ids=ids,
+            organism_id="org-fail-closed-state",
+            embodiment_fingerprint="body-a",
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"count": 0, "mean": 2.0, "m2": 0.0},
+        {"count": 1, "mean": 2.0, "m2": 10.0},
+    ],
+)
+def test_running_stat_restore_rejects_impossible_aggregates(payload):
+    with pytest.raises(ValueError, match="running-stat checkpoint"):
+        sensorimotor_module._RunningStat.restore(payload)
+
+
 def test_sequence_distance_does_not_let_dense_support_dilute_channel_changes():
     common = tuple((f"a{i}", 5) for i in range(40))
     added = tuple((f"x{i}", 5) for i in range(10))
@@ -1360,6 +1560,70 @@ def test_restore_rejects_v9_primitive_that_violates_exclusive_motor_unit():
             embodiment_fingerprint=_test_embodiment_fingerprint(
                 "org-invalid-exclusive-restore", ids
             ),
+        )
+
+
+def test_restore_rejects_duplicate_primitive_evidence_blocks():
+    ids = _ids(4)
+    organism_id = "org-duplicate-evidence-blocks"
+    learner = CompetenceDevelopmentEngine(
+        ids,
+        organism_id=organism_id,
+        embodiment_fingerprint=_test_embodiment_fingerprint(organism_id, ids),
+    )
+    payload = learner.checkpoint()
+    sequence = [[[ids[0], 5]]] * 4
+    payload["primitive_stats"] = [
+        {
+            "sequence": sequence,
+            "stat": {"count": 2, "mean": 0.1, "m2": 0.0},
+            "first_sample_tick": 4,
+            "last_sample_tick": 16,
+            "materialized_tick": 16,
+            "competence_tick": None,
+            "last_evidence_blocks": [0, 0],
+            "signals": {},
+        }
+    ]
+
+    with pytest.raises(ValueError, match="duplicate primitive evidence block"):
+        CompetenceDevelopmentEngine.restore(
+            payload,
+            actuator_ids=ids,
+            organism_id=organism_id,
+            embodiment_fingerprint=_test_embodiment_fingerprint(organism_id, ids),
+        )
+
+
+@pytest.mark.parametrize("ticks", [(4, 4), (4, 3)])
+def test_observe_rejects_non_increasing_causal_ticks(ticks):
+    ids = _ids(4)
+    learner = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-frame-order",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-frame-order", ids),
+    )
+    learner.observe(tick=ticks[0], body_state={}, motor_vector={})
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        learner.observe(tick=ticks[1], body_state={}, motor_vector={})
+
+
+@pytest.mark.parametrize("execution_primitive_id", ["", 4])
+def test_observe_rejects_malformed_execution_primitive_identity(execution_primitive_id):
+    ids = _ids(4)
+    learner = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-frame-execution-id",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-frame-execution-id", ids),
+    )
+
+    with pytest.raises(ValueError, match="invalid sensorimotor frame primitive id"):
+        learner.observe(
+            tick=1,
+            body_state={},
+            motor_vector={},
+            execution_primitive_id=execution_primitive_id,
         )
 
 
