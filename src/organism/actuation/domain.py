@@ -79,6 +79,7 @@ class ActionDomain:
             decision.competence_id != supporting_affordance.competence_id
             or decision.anticipated_effect_id != supporting_affordance.anticipated_effect_id
             or decision.prediction_ref != supporting_affordance.prediction_ref
+            or decision.confidence != supporting_affordance.prediction_confidence
         ):
             raise ValueError("admission decision does not match its supporting affordance")
         if context_ref != supporting_affordance.context_ref:

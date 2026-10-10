@@ -181,6 +181,31 @@ def test_domain_rejects_fabricated_intent_and_mismatched_proposal():
         )
 
 
+def test_admission_rejects_decision_confidence_not_supported_by_affordance():
+    domain = ActionDomain()
+    decision = _decision()
+    unsupported = ProspectiveDecision(
+        competence_id=decision.competence_id,
+        anticipated_effect_id=decision.anticipated_effect_id,
+        prediction_ref=decision.prediction_ref,
+        confidence=0.9,
+        epistemic_relevance=decision.epistemic_relevance,
+        homeostatic_relevance=decision.homeostatic_relevance,
+        origin_refs=decision.origin_refs,
+        supporting_affordance_id=decision.supporting_affordance_id,
+    )
+
+    with pytest.raises(ValueError, match="does not match its supporting affordance"):
+        domain.admit(
+            unsupported,
+            supporting_affordance=_affordance(),
+            intent_id="intent.1",
+            context_ref="context.1",
+            embodiment_id="embodiment.1",
+            tick=4,
+        )
+
+
 def test_domain_rejects_unknown_stale_or_provenance_mismatched_command():
     domain, _, commitment, surface = _active_domain()
     controller = SequenceController("controller.1", ((MotorIntent("effector.left", 0.5),),))
