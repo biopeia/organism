@@ -4,8 +4,8 @@ from organism.actuation.proposer import ActuatorEvidenceModel
 from organism.actuation.surface import derive_actuator_constitution
 
 
-def _constitution(slot_count: int = 2):
-    return derive_actuator_constitution(slot_count)
+def _constitution(effector_ids: tuple[str, ...] = ("effector.left", "effector.right")):
+    return derive_actuator_constitution(effector_ids)
 
 
 def test_new_proposer_has_all_actuators_dormant():
@@ -20,7 +20,7 @@ def test_natural_evidence_can_promote_actuator_from_endogenous_activity():
     probing-window apparatus lives in the organism — the actuator becomes
     active purely from activation/percept pairs recorded for whatever
     endogenous reason they occurred."""
-    constitution = _constitution(slot_count=1)
+    constitution = _constitution(("effector.left",))
     (actuator_id,) = constitution.actuator_ids
     proposer = ActuatorEvidenceModel(
         constitution,
@@ -43,7 +43,7 @@ def test_natural_evidence_can_promote_actuator_from_endogenous_activity():
 
 
 def test_natural_evidence_does_not_promote_before_minimum_samples():
-    constitution = _constitution(slot_count=1)
+    constitution = _constitution(("effector.left",))
     (actuator_id,) = constitution.actuator_ids
     proposer = ActuatorEvidenceModel(constitution, organism_id="org-natural")
 

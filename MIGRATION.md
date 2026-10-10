@@ -56,6 +56,12 @@ These remain available in the source repository and are not considered deleted o
 
 Validation is recorded in the migration PR and CI. The source repository remains the provenance source; this repository is an independent extraction and is not yet a cut-over.
 
+## Incremental correction: stable effector identity (issue #32)
+
+| Source observation | Disposition | Target paths | Evidence and limits |
+|---|---|---|---|
+| `biopeia/organism/src/organism/actuation/surface.py` at issue observation commit `6543188ff302a5f2dc8002c0086252d6061e5310`; independently rechecked at implementation base `b179c40` | `REWRITE` | `src/organism/actuation/surface.py`; `tests/source_unit/actuation/` | Actuator identity was derived from list index. The TARGET API now requires explicit stable effector IDs, preserves them as channel IDs, and fingerprints the ID set independent of input order. Positional count construction is removed, not retained as compatibility. Tests cover permutation and count rejection. This is an owner-local identity correction; it does not establish Embodiment's effector registry, body/episode/morphology correlation, solver-result adoption, unit/range semantics, or cross-repository integration. No `symbiont-lab` files were changed. |
+
 ## Incremental slice: private experience record
 
 - Source repository: `https://github.com/alessbarb/symbiont-lab`
