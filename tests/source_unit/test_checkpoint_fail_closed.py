@@ -92,3 +92,87 @@ def test_provenance_checkpoint_rejects_malformed_and_duplicate_frontier_refs() -
     duplicate["frontier"].append(duplicate["frontier"][0])  # type: ignore[index]
     with pytest.raises(ValueError, match="duplicate"):
         ProvenanceLog.restore(duplicate)
+
+
+def test_causal_event_payload_round_trips_complete_serialized_state() -> None:
+    event = CausalEvent(
+        tick=4,
+        domain="organism",
+        operation="transition",
+        subject=CausalRef("state", "one"),
+        caused_by=(CausalRef("input", "two"),),
+        produced=(CausalRef("state", "three"),),
+        rule="rule.v1",
+        parameters={"gain": 0.25, "enabled": True, "label": "bounded"},
+    )
+
+    assert CausalEvent.from_payload(event.payload()).payload() == event.payload()
+
+
+def test_causal_event_payload_round_trips_explicit_null_rule() -> None:
+    event = CausalEvent(
+        tick=4,
+        domain="organism",
+        operation="transition",
+        subject=CausalRef("state", "one"),
+        caused_by=(),
+    )
+
+    payload = event.payload()
+    assert payload["rule"] is None
+    assert CausalEvent.from_payload(payload).payload() == payload
+
+
+def test_causal_event_payload_rejects_missing_or_unknown_serialized_fields() -> None:
+    event = CausalEvent(
+        tick=4,
+        domain="organism",
+        operation="transition",
+        subject=CausalRef("state", "one"),
+        caused_by=(),
+    )
+    payload = event.payload()
+
+    for field in payload:
+        missing = dict(payload)
+        del missing[field]
+        with pytest.raises(ValueError, match="payload fields"):
+            CausalEvent.from_payload(missing)
+
+    with pytest.raises(ValueError, match="payload fields"):
+        CausalEvent.from_payload({**payload, "unknown": "field"})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("tick", "4"),
+        ("tick", True),
+        ("domain", 1),
+        ("operation", None),
+        ("subject", ("state", "one")),
+        ("caused_by", ()),
+        ("caused_by", [("input", "two")]),
+        ("produced", ()),
+        ("rule", 7),
+        ("parameters", []),
+        ("parameters", {"invalid": []}),
+        ("event_id", None),
+        ("event_id", "event.stale"),
+    ),
+)
+def test_causal_event_payload_rejects_malformed_serialized_field(
+    field: str, value: object
+) -> None:
+    event = CausalEvent(
+        tick=4,
+        domain="organism",
+        operation="transition",
+        subject=CausalRef("state", "one"),
+        caused_by=(),
+    )
+    payload = event.payload()
+    payload[field] = value
+
+    with pytest.raises(ValueError):
+        CausalEvent.from_payload(payload)

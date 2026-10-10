@@ -100,17 +100,54 @@ class CausalEvent:
 
     @classmethod
     def from_payload(cls, raw: Mapping[str, Any]) -> "CausalEvent":
+        required = {
+            "event_id",
+            "tick",
+            "domain",
+            "operation",
+            "subject",
+            "caused_by",
+            "produced",
+            "rule",
+            "parameters",
+        }
+        if not isinstance(raw, Mapping) or set(raw) != required:
+            raise ValueError("invalid causal event payload fields")
+
+        tick = raw["tick"]
+        if isinstance(tick, bool) or not isinstance(tick, int):
+            raise ValueError("causal event tick must be an integer")
+        if not isinstance(raw["domain"], str) or not isinstance(raw["operation"], str):
+            raise ValueError("causal event domain and operation must be strings")
+        if not isinstance(raw["caused_by"], list) or not isinstance(raw["produced"], list):
+            raise ValueError("causal event references must be lists")
+        if not isinstance(raw["subject"], list) or any(
+            not isinstance(ref, list)
+            for ref in (*raw["caused_by"], *raw["produced"])
+        ):
+            raise ValueError("causal event references must use serialized lists")
+        if raw["rule"] is not None and not isinstance(raw["rule"], str):
+            raise ValueError("causal event rule must be a string or null")
+        parameters = raw["parameters"]
+        if not isinstance(parameters, Mapping) or any(
+            not isinstance(key, str) for key in parameters
+        ):
+            raise ValueError("causal event parameters must be a string-keyed object")
+        event_id = raw["event_id"]
+        if not isinstance(event_id, str) or not event_id:
+            raise ValueError("causal event id must be a non-empty string")
+
         event = cls(
-            tick=int(raw["tick"]),
-            domain=str(raw["domain"]),
-            operation=str(raw["operation"]),
+            tick=tick,
+            domain=raw["domain"],
+            operation=raw["operation"],
             subject=CausalRef.from_payload(raw["subject"]),
             caused_by=tuple(CausalRef.from_payload(item) for item in raw["caused_by"]),
-            produced=tuple(CausalRef.from_payload(item) for item in raw.get("produced", ())),
-            rule=raw.get("rule"),
-            parameters=dict(raw.get("parameters", {})),
+            produced=tuple(CausalRef.from_payload(item) for item in raw["produced"]),
+            rule=raw["rule"],
+            parameters=parameters,
         )
-        if raw.get("event_id") not in (None, event.event_id):
+        if event_id != event.event_id:
             raise ValueError("causal event id does not match its content")
         return event
 
