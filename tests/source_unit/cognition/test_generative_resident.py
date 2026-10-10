@@ -137,6 +137,14 @@ def test_resident_checkpoint_rejects_pre_ordered_tracker_schema() -> None:
         ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
 
 
+def test_resident_checkpoint_rejects_pre_hypothesis_continuation_schema() -> None:
+    checkpoint = ResidentGenerativeCognition(organism_id="organism.restore").checkpoint()
+    checkpoint["schema_version"] = 3
+
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
+
+
 def test_resident_checkpoint_preserves_effective_budget_and_rejects_conflicting_override() -> None:
     budget = GenerativeBudget(
         max_states=4,
@@ -185,13 +193,16 @@ def test_resident_checkpoint_requires_complete_hypothesis_fields() -> None:
     resident = ResidentGenerativeCognition(organism_id="organism.restore")
     checkpoint = resident.checkpoint()
     checkpoint["hypotheses"] = [{
-        "hypothesis_id": "hypothesis.a",
-        "source_episode_ids": [],
-        "source_model_ids": [],
-        "uncertainty": 0.2,
-        "status": "hypothesized",
-        "factual_support_refs": [],
-        "factual_conflict_refs": [],
+        "hypothesis": {
+            "hypothesis_id": "hypothesis.a",
+            "source_episode_ids": [],
+            "source_model_ids": [],
+            "uncertainty": 0.2,
+            "status": "hypothesized",
+            "factual_support_refs": [],
+            "factual_conflict_refs": [],
+            "reconciliation_count": 0,
+        },
         "target_id": "target.a",
         "predicted_outcomes": [],
         "representation_refs": [],
@@ -200,6 +211,58 @@ def test_resident_checkpoint_requires_complete_hypothesis_fields() -> None:
     del checkpoint["hypotheses"][0]["predicted_outcomes"]
     with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
         ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
+
+
+def test_resident_checkpoint_preserves_hypothesis_reconciliation_history_exactly() -> None:
+    resident = ResidentGenerativeCognition(organism_id="organism.restore")
+    resident.set_factual_evidence_resolver(lambda ref: ref == "evidence.observed")
+    resident.register_model(_Model())
+    resident.step(
+        tick=1,
+        cognition=None,
+        prospective_candidate_ids=("competence.a",),
+        mode=GenerativeMode.ONLINE,
+    )
+    assert resident.note_factual_outcome(
+        action_id="competence.a",
+        outcome_tokens=("outcome.test",),
+        evidence_refs=("evidence.observed",),
+        model_ids=("model.test",),
+    ) == 1
+
+    original = next(iter(resident.hypotheses.values()))
+    assert original.checkpoint()["reconciliation_count"] == 1
+    checkpoint = resident.checkpoint()
+    restored = ResidentGenerativeCognition.from_checkpoint(
+        checkpoint, organism_id="organism.restore"
+    )
+    resumed = next(iter(restored.hypotheses.values()))
+
+    assert resumed.checkpoint() == original.checkpoint()
+    assert restored.checkpoint() == checkpoint
+
+
+@pytest.mark.parametrize("malformation", ["missing", "unknown"])
+def test_resident_checkpoint_rejects_malformed_nested_hypothesis_codec(malformation: str) -> None:
+    resident = ResidentGenerativeCognition(organism_id="organism.restore")
+    resident.register_model(_Model())
+    resident.step(
+        tick=1,
+        cognition=None,
+        prospective_candidate_ids=("competence.a",),
+        mode=GenerativeMode.ONLINE,
+    )
+    checkpoint = resident.checkpoint()
+    hypothesis = checkpoint["hypotheses"][0]["hypothesis"]
+    if malformation == "missing":
+        del hypothesis["reconciliation_count"]
+    else:
+        hypothesis["unexpected"] = 1
+
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(
+            checkpoint, organism_id="organism.restore"
+        )
 
 
 def test_recurring_conflict_routes_to_counterfactual_without_factual_authority() -> None:
