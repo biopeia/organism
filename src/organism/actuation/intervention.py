@@ -29,6 +29,22 @@ _SCHEMA = "symbiont-intervention-signature-v1"
 _RELATIVE_LEVELS = 2
 _INTENSITY_BUCKETS = 4
 _MIN_ACTIVATION = 1e-9
+_REGISTRY_FIELDS = {"schema_version", "capacity", "signatures"}
+_SIGNATURE_FIELDS = {
+    "signature_id",
+    "channel_refs",
+    "temporal_pattern_ref",
+    "attempts",
+    "first_tick",
+    "last_tick",
+    "intensity_counts",
+}
+
+
+def _checkpoint_int(value: object, *, field: str, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"invalid intervention-signature {field}")
+    return value
 
 
 def opaque_channel_ref(actuator_id: str) -> str:
@@ -106,10 +122,17 @@ class InterventionSignatureRegistry:
     SCHEMA_VERSION = 1
 
     def __init__(self, *, capacity: int = 512, command_memory: int = 256) -> None:
-        if capacity < 1 or command_memory < 1:
+        if (
+            isinstance(capacity, bool)
+            or not isinstance(capacity, int)
+            or capacity < 1
+            or isinstance(command_memory, bool)
+            or not isinstance(command_memory, int)
+            or command_memory < 1
+        ):
             raise ValueError("registry bounds must be positive")
-        self.capacity = int(capacity)
-        self._command_memory = int(command_memory)
+        self.capacity = capacity
+        self._command_memory = command_memory
         self._signatures: dict[str, InterventionSignature] = {}
         self._stats: dict[str, _SignatureStats] = {}
         # Recent command -> signature identities, used to name sequences of
@@ -329,37 +352,68 @@ class InterventionSignatureRegistry:
         }
 
     @classmethod
-    def restore(cls, payload: Mapping[str, Any] | None) -> "InterventionSignatureRegistry":
-        if payload is None:
-            return cls()
-        if payload.get("schema_version") != cls.SCHEMA_VERSION:
+    def restore(cls, payload: object) -> "InterventionSignatureRegistry":
+        if not isinstance(payload, Mapping) or set(payload) != _REGISTRY_FIELDS:
+            raise ValueError("invalid intervention signature checkpoint fields")
+        version = payload["schema_version"]
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != cls.SCHEMA_VERSION
+        ):
             raise ValueError("unsupported intervention signature checkpoint")
-        obj = cls(capacity=int(payload.get("capacity", 512)))
-        raw = payload.get("signatures", [])
+        capacity = _checkpoint_int(payload["capacity"], field="capacity", minimum=1)
+        obj = cls(capacity=capacity)
+        raw = payload["signatures"]
         if not isinstance(raw, list) or len(raw) > obj.capacity:
             raise ValueError("invalid or unbounded intervention signatures")
+        seen_ids: set[str] = set()
         for entry in raw:
-            if not isinstance(entry, Mapping):
+            if not isinstance(entry, Mapping) or set(entry) != _SIGNATURE_FIELDS:
                 raise ValueError("invalid intervention signature entry")
-            refs = tuple(str(value) for value in entry.get("channel_refs", []))
-            temporal = entry.get("temporal_pattern_ref")
+            signature_id = entry["signature_id"]
+            raw_refs = entry["channel_refs"]
+            if (
+                not isinstance(signature_id, str)
+                or not isinstance(raw_refs, list)
+                or not raw_refs
+                or any(not isinstance(value, str) for value in raw_refs)
+            ):
+                raise ValueError("invalid intervention signature identity")
+            refs = tuple(raw_refs)
+            temporal = entry["temporal_pattern_ref"]
+            if temporal is not None and not isinstance(temporal, str):
+                raise ValueError("invalid intervention temporal pattern reference")
             signature = InterventionSignature(
-                signature_id=str(entry["signature_id"]),
+                signature_id=signature_id,
                 channel_refs=refs,
-                temporal_pattern_ref=str(temporal) if temporal is not None else None,
+                temporal_pattern_ref=temporal,
                 dimensionality=len(refs),
             )
-            counts = tuple(int(value) for value in entry.get("intensity_counts", []))
-            if len(counts) != _INTENSITY_BUCKETS or any(value < 0 for value in counts):
+            if signature_id in seen_ids:
+                raise ValueError("duplicate intervention signature identity")
+            seen_ids.add(signature_id)
+            raw_counts = entry["intensity_counts"]
+            if not isinstance(raw_counts, list) or len(raw_counts) != _INTENSITY_BUCKETS:
                 raise ValueError("invalid intervention intensity histogram")
-            attempts = int(entry.get("attempts", 0))
-            if attempts < 0:
-                raise ValueError("invalid intervention attempt support")
+            counts = tuple(
+                _checkpoint_int(value, field="intensity count", minimum=0)
+                for value in raw_counts
+            )
+            attempts = _checkpoint_int(entry["attempts"], field="attempt support", minimum=1)
+            first_tick = _checkpoint_int(entry["first_tick"], field="first tick", minimum=0)
+            last_tick = _checkpoint_int(entry["last_tick"], field="last tick", minimum=0)
+            if first_tick > last_tick:
+                raise ValueError("intervention signature tick range is inconsistent")
+            if temporal is None and sum(counts) != attempts:
+                raise ValueError("single-step intensity evidence is inconsistent")
+            if temporal is not None and any(counts):
+                raise ValueError("temporal signature cannot contain intensity evidence")
             obj._signatures[signature.signature_id] = signature
             obj._stats[signature.signature_id] = _SignatureStats(
                 attempts=attempts,
-                first_tick=int(entry.get("first_tick", 0)),
-                last_tick=int(entry.get("last_tick", 0)),
+                first_tick=first_tick,
+                last_tick=last_tick,
                 intensity_counts=counts,
             )
         obj._rebuild_families()
