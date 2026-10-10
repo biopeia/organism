@@ -1,46 +1,55 @@
 from __future__ import annotations
 
-from hashlib import sha256
 import json
+from hashlib import sha256
 from uuid import UUID
 
 import pytest
 
-from organism.cognition.graph import CognitiveGraph, PlasticEdge, PlasticNode
 from organism.checkpoint import CheckpointDependency
+from organism.cognition.activation import SensoryNormalizer
+from organism.cognition.generative import (
+    AgendaSource,
+    GenerativeTarget,
+    ResidentGenerativeCognition,
+)
+from organism.cognition.generative.registry import GenerativeModelRegistry
+from organism.cognition.graph import CognitiveGraph, PlasticEdge, PlasticNode
 from organism.cognition.limits import KernelLimits
+from organism.cognition.metaplasticity import SafetyState
 from organism.cognition.portable_checkpoint import (
     CognitiveRuntimeCheckpoint,
     CognitiveRuntimeCheckpointError,
 )
-from organism.cognition.activation import SensoryNormalizer
-from organism.cognition.metaplasticity import SafetyState
 from organism.cognition.transition import CognitiveTransitionState, advance_cognition
 from organism.cognition.types import EdgeKind, NodeKind
+from organism.genetics import (
+    EpigeneticMark,
+    GeneExpressionState,
+    GermlineState,
+    create_standard_genome,
+)
 from organism.identity import OrganismIdentity
 from organism.memory import EpistemicStatus, ExperienceRecord, SourceKind
-from organism.cognition.generative import AgendaSource, GenerativeTarget, ResidentGenerativeCognition
-from organism.cognition.generative.registry import GenerativeModelRegistry
-from organism.genetics import EpigeneticMark, GeneExpressionState, GermlineState, create_standard_genome
 
 
 def _graph() -> CognitiveGraph:
+    edge = PlasticEdge(
+        source_id="sense",
+        target_id="memory",
+        kind=EdgeKind.EXCITATORY,
+        weight=0.400001,
+        plasticity=0.1,
+        delay_ticks=1,
+        eligibility=0.05,
+        support=3,
+        age_ticks=5,
+        stable_ticks=2,
+        last_use_tick=4,
+    )
     return CognitiveGraph(
         nodes=(PlasticNode("sense", NodeKind.SENSE), PlasticNode("memory", NodeKind.STATE)),
-        edges=(
-            PlasticEdge(
-                source_id="sense",
-                target_id="memory",
-                kind=EdgeKind.EXCITATORY,
-                weight=0.75,
-                plasticity=0.1,
-                delay_ticks=1,
-                support=3,
-                age_ticks=5,
-                stable_ticks=2,
-                last_use_tick=4,
-            ),
-        ),
+        edges=(edge,),
         kernel_limits=KernelLimits(),
     )
 
@@ -89,8 +98,7 @@ def test_cognitive_graph_and_recurrent_state_round_trip_through_organism_envelop
     assert restored_edge.plasticity == original_edge.plasticity
     assert restored_edge.support == original_edge.support
     assert restored_edge.age_ticks == original_edge.age_ticks
-    # Eligibility is deliberately labile and excluded by the existing graph codec.
-    assert restored_edge.eligibility == 0.0
+    assert restored_edge.eligibility == original_edge.eligibility
 
 
 def test_portable_checkpoint_composes_safety_and_established_normalizer_state() -> None:
@@ -140,9 +148,9 @@ def test_portable_checkpoint_rejects_malformed_safety_and_normalizer_payloads() 
         )
 
 
-def test_portable_checkpoint_schema_v4_is_not_accepted_as_a_current_payload() -> None:
+def test_portable_checkpoint_schema_v5_is_not_accepted_as_a_current_payload() -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
-    document["schema_version"] = 4
+    document["schema_version"] = 5
     with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
         CognitiveRuntimeCheckpoint.from_bytes(
             json.dumps(document).encode(), kernel_limits=KernelLimits()

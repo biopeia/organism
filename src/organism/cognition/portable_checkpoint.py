@@ -1,6 +1,6 @@
 """Bounded portable composition for extracted Organism-owned runtime state.
 
-This composes graph structure/quantized learned weights, recurrent activation
+This composes graph structure/exact learned weights and eligibility state, recurrent activation
 state, optional genetic state, and optionally a generative resident's durable
 internal state. Model owners and transient evidence resolvers remain external.
 It is not a complete cognition or Organism checkpoint.
@@ -9,8 +9,8 @@ It is not a complete cognition or Organism checkpoint.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from organism.checkpoint import (
     CheckpointDependency,
@@ -18,8 +18,6 @@ from organism.checkpoint import (
     MissingCheckpointDependency,
     OrganismCheckpoint,
 )
-from organism.identity import OrganismIdentity
-from organism.memory import ExperienceRecord
 from organism.genetics import GeneExpressionState, Genome, GermlineState
 from organism.genetics.checkpoint import (
     export_expression,
@@ -30,6 +28,8 @@ from organism.genetics.checkpoint import (
     restore_germline,
 )
 from organism.genetics.schema import DEFAULT_GENOME_SCHEMA, GenomeSchema
+from organism.identity import OrganismIdentity
+from organism.memory import ExperienceRecord
 
 from .activation import SensoryNormalizer
 from .checkpoint import (
@@ -40,12 +40,12 @@ from .checkpoint import (
     restore_safety_state,
     restore_sensory_normalizers,
 )
+from .generative.registry import GenerativeModelRegistry
+from .generative.resident import ResidentGenerativeCognition
 from .graph import CognitiveGraph, GraphError
 from .limits import KernelLimits
 from .metaplasticity import SafetyState
 from .transition import CognitiveTransitionError, CognitiveTransitionState
-from .generative.registry import GenerativeModelRegistry
-from .generative.resident import ResidentGenerativeCognition
 
 
 class CognitiveRuntimeCheckpointError(ValueError):
@@ -172,7 +172,7 @@ class CognitiveRuntimeCheckpoint:
         _validate_genetic_state(self.genome, self.germline_state, self.expression_state)
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
-            "schema_version": 5,
+            "schema_version": 6,
             "identity": str(self.state.identity),
             "transition": self.state.checkpoint_payload(),
             "graph": export_graph_checkpoint(self.graph),
@@ -228,7 +228,7 @@ class CognitiveRuntimeCheckpoint:
             if (
                 document["schema"] != "biopeia.organism.cognitive-runtime"
                 or type(document["schema_version"]) is not int
-                or document["schema_version"] != 5
+                or document["schema_version"] != 6
             ):
                 raise CognitiveRuntimeCheckpointError("unsupported cognitive runtime checkpoint")
             identity = OrganismIdentity.parse(document["identity"])
