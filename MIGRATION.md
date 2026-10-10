@@ -841,3 +841,13 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Target paths: `src/organism/cognition/checkpoint.py`, `src/organism/cognition/portable_checkpoint.py`, and focused cognition checkpoint tests.
 - Validation: exact non-quantized round trips, a multi-step matched learning transition from live/restored graphs, prior codec/schema rejection, malformed-field rejection, full package tests, build, and CI are recorded in the associated PR.
 - Scope limitation: this removes the graph codec's quantization/reset loss only. It does not establish a complete Organism continuation, caller completeness, full dependency closure, or resolve other `#45` omissions such as all structural/plasticity/generative state. It makes no scientific efficacy claim. No `symbiont-lab` file is changed.
+
+## Incremental correction: strict intervention-signature registry restore (issue #60)
+
+- Implementation base: `678d26506e366157c411bd6e82d43f0981e9f8f2`.
+- Finding: the existing TARGET decoder coerced serialized values and supplied defaults for omitted statistics, allowing malformed or incomplete component state to be accepted.
+- Disposition: `REWRITE` of the existing TARGET restore boundary only; no historical checkpoint compatibility or fallback path is added.
+- Target paths: `src/organism/actuation/intervention.py::InterventionSignatureRegistry.restore`; `tests/source_unit/actuation/test_intervention_registry_checkpoint.py`.
+- Restore now requires exact top-level and entry schemas, a supported integer schema version, a positive integer capacity, bounded unique signatures, typed opaque references, valid non-negative integer statistics, ordered tick bounds, and internally consistent intensity evidence. Derived family indexes are rebuilt after validation.
+- Tests cover JSON round-trip, post-restore accumulation of new single-command evidence, temporal-statistic round-trip, and rejection of missing/unknown/malformed/inconsistent payloads.
+- Scope limitation: `_by_command` remains intentionally ephemeral and is not checkpointed, so command references from before restore cannot be used to form a new temporal signature after restore. This slice preserves the stored registry statistics and allows new command evidence to continue; it does not establish complete Organism continuation, command-history continuity, scientific efficacy, or close issue #60. No `symbiont-lab` file is changed.
