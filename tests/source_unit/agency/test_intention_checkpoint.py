@@ -41,6 +41,43 @@ def test_restore_roundtrips_exact_writer_payload_and_nullable_fields() -> None:
     assert restored.admission is AdmissionRoute.PROSPECTIVE
 
 
+@pytest.mark.parametrize("tick", [3, True, 4.0])
+def test_transition_rejects_non_monotonic_or_non_integer_tick_without_mutation(tick) -> None:
+    intent = _intent()
+    before = intent.checkpoint()
+
+    with pytest.raises((TypeError, ValueError), match="tick"):
+        intent.transition(IntentStatus.ACTIVE, tick=tick)
+
+    assert intent.checkpoint() == before
+    assert ActionIntent.restore(intent.checkpoint()).checkpoint() == before
+
+
+@pytest.mark.parametrize(
+    ("status", "activation", "reason"),
+    [
+        (IntentStatus.ACTIVE, 5, None),
+        (IntentStatus.REJECTED, None, "not-admitted"),
+        (IntentStatus.SATISFIED, 5, "outcome-observed"),
+        (IntentStatus.FAILED, 5, "execution-failed"),
+        (IntentStatus.INTERRUPTED, 5, "execution-interrupted"),
+        (IntentStatus.INVALIDATED, None, "stale-before-activation"),
+        (IntentStatus.INVALIDATED, 5, "stale-after-activation"),
+    ],
+)
+def test_restore_roundtrips_writer_produced_lifecycle_states(status, activation, reason):
+    intent = _intent()
+    if status is IntentStatus.ACTIVE:
+        intent.transition(status, tick=activation)
+    else:
+        if activation is not None:
+            intent.transition(IntentStatus.ACTIVE, tick=activation)
+        intent.transition(status, tick=6, reason=reason)
+
+    payload = intent.checkpoint()
+    assert ActionIntent.restore(payload).checkpoint() == payload
+
+
 @pytest.mark.parametrize(
     ("mutation", "error", "message"),
     [
@@ -97,4 +134,30 @@ def test_restore_rejects_invalid_enum_and_non_finite_unit_value() -> None:
     payload = _intent().checkpoint()
     payload["confidence"] = float("nan")
     with pytest.raises(ValueError, match=r"within \[0, 1\]"):
+        ActionIntent.restore(payload)
+
+
+@pytest.mark.parametrize(
+    ("status", "activated_tick", "termination_reason"),
+    [
+        (IntentStatus.ACTIVE.value, None, None),
+        (IntentStatus.PENDING.value, 5, None),
+        (IntentStatus.PENDING.value, None, "unexpected"),
+        (IntentStatus.ACTIVE.value, 5, "unexpected"),
+        (IntentStatus.REJECTED.value, None, None),
+        (IntentStatus.REJECTED.value, 5, "invalid-after-activation"),
+        (IntentStatus.SATISFIED.value, None, "completed-before-activation"),
+        (IntentStatus.FAILED.value, None, "failed-before-activation"),
+        (IntentStatus.INTERRUPTED.value, None, "interrupted-before-activation"),
+    ],
+)
+def test_restore_rejects_inconsistent_lifecycle_state(
+    status, activated_tick, termination_reason
+) -> None:
+    payload = _intent().checkpoint()
+    payload["status"] = status
+    payload["activated_tick"] = activated_tick
+    payload["termination_reason"] = termination_reason
+
+    with pytest.raises(ValueError, match="intent|terminal"):
         ActionIntent.restore(payload)

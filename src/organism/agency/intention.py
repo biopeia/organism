@@ -122,17 +122,46 @@ class ActionIntent:
             raise ValueError("an intent cannot activate before it is formed")
         self.status = IntentStatus(self.status)
         self.admission = AdmissionRoute(self.admission)
+        self._validate_lifecycle_state()
 
     @property
     def terminal(self) -> bool:
         return self.status in TERMINAL_INTENT_STATUSES
 
+    def _validate_lifecycle_state(self) -> None:
+        if self.status is IntentStatus.PENDING:
+            if self.activated_tick is not None or self.termination_reason is not None:
+                raise ValueError("pending intent cannot have activation or termination state")
+        elif self.status is IntentStatus.ACTIVE:
+            if self.activated_tick is None or self.termination_reason is not None:
+                raise ValueError("active intent requires activation and no termination reason")
+        elif self.terminal:
+            if not self.termination_reason:
+                raise ValueError("terminal intent requires a termination reason")
+            if self.status in {
+                IntentStatus.SATISFIED,
+                IntentStatus.FAILED,
+                IntentStatus.INTERRUPTED,
+            } and self.activated_tick is None:
+                raise ValueError(f"{self.status.value} intent requires prior activation")
+            if self.status is IntentStatus.REJECTED and self.activated_tick is not None:
+                raise ValueError("rejected intent cannot have been activated")
+        else:  # Defensive if a future enum member is added without lifecycle rules.
+            raise ValueError("intent status has no lifecycle contract")
+
+        if self.activated_tick is not None and self.last_progress_tick < self.activated_tick:
+            raise ValueError("intent progress cannot precede activation")
+
     def transition(self, status: IntentStatus, *, tick: int, reason: str | None = None) -> None:
         if status not in _TRANSITIONS.get(self.status, frozenset()):
             raise ValueError(f"illegal intent transition {self.status} -> {status}")
+        if type(tick) is not int:
+            raise TypeError("intent transition tick must be an integer")
+        if tick < self.last_progress_tick:
+            raise ValueError("intent transition tick cannot precede prior progress")
         if status is IntentStatus.ACTIVE:
-            self.activated_tick = int(tick)
-            self.last_progress_tick = max(self.last_progress_tick, int(tick))
+            self.activated_tick = tick
+            self.last_progress_tick = tick
         else:
             if not reason:
                 raise ValueError("a terminal intent requires a termination reason")
