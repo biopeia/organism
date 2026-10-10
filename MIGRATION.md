@@ -651,6 +651,13 @@ The following source test artifacts were enumerated from the pinned tree. Tests 
 | `symbiont/tests/unit/test_resident.py` | `DEFER` | Resolution owner: Organism migration owner. Trigger: before the first integrated Biopeia Organism runtime/continuity slice is declared complete, map each assertion to its source module and target authority; if no Organism-owned contract is justified, close DROP. |
 | `symbiont/tests/unit/test_symbols.py` | `DEFER` | Resolution owner: Organism migration owner. Trigger: before the first integrated Biopeia Organism runtime/continuity slice is declared complete, map each assertion to its source module and target authority; if no Organism-owned contract is justified, close DROP. |
 
+### Bounded cognition graph composition — 2026-10-10
+
+- TARGET base: `biopeia/organism` `origin/main` at `1761f6e9185af80666fcc39a1a440c457c1e72e4`.
+- TARGET paths: `src/organism/cognition/composition.py`, `src/organism/cognition/__init__.py`, and `tests/source_unit/cognition/test_composition.py`.
+- Disposition: `REWRITE` — compose the already-target-owned opaque-signal graph transition, conditional prediction-error evaluation, and explicitly configured per-edge learning into a candidate value. The candidate graph is isolated from the previous graph because `PlasticEdge` is mutable.
+- No historical implementation is copied. This slice does not populate the intentionally empty birth graph, choose sensory-node semantics, invoke generative cognition, update factual memory, hand off agency, publish a full Organism checkpoint, or claim learning efficacy. The parent cognition-composition finding remains open for those remaining integrations. World `causal_tick` is only a correlation supplied to the existing cognitive graph transition; this slice neither owns nor advances the persisted Organism `organism_step`.
+
 ### Non-code resources, scope exclusions and completion limit
 
 - `symbiont/src/symbiont/cognition/defaults/base-graph.json` is listed as a versioned resource and maps to `src/organism/cognition/defaults/base-graph.json`; its default is target data, not proof of learned cognition.
