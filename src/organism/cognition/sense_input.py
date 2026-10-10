@@ -160,8 +160,33 @@ def advance_cognition_from_sense_signals(
     authentication and does not make Organism authoritative over those owners.
     """
 
+    node_inputs = bind_opaque_sense_signals(
+        graph, bindings, signals, expected_provenance=expected_provenance
+    )
+    return advance_cognition(
+        state, graph, node_inputs, causal_tick=expected_provenance.causal_tick
+    )
+
+
+def bind_opaque_sense_signals(
+    graph: CognitiveGraph,
+    bindings: tuple[SenseChannelBinding, ...],
+    signals: tuple[OpaqueSenseSignal, ...],
+    *,
+    expected_provenance: SenseProvenance,
+) -> dict[str, float]:
+    """Validate a configured signal set and bind it to private SENSE nodes.
+
+    This returns only opaque numeric inputs. It deliberately does not advance
+    cognition, allowing the owner composition to stage validation, cognition,
+    and canonical state publication as one transition.
+    """
+    if not isinstance(graph, CognitiveGraph):
+        raise CognitiveTransitionError("graph must be a CognitiveGraph")
     if not isinstance(expected_provenance, SenseProvenance):
         raise CognitiveTransitionError("expected_provenance must be a SenseProvenance")
+    if not isinstance(bindings, tuple) or not isinstance(signals, tuple):
+        raise CognitiveTransitionError("bindings and signals must be explicit tuples")
     binding_by_channel: dict[str, SenseChannelBinding] = {}
     bound_nodes: set[str] = set()
     for binding in bindings:
@@ -219,7 +244,7 @@ def advance_cognition_from_sense_signals(
         binding_by_channel[channel_id].sense_node_id: float(signal.value)
         for channel_id, signal in signal_by_channel.items()
     }
-    return advance_cognition(state, graph, node_inputs, causal_tick=expected_provenance.causal_tick)
+    return node_inputs
 
 
 __all__ = [
@@ -231,4 +256,5 @@ __all__ = [
     "SenseChannelBinding",
     "SenseProvenance",
     "advance_cognition_from_sense_signals",
+    "bind_opaque_sense_signals",
 ]

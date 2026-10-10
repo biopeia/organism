@@ -11,6 +11,7 @@ from .composition import (
     EdgeLearningInstruction,
     StageResult,
     compose_cognition_transition,
+    compose_cognition_from_sense_signals,
 )
 from .learning import ShadowPrediction
 from .sense_input import (
@@ -18,6 +19,11 @@ from .sense_input import (
     SenseChannelBinding,
     SenseProvenance,
     advance_cognition_from_sense_signals,
+    bind_opaque_sense_signals,
+)
+from .owner_transition import (
+    AcceptedCognitionTransition,
+    advance_organism_from_sense_signals,
 )
 from .portable_checkpoint import (
     CognitiveRuntimeCheckpoint,
@@ -33,6 +39,7 @@ __all__ = [
     "CognitionComposition",
     "CognitiveRuntimeCheckpoint",
     "CognitiveRuntimeCheckpointError",
+    "AcceptedCognitionTransition",
     "CognitiveStage",
     "CognitiveTransitionError",
     "CognitiveTransitionState",
@@ -44,5 +51,8 @@ __all__ = [
     "StageResult",
     "advance_cognition",
     "advance_cognition_from_sense_signals",
+    "advance_organism_from_sense_signals",
+    "bind_opaque_sense_signals",
+    "compose_cognition_from_sense_signals",
     "compose_cognition_transition",
 ]
