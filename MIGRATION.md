@@ -760,3 +760,12 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Disposition: `REWRITE` of the cognition restore validation only; both codecs now require a string `genotype_hash` and compare it to the decoded genome. Regression tests verify missing/malformed hash rejection in both paths.
 - Validation and review: recorded in the associated PR after exact-base tests and build.
 - Scope limitation: this aligns hash-presence/integrity validation only. It does not compose genome, expression, or germline into a portable Organism checkpoint; does not resolve other F-0087 germline/expression findings; and makes no biological-equivalence or scientific-efficacy claim.
+
+## Incremental correction: bind actuator evidence to embodiment context (issue #51)
+
+- Source observation: `biopeia/organism` at implementation base `e008495ea473fb3d2ca7a3b68af81a1dc0fb7f02`, issue [#51](https://github.com/biopeia/organism/issues/51), finding F-0129.
+- Disposition: `REWRITE` of the target evidence/checkpoint applicability contract; this is a Biopeia target correction, not an extraction from `symbiont-lab`.
+- Target paths: `src/organism/actuation/context.py`, `candidate.py`, `checkpoint.py`, `proposer.py`, and `surface.py`; tests under `tests/source_unit/actuation/`.
+- Evidence is retained longitudinally with body, embodiment episode, morphology revision, and a canonical actuator-surface fingerprint. The fingerprint includes all current channel contract fields. Active applicability is scoped to the current context; a different context remains dormant until it accumulates its own evidence. Checkpoints bind to the explicit Organism identity and reject unknown fields.
+- Tests cover wrong-Organism restore, evidence retention across re-embodiment, current-context promotion, stale surface contracts with unchanged effector IDs, and fingerprint sensitivity to channel semantics.
+- Scope limits: restore still requires the exact same effector-ID roster; transfer across changed rosters is not implemented here. Correlation evidence is not proof of physical efficacy or action authorization. No legacy checkpoint/API compatibility is retained.

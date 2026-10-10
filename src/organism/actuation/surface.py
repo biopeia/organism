@@ -8,13 +8,13 @@ knowledge; they must be learned from experienced consequences.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Sequence
 
 from .types import ActuatorId
 
-_SURFACE_SCHEMA = "biopeia-actuator-surface-v1"
+_SURFACE_SCHEMA = "biopeia-actuator-surface-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,14 +46,40 @@ MotorSlot = ActuatorChannel
 @dataclass(frozen=True, slots=True)
 class ActuatorSurface:
     channels: tuple[ActuatorChannel, ...]
-    contract_fingerprint: str
+    fingerprint_material: str = ""
+    contract_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.channels, tuple) or any(
+            not isinstance(channel, ActuatorChannel) for channel in self.channels
+        ):
+            raise ValueError("channels must be an immutable tuple of ActuatorChannel values")
+        if not isinstance(self.fingerprint_material, str):
+            raise ValueError("fingerprint_material must be a string")
         ids = [channel.actuator_id for channel in self.channels]
         if len(ids) != len(set(ids)):
             raise ValueError("actuator ids must be unique")
-        if not self.contract_fingerprint:
-            raise ValueError("contract_fingerprint must not be empty")
+        fingerprint_input = json.dumps(
+            [
+                _SURFACE_SCHEMA,
+                self.fingerprint_material,
+                [
+                    {
+                        "actuator_id": channel.actuator_id,
+                        "slot_id": channel.slot_id,
+                        "command_min": channel.command_min,
+                        "command_max": channel.command_max,
+                        "neutral": channel.neutral,
+                        "available": channel.available,
+                    }
+                    for channel in sorted(self.channels, key=lambda item: item.actuator_id)
+                ],
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        fingerprint = sha256(fingerprint_input.encode("utf-8")).hexdigest()
+        object.__setattr__(self, "contract_fingerprint", fingerprint)
 
     @property
     def slots(self) -> tuple[ActuatorChannel, ...]:
@@ -98,17 +124,10 @@ class ActuatorSurface:
             ActuatorChannel(slot_id=f"effector.{effector_id}", actuator_id=effector_id)
             for effector_id in ids
         )
-        # A collection's iteration order is not identity. Canonicalize only the
-        # fingerprint input; preserve the supplied order for presentation.
-        fingerprint_input = json.dumps(
-            [_SURFACE_SCHEMA, fingerprint_material or "", sorted(ids)],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        fingerprint = sha256(
-            fingerprint_input.encode("utf-8")
-        ).hexdigest()
-        return cls(channels=channels, contract_fingerprint=fingerprint)
+        # A collection's iteration order is not identity. The constructor
+        # fingerprints every semantic channel field in canonical ID order,
+        # while preserving the supplied channel order for presentation.
+        return cls(channels=channels, fingerprint_material=fingerprint_material or "")
 
 
 ActuatorConstitution = ActuatorSurface

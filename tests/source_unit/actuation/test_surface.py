@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
 from organism.actuation.surface import (
+    ActuatorSurface,
     MotorSlot,
     derive_actuator_constitution,
 )
@@ -52,6 +53,28 @@ def test_contract_metadata_changes_fingerprint_not_effector_identity():
     )
     assert first.actuator_ids == second.actuator_ids
     assert first.contract_fingerprint != second.contract_fingerprint
+
+
+@pytest.mark.parametrize(
+    "channel_change",
+    [
+        {"command_min": 0.2, "neutral": 0.5, "command_max": 0.8},
+        {"available": False},
+        {"slot_id": "effector.left.v2"},
+    ],
+    ids=["command-range-and-neutral", "availability", "slot-identity"],
+)
+def test_surface_fingerprint_binds_channel_semantics(channel_change):
+    original = derive_actuator_constitution(
+        ("effector.left",), fingerprint_material="same-material"
+    )
+    changed_channel = replace(original.channels[0], **channel_change)
+    changed = ActuatorSurface(
+        channels=(changed_channel,), fingerprint_material="same-material"
+    )
+
+    assert changed.actuator_ids == original.actuator_ids
+    assert changed.contract_fingerprint != original.contract_fingerprint
 
 
 def test_positional_count_construction_is_not_supported():
