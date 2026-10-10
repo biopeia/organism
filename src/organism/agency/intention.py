@@ -162,29 +162,91 @@ class ActionIntent:
 
     @classmethod
     def restore(cls, payload: Mapping[str, Any]) -> "ActionIntent":
-        def optional_str(key: str) -> str | None:
-            value = payload.get(key)
-            return str(value) if value is not None else None
+        if not isinstance(payload, Mapping):
+            raise TypeError("action intent checkpoint must be a mapping")
 
-        activated = payload.get("activated_tick")
+        expected = {
+            "intent_id",
+            "competence_id",
+            "anticipated_effect_id",
+            "context_ref",
+            "embodiment_id",
+            "origin_refs",
+            "prediction_ref",
+            "confidence",
+            "epistemic_relevance",
+            "homeostatic_relevance",
+            "supporting_affordance_id",
+            "created_tick",
+            "activated_tick",
+            "last_progress_tick",
+            "status",
+            "termination_reason",
+            "admission",
+        }
+        if any(type(key) is not str for key in payload):
+            raise TypeError("action intent checkpoint field names must be strings")
+        actual = set(payload)
+        if actual != expected:
+            missing = sorted(expected - actual)
+            unknown = sorted(actual - expected)
+            raise ValueError(
+                f"action intent checkpoint has missing or unknown fields: "
+                f"missing={missing}, unknown={unknown}"
+            )
+
+        def required_str(key: str) -> str:
+            value = payload[key]
+            if type(value) is not str:
+                raise TypeError(f"{key} must be a string")
+            return value
+
+        def nullable_str(key: str) -> str | None:
+            value = payload[key]
+            if value is not None and type(value) is not str:
+                raise TypeError(f"{key} must be a string or null")
+            return value
+
+        def unit_float(key: str) -> float:
+            value = payload[key]
+            if type(value) is not float:
+                raise TypeError(f"{key} must be a float")
+            return value
+
+        def required_tick(key: str) -> int:
+            value = payload[key]
+            if type(value) is not int:
+                raise TypeError(f"{key} must be an integer")
+            return value
+
+        origin_refs = payload["origin_refs"]
+        if type(origin_refs) is not list or any(type(ref) is not str for ref in origin_refs):
+            raise TypeError("origin_refs must be a list of strings")
+
+        activated = payload["activated_tick"]
+        if activated is not None and type(activated) is not int:
+            raise TypeError("activated_tick must be an integer or null")
+
+        status = required_str("status")
+        admission = required_str("admission")
         return cls(
-            intent_id=str(payload["intent_id"]),
-            competence_id=str(payload["competence_id"]),
-            anticipated_effect_id=optional_str("anticipated_effect_id"),
-            context_ref=optional_str("context_ref"),
-            embodiment_id=optional_str("embodiment_id"),
-            origin_refs=tuple(str(value) for value in payload.get("origin_refs", [])),
-            prediction_ref=optional_str("prediction_ref"),
-            confidence=float(payload["confidence"]),
-            epistemic_relevance=float(payload["epistemic_relevance"]),
-            homeostatic_relevance=float(payload["homeostatic_relevance"]),
-            supporting_affordance_id=optional_str("supporting_affordance_id"),
-            created_tick=int(payload["created_tick"]),
-            activated_tick=int(activated) if activated is not None else None,
-            last_progress_tick=int(payload["last_progress_tick"]),
-            status=IntentStatus(str(payload["status"])),
-            termination_reason=optional_str("termination_reason"),
-            admission=AdmissionRoute(str(payload.get("admission", "cognitive"))),
+            intent_id=required_str("intent_id"),
+            competence_id=required_str("competence_id"),
+            anticipated_effect_id=nullable_str("anticipated_effect_id"),
+            context_ref=nullable_str("context_ref"),
+            embodiment_id=nullable_str("embodiment_id"),
+            origin_refs=tuple(origin_refs),
+            prediction_ref=nullable_str("prediction_ref"),
+            confidence=unit_float("confidence"),
+            epistemic_relevance=unit_float("epistemic_relevance"),
+            homeostatic_relevance=unit_float("homeostatic_relevance"),
+            supporting_affordance_id=nullable_str("supporting_affordance_id"),
+            created_tick=required_tick("created_tick"),
+            activated_tick=activated,
+            last_progress_tick=required_tick("last_progress_tick"),
+            status=IntentStatus(status),
+            termination_reason=nullable_str("termination_reason"),
+            admission=AdmissionRoute(admission),
         )
 
 

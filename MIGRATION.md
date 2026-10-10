@@ -871,3 +871,14 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Restore now requires the exact top-level and nested writer schemas, typed non-coerced identifiers/numerics/references, uniqueness where the writer's collection semantics require it, valid capacity and counters, and consistent transition/history evidence. Repeated commitment references in unconfirmed execution history are preserved because each recorded execution is counted independently. Nullable `status_reason` remains explicitly supported. Historical `revision_history` and `unconfirmed_executions` entries remain preserved even if their binding has been evicted or is not currently present; they are not silently discarded.
 - Validation: focused competence-availability tests and full package tests/build are recorded in the associated PR and exact-head CI.
 - Scope limitation: this slice hardens one registry codec only. It does not complete Organism checkpoint composition, full longitudinal continuity, scientific efficacy, or issue #60 acceptance. No `symbiont-lab` file is changed.
+
+## Incremental correction: strict ActionIntent checkpoint restore (issue #60)
+
+- Implementation base: `334a70a8d88fd97d052ebea1ecd209b47940a44f`.
+- Source provenance: the historical `ActionIntent` disposition is recorded at `symbiont/src/symbiont/agency/intention.py`, source commit `76784f1c665094ed8a06704dd37f993420521b11`; this change corrects the existing TARGET decoder and does not copy the historical implementation.
+- Finding: `ActionIntent.restore` coerced scalar values, supplied defaults for omitted `origin_refs` and `admission`, and accepted unknown fields, although the TARGET writer always emits an exact checkpoint shape.
+- Disposition: bounded `REWRITE` of the TARGET restore boundary only; no historical checkpoint compatibility or fallback path is added.
+- Target paths: `src/organism/agency/intention.py::ActionIntent.restore`; `tests/source_unit/agency/test_intention_checkpoint.py`.
+- Restore now requires the exact writer key set and exact serialized types. Nullable fields must still be present and accept only string or `null`; `activated_tick` accepts only integer or `null`; unit values require finite floats; references, enum values, and lifecycle invariants are validated without coercion.
+- Tests cover the exact writer round-trip including explicit nulls, omitted/unknown keys, wrong and coercible scalar types, invalid enums, and non-finite unit values.
+- Scope limitation: this validates the `ActionIntent` component codec only. It does not make `ActionDomain` or all agency/action state a complete durable continuation, resolve other issue #60 decoder gaps, establish scientific efficacy, or close issue #60. No `symbiont-lab` file is changed.
