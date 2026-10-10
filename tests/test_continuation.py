@@ -165,6 +165,39 @@ def test_registry_rejects_ordinary_step_committed_directly_from_non_active_state
             lease.commit(forged_progression)
 
 
+def test_registry_rejects_direct_ordinary_commit_with_changed_embodiment_context():
+    original_context = EmbodimentContextRef("body-a", "episode-a", "morph-1")
+    changed_context = EmbodimentContextRef("body-b", "episode-b", "morph-2")
+    initial_state = OrganismTransitionState(
+        OrganismCheckpoint(IDENTITY, b"private"),
+        organism_step=0,
+        embodiment=original_context,
+        lifecycle=OrganismLifecycle.ACTIVE,
+    )
+    initial = OrganismContinuation(initial_state, CONTINUATION)
+    registry = CanonicalContinuationRegistry()
+    registry.register_genesis(initial)
+
+    with registry.acquire(initial) as lease:
+        forged_state = OrganismTransitionState(
+            initial.state.owner_checkpoint,
+            organism_step=initial.organism_step + 1,
+            embodiment=changed_context,
+            world_correlation=initial.state.world_correlation,
+            lifecycle=OrganismLifecycle.ACTIVE,
+            lifecycle_history=initial.state.lifecycle_history,
+        )
+        forged = OrganismContinuation(forged_state, CONTINUATION)
+
+        with pytest.raises(ContinuationError, match="one active step"):
+            lease.commit(forged)
+
+        assert lease.current == initial
+
+    with registry.acquire(initial) as lease:
+        assert lease.current == initial
+
+
 def test_registry_allows_reactivation_to_bind_new_embodiment_context():
     original_context = EmbodimentContextRef("body-a", "episode-a", "morph-1")
     checkpoint = OrganismCheckpoint(IDENTITY, b"private")
