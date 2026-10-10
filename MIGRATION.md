@@ -769,3 +769,12 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Evidence is retained longitudinally with body, embodiment episode, morphology revision, and a canonical actuator-surface fingerprint. The fingerprint includes all current channel contract fields. Active applicability is scoped to the current context; a different context remains dormant until it accumulates its own evidence. Checkpoints bind to the explicit Organism identity and reject unknown fields.
 - Tests cover wrong-Organism restore, evidence retention across re-embodiment, current-context promotion, stale surface contracts with unchanged effector IDs, and fingerprint sensitivity to channel semantics.
 - Scope limits: restore still requires the exact same effector-ID roster; transfer across changed rosters is not implemented here. Correlation evidence is not proof of physical efficacy or action authorization. No legacy checkpoint/API compatibility is retained.
+
+## Incremental correction: preserve pending competence-binding transitions (issue #41)
+
+- Finding provenance: `biopeia/docs` finding F-0102, originally recorded against `biopeia/organism@6543188ff302a5f2dc8002c0086252d6061e5310`; implementation base: `065397822203ec03961be397ff3131d875ab4a1a`.
+- Finding: `CompetenceExecutionBindingRegistry` checkpointed current items but omitted lifecycle transitions that had not yet been drained, so restore discarded those pending records.
+- Disposition: `REWRITE` of the target registry checkpoint boundary only. Schema version advances from v2 to v3; restore requires and validates ordered `pending_transitions`, their binding identity, cause references, and consecutive revision relation. No v2 compatibility path is provided.
+- Target paths: `src/organism/actuation/binding.py`; `tests/source_unit/agency/test_competence_availability.py`.
+- Validation: focused registry tests, the full Organism package suite, package build, and `git diff --check` are recorded in the associated pull request.
+- Scope limitation: this preserves only undrained registry transition records across this component checkpoint. It does not assemble an aggregate portable Organism checkpoint, resolve other F-0102 findings, or establish complete Organism continuation, durable World recovery, or scientific efficacy. Issue #41 remains open for its other findings.

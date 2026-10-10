@@ -92,7 +92,7 @@ class BindingTransition:
 class CompetenceExecutionBindingRegistry:
     """Bounded current-embodiment authority, separate from competence knowledge."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, *, capacity: int = 512) -> None:
         if capacity < 1:
@@ -296,27 +296,37 @@ class CompetenceExecutionBindingRegistry:
         return tuple(sorted(self._items.values(), key=lambda item: item.competence_id))
 
     def checkpoint(self) -> dict[str, object]:
+        def binding_payload(item: CompetenceExecutionBinding) -> dict[str, object]:
+            return {
+                "competence_id": item.competence_id,
+                "surface_fingerprint": item.surface_fingerprint,
+                "effect_id": item.effect_id,
+                "evidence_refs": list(item.evidence_refs),
+                "reliability": item.reliability,
+                "controllability": item.controllability,
+                "last_evidence_tick": item.last_evidence_tick,
+                "status": item.status.value,
+                "status_reason": (
+                    item.status_reason.value if item.status_reason is not None else None
+                ),
+                "valid_from_tick": item.valid_from_tick,
+                "status_changed_tick": item.status_changed_tick,
+                "revision": item.revision,
+            }
+
         return {
             "schema_version": self.SCHEMA_VERSION,
             "capacity": self.capacity,
-            "items": [
+            "items": [binding_payload(item) for item in self.items],
+            "pending_transitions": [
                 {
-                    "competence_id": item.competence_id,
-                    "surface_fingerprint": item.surface_fingerprint,
-                    "effect_id": item.effect_id,
-                    "evidence_refs": list(item.evidence_refs),
-                    "reliability": item.reliability,
-                    "controllability": item.controllability,
-                    "last_evidence_tick": item.last_evidence_tick,
-                    "status": item.status.value,
-                    "status_reason": (
-                        item.status_reason.value if item.status_reason is not None else None
-                    ),
-                    "valid_from_tick": item.valid_from_tick,
-                    "status_changed_tick": item.status_changed_tick,
-                    "revision": item.revision,
+                    "competence_id": transition.competence_id,
+                    "previous_status": transition.previous_status.value,
+                    "previous_revision": transition.previous_revision,
+                    "binding": binding_payload(transition.binding),
+                    "cause_refs": list(transition.cause_refs),
                 }
-                for item in self.items
+                for transition in self._transitions
             ],
             "capacity_pressure": self.pressure.checkpoint(),
             "revision_history": {
@@ -341,6 +351,7 @@ class CompetenceExecutionBindingRegistry:
         required = {
             "capacity",
             "items",
+            "pending_transitions",
             "capacity_pressure",
             "revision_history",
             "unconfirmed_executions",
@@ -406,6 +417,76 @@ class CompetenceExecutionBindingRegistry:
                 revision=int(entry["revision"]),
             )
             obj._items[binding.competence_id] = binding
+        raw_transitions = payload["pending_transitions"]
+        if not isinstance(raw_transitions, list):
+            raise ValueError("invalid pending competence execution binding transitions")
+        for entry in raw_transitions:
+            if not isinstance(entry, Mapping) or not {
+                "competence_id",
+                "previous_status",
+                "previous_revision",
+                "binding",
+                "cause_refs",
+            }.issubset(entry):
+                raise ValueError("invalid pending competence execution binding transition")
+            raw_binding = entry["binding"]
+            if not isinstance(raw_binding, Mapping):
+                raise ValueError("invalid pending competence execution binding transition")
+            item_fields = {
+                "competence_id",
+                "surface_fingerprint",
+                "effect_id",
+                "evidence_refs",
+                "reliability",
+                "controllability",
+                "last_evidence_tick",
+                "status",
+                "status_reason",
+                "valid_from_tick",
+                "status_changed_tick",
+                "revision",
+            }
+            if not item_fields.issubset(raw_binding):
+                raise ValueError("incomplete pending competence execution binding transition")
+            binding = CompetenceExecutionBinding(
+                competence_id=str(raw_binding["competence_id"]),
+                surface_fingerprint=str(raw_binding["surface_fingerprint"]),
+                effect_id=str(raw_binding["effect_id"]),
+                evidence_refs=tuple(str(value) for value in raw_binding["evidence_refs"]),
+                reliability=float(raw_binding["reliability"]),
+                controllability=float(raw_binding["controllability"]),
+                last_evidence_tick=int(raw_binding["last_evidence_tick"]),
+                status=BindingStatus(raw_binding["status"]),
+                status_reason=_reason(raw_binding.get("status_reason")),
+                valid_from_tick=int(raw_binding["valid_from_tick"]),
+                status_changed_tick=int(raw_binding["status_changed_tick"]),
+                revision=int(raw_binding["revision"]),
+            )
+            cause_refs = entry["cause_refs"]
+            if not isinstance(cause_refs, list) or not all(
+                isinstance(value, str) and value for value in cause_refs
+            ):
+                raise ValueError("invalid pending competence execution binding cause references")
+            previous_revision = entry["previous_revision"]
+            if (
+                isinstance(previous_revision, bool)
+                or not isinstance(previous_revision, int)
+                or previous_revision < 0
+            ):
+                raise ValueError("invalid previous competence execution binding revision")
+            if entry["competence_id"] != binding.competence_id:
+                raise ValueError("pending competence execution binding identity mismatch")
+            if binding.revision != previous_revision + 1:
+                raise ValueError("invalid pending competence execution binding revision")
+            obj._transitions.append(
+                BindingTransition(
+                    competence_id=binding.competence_id,
+                    previous_status=BindingStatus(entry["previous_status"]),
+                    previous_revision=previous_revision,
+                    binding=binding,
+                    cause_refs=tuple(cause_refs),
+                )
+            )
         obj.pressure = CapacityPressure.restore(pressure, capacity=obj.capacity)
         for competence_id, entry in payload["revision_history"].items():
             if competence_id in obj._items:

@@ -132,14 +132,98 @@ def test_lifecycle_transitions_are_traced_and_evidence_revalidates():
     assert restored.items == registry.items
 
 
+def test_all_pending_lifecycle_transitions_survive_checkpoint_restore():
+    registry = CompetenceExecutionBindingRegistry()
+    registry.bind_from_evidence(
+        competence_id="competence.pending",
+        surface_fingerprint="surface.s",
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.9,
+        controllability=0.9,
+        tick=1,
+    )
+    registry.set_status(
+        "competence.pending",
+        BindingStatus.STALE,
+        StalenessReason.SURFACE_NOT_CURRENT,
+        tick=3,
+        cause_refs=("surface-revision-2",),
+    )
+    registry.bind_from_evidence(
+        competence_id="competence.pending",
+        surface_fingerprint="surface.s",
+        effect_id="effect.e",
+        evidence_refs=("ev.2",),
+        reliability=0.9,
+        controllability=0.9,
+        tick=4,
+    )
+    registry.set_status(
+        "competence.pending",
+        BindingStatus.STALE,
+        StalenessReason.EVIDENCE_AGED,
+        tick=5,
+        cause_refs=("age-window-1",),
+    )
+    registry.bind_from_evidence(
+        competence_id="competence.pending",
+        surface_fingerprint="surface.s",
+        effect_id="effect.e",
+        evidence_refs=("ev.3",),
+        reliability=0.9,
+        controllability=0.9,
+        tick=6,
+    )
+    registry.set_status(
+        "competence.pending",
+        BindingStatus.INVALIDATED,
+        InvalidationReason.EVIDENCE_CONTRADICTED,
+        tick=7,
+        cause_refs=("contradiction-1",),
+    )
+    payload = registry.checkpoint()
+    expected = registry.drain_transitions()
+    restored = CompetenceExecutionBindingRegistry.restore(payload)
+
+    assert len(expected) == 5
+    assert restored.items == registry.items
+    assert restored.drain_transitions() == expected
+    assert restored.drain_transitions() == ()
+
+
 def test_binding_restore_rejects_old_schema_and_missing_current_fields():
     registry = CompetenceExecutionBindingRegistry()
     old = registry.checkpoint()
-    old["schema_version"] = 1
+    old["schema_version"] = 2
     with pytest.raises(ValueError, match="unsupported competence execution binding"):
         CompetenceExecutionBindingRegistry.restore(old)
 
     incomplete = registry.checkpoint()
-    incomplete.pop("revision_history")
+    incomplete.pop("pending_transitions")
     with pytest.raises(ValueError, match="incomplete competence execution binding"):
         CompetenceExecutionBindingRegistry.restore(incomplete)
+
+
+def test_binding_restore_rejects_nonconsecutive_pending_transition_revision():
+    registry = CompetenceExecutionBindingRegistry()
+    registry.bind_from_evidence(
+        competence_id="competence.pending",
+        surface_fingerprint="surface.s",
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.9,
+        controllability=0.9,
+        tick=1,
+    )
+    registry.set_status(
+        "competence.pending",
+        BindingStatus.STALE,
+        StalenessReason.SURFACE_NOT_CURRENT,
+        tick=2,
+    )
+    payload = registry.checkpoint()
+    payload["pending_transitions"][0]["previous_revision"] = 5
+
+    with pytest.raises(ValueError, match="invalid pending competence execution binding revision"):
+        CompetenceExecutionBindingRegistry.restore(payload)
