@@ -49,7 +49,7 @@ from .types import (
 )
 from .workspace import GenerativeWorkspace
 
-RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 3
+RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 4
 
 
 def _resident_budget(value: object) -> GenerativeBudget:
@@ -204,13 +204,9 @@ class ResidentGenerativeCognition:
             ),
             "hypotheses": [
                 {
-                    "hypothesis_id": hypothesis.hypothesis_id,
-                    "source_episode_ids": list(hypothesis.source_episode_ids),
-                    "source_model_ids": list(hypothesis.source_model_ids),
-                    "uncertainty": hypothesis.uncertainty,
-                    "status": hypothesis.status.value,
-                    "factual_support_refs": list(hypothesis.factual_support_refs),
-                    "factual_conflict_refs": list(hypothesis.factual_conflict_refs),
+                    # Use the hypothesis strict checkpoint codec as the single encoding
+                    # for its durable state, including reconciliation history.
+                    "hypothesis": hypothesis.checkpoint(),
                     "target_id": self._hypothesis_target[hypothesis.hypothesis_id],
                     "predicted_outcomes": list(
                         self._hypothesis_outcomes.get(hypothesis.hypothesis_id, ())
@@ -337,24 +333,15 @@ class ResidentGenerativeCognition:
                 raise ValueError("invalid generative hypothesis collection")
             for item in raw_hypotheses:
                 hypothesis_keys = {
-                    "hypothesis_id", "source_episode_ids", "source_model_ids", "uncertainty",
-                    "status", "factual_support_refs", "factual_conflict_refs", "target_id",
-                    "predicted_outcomes", "representation_refs", "calibration",
+                    "hypothesis", "target_id", "predicted_outcomes",
+                    "representation_refs", "calibration",
                 }
                 if not isinstance(item, dict) or set(item) != hypothesis_keys:
                     raise ValueError("invalid generative hypothesis")
-                for name in ("source_episode_ids", "source_model_ids", "factual_support_refs", "factual_conflict_refs", "predicted_outcomes", "representation_refs"):
+                for name in ("predicted_outcomes", "representation_refs"):
                     if not isinstance(item[name], list):
                         raise ValueError(f"hypothesis {name} must be a list")
-                hypothesis = GenerativeHypothesis(
-                    hypothesis_id=item["hypothesis_id"],
-                    source_episode_ids=tuple(item["source_episode_ids"]),
-                    source_model_ids=tuple(item["source_model_ids"]),
-                    uncertainty=item["uncertainty"],
-                    status=HypothesisStatus(item["status"]),
-                    factual_support_refs=tuple(item["factual_support_refs"]),
-                    factual_conflict_refs=tuple(item["factual_conflict_refs"]),
-                )
+                hypothesis = GenerativeHypothesis.from_checkpoint(item["hypothesis"])
                 if hypothesis.hypothesis_id in resident.hypotheses:
                     raise ValueError("duplicate generative hypothesis id")
                 resident.hypotheses[hypothesis.hypothesis_id] = hypothesis
