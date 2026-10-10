@@ -761,6 +761,15 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Validation and review: recorded in the associated PR after exact-base tests and build.
 - Scope limitation: this aligns hash-presence/integrity validation only. It does not compose genome, expression, or germline into a portable Organism checkpoint; does not resolve other F-0087 germline/expression findings; and makes no biological-equivalence or scientific-efficacy claim.
 
+## Incremental correction: compose explicit genetic state in the portable runtime checkpoint (issue #50)
+
+- Source finding: `biopeia/docs` finding F-0087, recorded against `biopeia/organism@fc8a91c61d865663ba6f9468216171506fd29e7a`; implementation base: `d1adf081333acd15c0252df84d498a7ba9e276ad`.
+- Finding: the portable cognitive/runtime checkpoint did not carry the target genome, germline marks, or expression state, so that checkpoint alone could not preserve explicitly supplied genetic state across restore.
+- Disposition: `REWRITE` of the existing bounded portable checkpoint composition. It now serializes genome, germline state, and expression state together as an all-or-none group; construction validates internal genetic consistency, restore rejects partial groups and uses the existing fail-closed owner codecs. Genetic restore requires an explicit running version. The decoder accepts only an integer schema version exactly equal to 5.
+- Target paths: `src/organism/cognition/portable_checkpoint.py`; `tests/source_unit/cognition/test_portable_checkpoint.py`.
+- Validation: focused and full package tests, build, and `git diff --check` are recorded in the associated pull request.
+- Scope limitation: this remains a caller-supplied, partial cognitive/runtime checkpoint; genetic state is optional, and this change does not create a complete Organism owner aggregate, guarantee every caller includes genetic state, implement `organism_step`, or prove longitudinal/genetic/reproductive continuity or scientific efficacy. Schema v5 is strict; no schema-v4 compatibility path is provided.
+
 ## Incremental correction: bind actuator evidence to embodiment context (issue #51)
 
 - Source observation: `biopeia/organism` at implementation base `e008495ea473fb3d2ca7a3b68af81a1dc0fb7f02`, issue [#51](https://github.com/biopeia/organism/issues/51), finding F-0129.
