@@ -742,3 +742,12 @@ The following production-source references were inspected in the current target 
 | `ResidentGenerativeCognition.step`, `materialize_replay` and `materialize_recombination` `tick` inputs | Drive episode identifiers, episode metadata, recency tracking and/or use records. | Reassess at the new owner transition boundary; callers must provide explicit domain meaning. No implicit source-tick compatibility mapping. |
 
 No additional `symbiont_tick` symbols are assigned dispositions by this entry. The exact-field scan does not authorize copying historical semantics or adding a legacy import/fallback path. See issue [#22](https://github.com/biopeia/organism/issues/22) for the bounded implementation-boundary record.
+
+## Incremental correction: fail-closed germline checkpoint restore (issue #50)
+
+- Finding provenance: `biopeia/docs` finding F-0087, recorded against `biopeia/organism@fc8a91c61d865663ba6f9468216171506fd29e7a` in `explanation/organism/genome-and-inheritance.md`; independently rechecked at implementation base `2f051b029018a30f10acddaedc70d2b7edd3325c`.
+- Finding: the germline decoder silently skipped non-object mark entries, collapsed duplicate loci when building maps, accepted acquired marks with acquisition disabled, and trusted serialized birth expression that disagreed with the genome and inherited marks.
+- Disposition: `REWRITE` of the existing target restore boundary only; source repository and historical behavior remain unchanged.
+- Target paths: `src/organism/genetics/checkpoint.py::restore_germline`; `tests/source_unit/genetics/test_checkpoint.py`.
+- Validation: focused and full target test suites, package build, and `git diff --check` are recorded in the associated pull request.
+- Scope limit: this slice validates only the germline codec's internal serialized-state consistency. It does not add genome, expression, or germline data to a portable Organism checkpoint; reconcile the separate genome codecs; change expression restore semantics; or establish genetic, reproductive, or scientific efficacy. The remaining findings in issue #50 remain open.
