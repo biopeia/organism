@@ -61,8 +61,33 @@ class SensorimotorTransition:
     observed_effect_atoms: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if type(self.tick_start) is not int or type(self.tick_end) is not int:
+            raise TypeError("transition ticks must be integers")
         if self.tick_start < 0 or self.tick_end < self.tick_start:
             raise ValueError("invalid transition ticks")
+        for name in (
+            "transition_id",
+            "context_ref",
+            "commitment_id",
+            "controller_id",
+            "state_before_ref",
+            "motor_command_ref",
+            "actuation_ref",
+            "state_after_ref",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{name} must be a non-empty string")
+        for name in (
+            "competence_id",
+            "attempt_id",
+            "intervention_signature_id",
+            "observed_effect_id",
+            "prediction_ref",
+        ):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{name} must be a string or null")
         for value in (
             self.transition_id,
             self.context_ref,
@@ -300,6 +325,16 @@ class CausalEvidenceLedger:
         effect_atoms: tuple[str, ...] = (),
     ) -> CausalEvidence:
         """Record bodily change observed while no motor command was issued."""
+        if type(tick_start) is not int or type(tick_end) is not int:
+            raise TypeError("passive window ticks must be integers")
+        if context_ref is not None and not isinstance(context_ref, str):
+            raise TypeError("passive context reference must be a string or null")
+        if effect_id is not None and not isinstance(effect_id, str):
+            raise TypeError("passive effect identity must be a string or null")
+        if type(prior_state_ref) is not str or not prior_state_ref:
+            raise ValueError("passive prior state reference must not be empty")
+        if type(resulting_state_ref) is not str or not resulting_state_ref:
+            raise ValueError("passive resulting state reference must not be empty")
         if tick_start < 0 or tick_end <= tick_start:
             raise ValueError("invalid passive window ticks")
         if effect_id is not None and not effect_id.startswith("effect."):
@@ -524,49 +559,114 @@ class CausalEvidenceLedger:
 
     @classmethod
     def restore(cls, payload: dict[str, Any]) -> "CausalEvidenceLedger":
-        version = payload.get("schema_version")
-        if version != cls.SCHEMA_VERSION:
+        if not isinstance(payload, dict):
+            raise ValueError("causal-evidence checkpoint must be an object")
+        expected_checkpoint_fields = {
+            "schema_version",
+            "capacity",
+            "passive_capacity",
+            "evidence",
+            "passive_evidence",
+        }
+        if set(payload) != expected_checkpoint_fields:
+            raise ValueError("invalid causal-evidence checkpoint fields")
+        version = payload["schema_version"]
+        if type(version) is not int or version != cls.SCHEMA_VERSION:
             raise ValueError("unsupported causal-evidence checkpoint")
-        if not {"capacity", "passive_capacity", "evidence", "passive_evidence"}.issubset(payload):
-            raise ValueError("incomplete causal-evidence checkpoint")
-        capacity = int(payload["capacity"])
+        capacity = payload["capacity"]
+        if type(capacity) is not int or capacity < 1:
+            raise ValueError("invalid causal-evidence capacity")
         passive_capacity = payload["passive_capacity"]
-        obj = cls(
-            capacity=capacity,
-            passive_capacity=(int(passive_capacity) if isinstance(passive_capacity, int) else None),
-        )
+        if type(passive_capacity) is not int or passive_capacity < 1:
+            raise ValueError("invalid passive causal-evidence capacity")
         raw_items = payload["evidence"]
         raw_passive = payload["passive_evidence"]
         if not isinstance(raw_items, list) or not isinstance(raw_passive, list):
             raise ValueError("invalid causal evidence")
-        for raw, passive in ((raw_items[-obj._capacity :], False), (raw_passive, True)):
+        if len(raw_items) > capacity or len(raw_passive) > passive_capacity:
+            raise ValueError("causal-evidence checkpoint exceeds declared capacity")
+
+        obj = cls(capacity=capacity, passive_capacity=passive_capacity)
+        item_fields = {
+            "evidence_id",
+            "attempt_id",
+            "intervention_signature_id",
+            "commitment_id",
+            "competence_id",
+            "effect_id",
+            "context_ref",
+            "observation_tick",
+            "transition_id",
+            "action_ref",
+            "prior_state_ref",
+            "resulting_state_ref",
+            "prediction_ref",
+            "window_start_tick",
+            "effect_atoms",
+        }
+        nullable_string_fields = {
+            "attempt_id",
+            "intervention_signature_id",
+            "commitment_id",
+            "competence_id",
+            "effect_id",
+            "context_ref",
+            "transition_id",
+            "action_ref",
+            "prior_state_ref",
+            "resulting_state_ref",
+            "prediction_ref",
+        }
+        for raw, passive in ((raw_items, False), (raw_passive, True)):
             for item in raw:
                 if not isinstance(item, dict):
                     raise ValueError("invalid causal evidence item")
-                normalized = dict(item)
-                required = {
-                    "evidence_id",
-                    "attempt_id",
-                    "intervention_signature_id",
-                    "commitment_id",
-                    "competence_id",
-                    "effect_id",
-                    "context_ref",
-                    "observation_tick",
-                    "transition_id",
-                    "action_ref",
-                    "prior_state_ref",
-                    "resulting_state_ref",
-                    "prediction_ref",
-                    "window_start_tick",
-                    "effect_atoms",
-                }
-                if not required.issubset(normalized):
-                    raise ValueError("incomplete causal evidence item")
-                normalized["effect_atoms"] = tuple(normalized["effect_atoms"])
+                if set(item) != item_fields:
+                    raise ValueError("invalid causal evidence item fields")
+                if not isinstance(item["evidence_id"], str) or not item["evidence_id"]:
+                    raise ValueError("invalid causal evidence identity")
+                for field in nullable_string_fields:
+                    value = item[field]
+                    if value is not None and not isinstance(value, str):
+                        raise ValueError(f"invalid causal evidence {field}")
+                tick = item["observation_tick"]
+                if type(tick) is not int or tick < 0:
+                    raise ValueError("invalid causal evidence observation tick")
+                window_start_tick = item["window_start_tick"]
+                if window_start_tick is not None and (
+                    type(window_start_tick) is not int or window_start_tick < 0
+                ):
+                    raise ValueError("invalid causal evidence window start tick")
+                atoms = item["effect_atoms"]
+                if not isinstance(atoms, list) or any(not isinstance(atom, str) for atom in atoms):
+                    raise ValueError("invalid causal evidence effect atoms")
+                normalized = {**item, "effect_atoms": tuple(atoms)}
                 evidence = CausalEvidence(**normalized)
                 if evidence.is_passive is not passive:
                     raise ValueError("causal evidence stored in the wrong window class")
+                if passive:
+                    if (
+                        evidence.window_start_tick is None
+                        or not evidence.prior_state_ref
+                        or not evidence.resulting_state_ref
+                    ):
+                        raise ValueError("passive causal evidence requires a complete state window")
+                elif (
+                    not evidence.attempt_id
+                    or not evidence.intervention_signature_id
+                    or not evidence.commitment_id
+                    or not evidence.transition_id
+                    or not evidence.action_ref
+                    or not evidence.prior_state_ref
+                    or not evidence.resulting_state_ref
+                    or evidence.window_start_tick is None
+                ):
+                    raise ValueError("action causal evidence requires complete transition references")
+                if evidence.window_start_tick is not None and (
+                    evidence.window_start_tick > evidence.observation_tick
+                    or (passive and evidence.window_start_tick == evidence.observation_tick)
+                ):
+                    raise ValueError("invalid causal evidence window bounds")
                 obj._append(evidence)
         return obj
 
