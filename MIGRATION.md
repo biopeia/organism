@@ -861,3 +861,13 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Decoder now requires the exact emitted key set; rejects non-integer/bool ticks, invalid domain/operation types, non-list reference collections, malformed rule/parameters/event identity, and mismatched content-derived event IDs. At the top-level event fields, `null` is valid only for `rule`; parameter values retain their existing scalar-value contract.
 - Tests cover a complete payload round-trip, every omitted field, unknown fields, and malformed/coerced values.
 - Scope limitation: this validates the CausalEvent payload codec only. It does not make the bounded `ProvenanceLog` event ring durable, create a complete Organism checkpoint, or establish full causal-history continuation, scientific efficacy, or complete issue #60 acceptance. No `symbiont-lab` file is changed.
+
+## Incremental correction: strict competence-binding registry restore (issue #60)
+
+- Implementation base: `334a70a8d88fd97d052ebea1ecd209b47940a44f`.
+- Finding: `CompetenceExecutionBindingRegistry.restore()` accepted absent/extra fields and coerced malformed binding, transition, and metadata values. It also discarded metadata for competence IDs without a current bounded binding, losing state the writer preserved.
+- Disposition: `REWRITE` of the existing TARGET restore boundary only; no historical checkpoint compatibility or fallback path is added.
+- Target paths: `src/organism/actuation/binding.py::CompetenceExecutionBindingRegistry.restore`; `tests/source_unit/agency/test_competence_availability.py`.
+- Restore now requires the exact top-level and nested writer schemas, typed non-coerced identifiers/numerics/references, uniqueness where the writer's collection semantics require it, valid capacity and counters, and consistent transition/history evidence. Repeated commitment references in unconfirmed execution history are preserved because each recorded execution is counted independently. Nullable `status_reason` remains explicitly supported. Historical `revision_history` and `unconfirmed_executions` entries remain preserved even if their binding has been evicted or is not currently present; they are not silently discarded.
+- Validation: focused competence-availability tests and full package tests/build are recorded in the associated PR and exact-head CI.
+- Scope limitation: this slice hardens one registry codec only. It does not complete Organism checkpoint composition, full longitudinal continuity, scientific efficacy, or issue #60 acceptance. No `symbiont-lab` file is changed.

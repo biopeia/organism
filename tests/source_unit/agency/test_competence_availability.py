@@ -201,7 +201,7 @@ def test_binding_restore_rejects_old_schema_and_missing_current_fields():
 
     incomplete = registry.checkpoint()
     incomplete.pop("pending_transitions")
-    with pytest.raises(ValueError, match="incomplete competence execution binding"):
+    with pytest.raises(ValueError, match="competence execution binding checkpoint fields"):
         CompetenceExecutionBindingRegistry.restore(incomplete)
 
 
@@ -227,3 +227,130 @@ def test_binding_restore_rejects_nonconsecutive_pending_transition_revision():
 
     with pytest.raises(ValueError, match="invalid pending competence execution binding revision"):
         CompetenceExecutionBindingRegistry.restore(payload)
+
+
+def test_binding_restore_requires_exact_writer_schema_and_rejects_none():
+    with pytest.raises(ValueError, match="checkpoint fields"):
+        CompetenceExecutionBindingRegistry.restore(None)
+
+    payload = CompetenceExecutionBindingRegistry().checkpoint()
+    payload["unexpected"] = True
+    with pytest.raises(ValueError, match="checkpoint fields"):
+        CompetenceExecutionBindingRegistry.restore(payload)
+
+    payload = CompetenceExecutionBindingRegistry().checkpoint()
+    payload["schema_version"] = True
+    with pytest.raises(ValueError, match="unsupported competence execution binding"):
+        CompetenceExecutionBindingRegistry.restore(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("competence_id", 7),
+        ("surface_fingerprint", None),
+        ("effect_id", ""),
+        ("evidence_refs", ["ev.1", 2]),
+        ("reliability", "0.9"),
+        ("controllability", True),
+        ("last_evidence_tick", True),
+        ("valid_from_tick", "1"),
+        ("status_changed_tick", False),
+        ("revision", 1.0),
+        ("unexpected", "ignored"),
+    ],
+)
+def test_binding_restore_rejects_coercions_and_unknown_binding_fields(field, value):
+    registry = CompetenceExecutionBindingRegistry()
+    registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint="surface.s",
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.9,
+        controllability=0.8,
+        tick=1,
+    )
+    payload = registry.checkpoint()
+    payload["items"][0][field] = value
+
+    with pytest.raises(ValueError):
+        CompetenceExecutionBindingRegistry.restore(payload)
+
+
+def test_binding_restore_preserves_nullable_reason_and_historical_metadata():
+    registry = CompetenceExecutionBindingRegistry()
+    registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint="surface.s",
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.9,
+        controllability=0.8,
+        tick=1,
+    )
+    # These histories may outlive a bounded binding item and are written as
+    # independent metadata, so restore must preserve rather than discard them.
+    registry.note_unconfirmed_execution(
+        "competence.historical", windows=2, commitment_id="commitment.1"
+    )
+    payload = registry.checkpoint()
+    assert payload["items"][0]["status_reason"] is None
+
+    restored = CompetenceExecutionBindingRegistry.restore(payload)
+    assert restored.checkpoint() == payload
+
+
+def test_binding_restore_preserves_repeated_unconfirmed_commitment_evidence():
+    registry = CompetenceExecutionBindingRegistry()
+    for _ in range(2):
+        registry.note_unconfirmed_execution(
+            "competence.historical", windows=1, commitment_id="commitment.1"
+        )
+
+    payload = registry.checkpoint()
+    assert payload["unconfirmed_executions"]["competence.historical"] == {
+        "executions": 2,
+        "windows": 2,
+        "commitments": ["commitment.1", "commitment.1"],
+    }
+    assert CompetenceExecutionBindingRegistry.restore(payload).checkpoint() == payload
+
+
+def test_binding_restore_rejects_malformed_pending_transition_and_history():
+    registry = CompetenceExecutionBindingRegistry()
+    registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint="surface.s",
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.9,
+        controllability=0.8,
+        tick=1,
+    )
+    registry.set_status(
+        "competence.a", BindingStatus.STALE, StalenessReason.EVIDENCE_AGED,
+        tick=2, cause_refs=("cause.1",),
+    )
+    transition_payload = registry.checkpoint()
+    transition_payload["pending_transitions"][0]["extra"] = None
+    with pytest.raises(ValueError, match="pending competence execution binding transition"):
+        CompetenceExecutionBindingRegistry.restore(transition_payload)
+
+    history_registry = CompetenceExecutionBindingRegistry()
+    history_registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint="surface.s",
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.9,
+        controllability=0.8,
+        tick=1,
+    )
+    history_registry.note_execution(
+        "competence.a", matched=True, commitment_id="commitment.1", reference_size=1
+    )
+    history_payload = history_registry.checkpoint()
+    history_payload["revision_history"]["competence.a"].pop("ref_n")
+    with pytest.raises(ValueError, match="revision history"):
+        CompetenceExecutionBindingRegistry.restore(history_payload)

@@ -341,14 +341,10 @@ class CompetenceExecutionBindingRegistry:
     @classmethod
     def restore(
         cls,
-        payload: Mapping[str, Any] | None,
+        payload: Mapping[str, Any],
     ) -> "CompetenceExecutionBindingRegistry":
-        if payload is None:
-            return cls()
-        version = payload.get("schema_version")
-        if version != cls.SCHEMA_VERSION:
-            raise ValueError("unsupported competence execution binding checkpoint")
         required = {
+            "schema_version",
             "capacity",
             "items",
             "pending_transitions",
@@ -356,112 +352,51 @@ class CompetenceExecutionBindingRegistry:
             "revision_history",
             "unconfirmed_executions",
         }
-        if not required.issubset(payload):
-            raise ValueError("incomplete competence execution binding checkpoint")
+        if not isinstance(payload, Mapping) or set(payload) != required:
+            raise ValueError("invalid competence execution binding checkpoint fields")
+        version = payload["schema_version"]
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != cls.SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported competence execution binding checkpoint")
+        capacity = payload["capacity"]
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+            raise ValueError("invalid competence execution binding capacity")
         pressure = payload["capacity_pressure"]
-        pressure_fields = {
-            "schema_version",
-            "capacity",
-            "admissions",
-            "evictions",
-            "promotions",
-            "demotions",
-            "relearned_after_eviction",
-            "recently_evicted",
-        }
         if (
             not isinstance(pressure, Mapping)
-            or pressure.get("schema_version") != CapacityPressure.SCHEMA_VERSION
-            or not pressure_fields.issubset(pressure)
+            or pressure.get("capacity") != capacity
         ):
             raise ValueError("incomplete capacity pressure checkpoint")
         if not isinstance(payload["revision_history"], Mapping) or not isinstance(
             payload["unconfirmed_executions"], Mapping
         ):
             raise ValueError("invalid competence execution binding metadata")
-        obj = cls(capacity=int(payload["capacity"]))
+        obj = cls(capacity=capacity)
         raw = payload["items"]
         if not isinstance(raw, list) or len(raw) > obj.capacity:
             raise ValueError("invalid or unbounded competence execution bindings")
         for entry in raw:
-            if not isinstance(entry, Mapping):
-                raise ValueError("invalid competence execution binding")
-            item_fields = {
-                "competence_id",
-                "surface_fingerprint",
-                "effect_id",
-                "evidence_refs",
-                "reliability",
-                "controllability",
-                "last_evidence_tick",
-                "status",
-                "status_reason",
-                "valid_from_tick",
-                "status_changed_tick",
-                "revision",
-            }
-            if not item_fields.issubset(entry):
-                raise ValueError("incomplete competence execution binding")
-            binding = CompetenceExecutionBinding(
-                competence_id=str(entry["competence_id"]),
-                surface_fingerprint=str(entry["surface_fingerprint"]),
-                effect_id=str(entry["effect_id"]),
-                evidence_refs=tuple(str(value) for value in entry["evidence_refs"]),
-                reliability=float(entry["reliability"]),
-                controllability=float(entry["controllability"]),
-                last_evidence_tick=int(entry["last_evidence_tick"]),
-                status=BindingStatus(entry["status"]),
-                status_reason=_reason(entry.get("status_reason")),
-                valid_from_tick=int(entry["valid_from_tick"]),
-                status_changed_tick=int(entry["status_changed_tick"]),
-                revision=int(entry["revision"]),
-            )
+            binding = _restore_binding(entry)
+            if binding.competence_id in obj._items:
+                raise ValueError("duplicate competence execution binding identity")
             obj._items[binding.competence_id] = binding
         raw_transitions = payload["pending_transitions"]
         if not isinstance(raw_transitions, list):
             raise ValueError("invalid pending competence execution binding transitions")
         for entry in raw_transitions:
-            if not isinstance(entry, Mapping) or not {
+            if not isinstance(entry, Mapping) or set(entry) != {
                 "competence_id",
                 "previous_status",
                 "previous_revision",
                 "binding",
                 "cause_refs",
-            }.issubset(entry):
+            }:
                 raise ValueError("invalid pending competence execution binding transition")
             raw_binding = entry["binding"]
-            if not isinstance(raw_binding, Mapping):
-                raise ValueError("invalid pending competence execution binding transition")
-            item_fields = {
-                "competence_id",
-                "surface_fingerprint",
-                "effect_id",
-                "evidence_refs",
-                "reliability",
-                "controllability",
-                "last_evidence_tick",
-                "status",
-                "status_reason",
-                "valid_from_tick",
-                "status_changed_tick",
-                "revision",
-            }
-            if not item_fields.issubset(raw_binding):
-                raise ValueError("incomplete pending competence execution binding transition")
-            binding = CompetenceExecutionBinding(
-                competence_id=str(raw_binding["competence_id"]),
-                surface_fingerprint=str(raw_binding["surface_fingerprint"]),
-                effect_id=str(raw_binding["effect_id"]),
-                evidence_refs=tuple(str(value) for value in raw_binding["evidence_refs"]),
-                reliability=float(raw_binding["reliability"]),
-                controllability=float(raw_binding["controllability"]),
-                last_evidence_tick=int(raw_binding["last_evidence_tick"]),
-                status=BindingStatus(raw_binding["status"]),
-                status_reason=_reason(raw_binding.get("status_reason")),
-                valid_from_tick=int(raw_binding["valid_from_tick"]),
-                status_changed_tick=int(raw_binding["status_changed_tick"]),
-                revision=int(raw_binding["revision"]),
-            )
+            binding = _restore_binding(raw_binding)
             cause_refs = entry["cause_refs"]
             if not isinstance(cause_refs, list) or not all(
                 isinstance(value, str) and value for value in cause_refs
@@ -478,10 +413,13 @@ class CompetenceExecutionBindingRegistry:
                 raise ValueError("pending competence execution binding identity mismatch")
             if binding.revision != previous_revision + 1:
                 raise ValueError("invalid pending competence execution binding revision")
+            previous_status = entry["previous_status"]
+            if not isinstance(previous_status, str):
+                raise ValueError("invalid previous competence execution binding status")
             obj._transitions.append(
                 BindingTransition(
                     competence_id=binding.competence_id,
-                    previous_status=BindingStatus(entry["previous_status"]),
+                    previous_status=BindingStatus(previous_status),
                     previous_revision=previous_revision,
                     binding=binding,
                     cause_refs=tuple(cause_refs),
@@ -489,44 +427,118 @@ class CompetenceExecutionBindingRegistry:
             )
         obj.pressure = CapacityPressure.restore(pressure, capacity=obj.capacity)
         for competence_id, entry in payload["revision_history"].items():
-            if competence_id in obj._items:
-                if not isinstance(entry, Mapping) or not {
-                    "revision",
-                    "ref_n",
-                    "ref_k",
-                    "new_n",
-                    "new_k",
-                    "commitments",
-                }.issubset(entry):
-                    raise ValueError("invalid competence execution binding revision history")
-                obj._history[str(competence_id)] = {
-                    "revision": int(entry["revision"]),
-                    "ref_n": int(entry["ref_n"]),
-                    "ref_k": int(entry["ref_k"]),
-                    "new_n": int(entry["new_n"]),
-                    "new_k": int(entry["new_k"]),
-                    "commitments": [str(ref) for ref in entry["commitments"]][-64:],
-                }
+            if not isinstance(competence_id, str) or not competence_id:
+                raise ValueError("invalid competence execution binding revision identity")
+            fields = {"revision", "ref_n", "ref_k", "new_n", "new_k", "commitments"}
+            if not isinstance(entry, Mapping) or set(entry) != fields:
+                raise ValueError("invalid competence execution binding revision history")
+            counts = {name: entry[name] for name in ("revision", "ref_n", "ref_k", "new_n", "new_k")}
+            if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in counts.values()):
+                raise ValueError("invalid competence execution binding revision counts")
+            commitments = entry["commitments"]
+            if not _valid_string_list(commitments, limit=64):
+                raise ValueError("invalid competence execution binding revision commitments")
+            if counts["ref_k"] > counts["ref_n"] or counts["new_k"] > counts["new_n"]:
+                raise ValueError("inconsistent competence execution binding revision history")
+            obj._history[competence_id] = {
+                **counts,
+                "commitments": list(commitments),
+            }
         for competence_id, entry in payload["unconfirmed_executions"].items():
-            if competence_id in obj._items:
-                if not isinstance(entry, Mapping) or not {
-                    "executions",
-                    "windows",
-                    "commitments",
-                }.issubset(entry):
-                    raise ValueError("invalid unconfirmed competence execution metadata")
-                obj._unconfirmed[str(competence_id)] = {
-                    "executions": int(entry["executions"]),
-                    "windows": int(entry["windows"]),
-                    "commitments": [str(ref) for ref in entry["commitments"]][-8:],
-                }
+            if not isinstance(competence_id, str) or not competence_id:
+                raise ValueError("invalid unconfirmed competence execution identity")
+            fields = {"executions", "windows", "commitments"}
+            if not isinstance(entry, Mapping) or set(entry) != fields:
+                raise ValueError("invalid unconfirmed competence execution metadata")
+            executions, windows = entry["executions"], entry["windows"]
+            if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in (executions, windows)):
+                raise ValueError("invalid unconfirmed competence execution counts")
+            commitments = entry["commitments"]
+            # Each unconfirmed execution is counted independently. The writer
+            # preserves repeated commitment IDs when the same commitment is
+            # observed more than once, so restore must preserve those entries.
+            if not _valid_string_list(commitments, limit=8, unique=False):
+                raise ValueError("invalid unconfirmed competence execution commitments")
+            obj._unconfirmed[competence_id] = {
+                "executions": executions,
+                "windows": windows,
+                "commitments": list(commitments),
+            }
         return obj
+
+
+_BINDING_FIELDS = {
+    "competence_id",
+    "surface_fingerprint",
+    "effect_id",
+    "evidence_refs",
+    "reliability",
+    "controllability",
+    "last_evidence_tick",
+    "status",
+    "status_reason",
+    "valid_from_tick",
+    "status_changed_tick",
+    "revision",
+}
+
+
+def _restore_binding(raw: object) -> CompetenceExecutionBinding:
+    if not isinstance(raw, Mapping) or set(raw) != _BINDING_FIELDS:
+        raise ValueError("invalid competence execution binding fields")
+    for name in ("competence_id", "surface_fingerprint", "effect_id"):
+        if not isinstance(raw[name], str) or not raw[name]:
+            raise ValueError("invalid competence execution binding identity")
+    refs = raw["evidence_refs"]
+    if not _valid_string_list(refs):
+        raise ValueError("invalid competence execution binding evidence references")
+    for name in ("reliability", "controllability"):
+        value = raw[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("invalid competence execution binding confidence")
+    for name in ("last_evidence_tick", "valid_from_tick", "status_changed_tick", "revision"):
+        value = raw[name]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("invalid competence execution binding integer field")
+    status = raw["status"]
+    if not isinstance(status, str):
+        raise ValueError("invalid competence execution binding status")
+    reason = raw["status_reason"]
+    if reason is not None and not isinstance(reason, str):
+        raise ValueError("invalid competence execution binding status reason")
+    return CompetenceExecutionBinding(
+        competence_id=raw["competence_id"],
+        surface_fingerprint=raw["surface_fingerprint"],
+        effect_id=raw["effect_id"],
+        evidence_refs=tuple(refs),
+        reliability=raw["reliability"],
+        controllability=raw["controllability"],
+        last_evidence_tick=raw["last_evidence_tick"],
+        status=BindingStatus(status),
+        status_reason=_reason(reason),
+        valid_from_tick=raw["valid_from_tick"],
+        status_changed_tick=raw["status_changed_tick"],
+        revision=raw["revision"],
+    )
+
+
+def _valid_string_list(
+    raw: object, *, limit: int | None = None, unique: bool = True
+) -> bool:
+    return (
+        isinstance(raw, list)
+        and (limit is None or len(raw) <= limit)
+        and all(isinstance(value, str) and bool(value) for value in raw)
+        and (not unique or len(set(raw)) == len(raw))
+    )
 
 
 def _reason(raw: object) -> StalenessReason | InvalidationReason | None:
     if raw is None:
         return None
-    value = str(raw)
+    if not isinstance(raw, str):
+        raise ValueError("invalid competence execution binding status reason")
+    value = raw
     if value in StalenessReason._value2member_map_:
         return StalenessReason(value)
     return InvalidationReason(value)
