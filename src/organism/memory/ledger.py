@@ -79,19 +79,24 @@ class ExperienceLedger:
 
     @classmethod
     def restore(
-        cls, payload: Mapping[str, object] | None, *, organism_id: str
+        cls, payload: Mapping[str, object], *, organism_id: str
     ) -> "ExperienceLedger":
-        if payload is None:
-            return cls(organism_id)
-        if not isinstance(payload, Mapping) or payload.get("schema_version") != cls.SCHEMA_VERSION:
+        required = {"schema_version", "organism_id", "max_records", "records"}
+        if (
+            not isinstance(payload, Mapping)
+            or set(payload) != required
+            or isinstance(payload.get("schema_version"), bool)
+            or not isinstance(payload.get("schema_version"), int)
+            or payload.get("schema_version") != cls.SCHEMA_VERSION
+        ):
             raise ValueError("invalid experience ledger checkpoint")
         if payload.get("organism_id") != organism_id:
             raise ValueError("experience ledger organism mismatch")
-        raw_max = payload.get("max_records", 2048)
+        raw_max = payload["max_records"]
         if isinstance(raw_max, bool) or not isinstance(raw_max, int):
             raise ValueError("invalid experience ledger capacity")
         ledger = cls(organism_id, max_records=raw_max)
-        raw_records = payload.get("records", [])
+        raw_records = payload["records"]
         if not isinstance(raw_records, list) or len(raw_records) > ledger.max_records:
             raise ValueError("invalid experience ledger records")
         for raw in raw_records:

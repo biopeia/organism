@@ -80,3 +80,25 @@ def test_restore_rejects_foreign_identity_duplicate_records_and_overflow() -> No
     ]
     with pytest.raises(ValueError, match="invalid experience ledger records"):
         ExperienceLedger.restore(overflow, organism_id="org-1")
+
+
+def test_restore_rejects_missing_or_null_required_checkpoint_state() -> None:
+    valid = ExperienceLedger("org-1", max_records=16).checkpoint()
+
+    with pytest.raises(ValueError, match="invalid experience ledger checkpoint"):
+        ExperienceLedger.restore(None, organism_id="org-1")  # type: ignore[arg-type]
+
+    missing_records = dict(valid)
+    del missing_records["records"]
+    with pytest.raises(ValueError, match="invalid experience ledger checkpoint"):
+        ExperienceLedger.restore(missing_records, organism_id="org-1")
+
+    null_records = {**valid, "records": None}
+    with pytest.raises(ValueError, match="invalid experience ledger records"):
+        ExperienceLedger.restore(null_records, organism_id="org-1")
+
+    record = _record("r1").canonical_payload()
+    del record["context_tokens"]
+    invalid_record = {**valid, "records": [record]}
+    with pytest.raises(ValueError, match="experience checkpoint fields"):
+        ExperienceLedger.restore(invalid_record, organism_id="org-1")
