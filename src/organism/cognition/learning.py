@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Deque, Mapping
+import math
+from typing import Any, Deque, Mapping
 
 from .graph import CognitiveGraph, PlasticEdge
 from .types import WEIGHT_RANGE, NodeKind
@@ -10,6 +11,39 @@ from .types import WEIGHT_RANGE, NodeKind
 ELIGIBILITY_BOUND = (
     10.0  # generous relative to a_i, a_j in (-1, 1); prevents unbounded growth when decay==1.0
 )
+
+_VALID_SHADOW_STATUSES = frozenset({"candidate", "supported", "contradicted", "retired"})
+
+
+def _require_finite_number(val: Any, field_name: str) -> float:
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        raise ValueError(f"{field_name} must be a number, got {type(val).__name__}")
+    f_val = float(val)
+    if not math.isfinite(f_val):
+        raise ValueError(f"{field_name} must be finite, got {f_val}")
+    return f_val
+
+
+def _require_non_negative_int(val: Any, field_name: str) -> int:
+    if isinstance(val, bool) or not isinstance(val, int):
+        raise ValueError(f"{field_name} must be an integer, got {type(val).__name__}")
+    if val < 0:
+        raise ValueError(f"{field_name} must be non-negative, got {val}")
+    return val
+
+
+def _require_non_empty_str(val: Any, field_name: str) -> str:
+    if not isinstance(val, str) or not val:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return val
+
+
+def _require_status(val: Any) -> str:
+    if not isinstance(val, str) or val not in _VALID_SHADOW_STATUSES:
+        raise ValueError(
+            f"status must be one of {sorted(_VALID_SHADOW_STATUSES)}, got {val!r}"
+        )
+    return val
 
 
 def huber_loss(error: float, delta: float = 1.0) -> float:
@@ -96,6 +130,18 @@ class ShadowPrediction:
     persistence_loss: float = 0.0
     status: str = "candidate"
 
+    def __post_init__(self) -> None:
+        self.source_id = _require_non_empty_str(self.source_id, "source_id")
+        self.target_id = _require_non_empty_str(self.target_id, "target_id")
+        self.samples = _require_non_negative_int(self.samples, "samples")
+        self.model_loss = _require_finite_number(self.model_loss, "model_loss")
+        self.persistence_loss = _require_finite_number(self.persistence_loss, "persistence_loss")
+        if self.model_loss < 0.0:
+            raise ValueError(f"model_loss must be non-negative, got {self.model_loss}")
+        if self.persistence_loss < 0.0:
+            raise ValueError(f"persistence_loss must be non-negative, got {self.persistence_loss}")
+        self.status = _require_status(self.status)
+
     def observe(
         self, source_previous: float, target_current: float, target_previous: float
     ) -> None:
@@ -117,6 +163,35 @@ class ShadowPrediction:
     @property
     def promotable(self) -> bool:
         return self.status == "supported" and self.samples >= 8 and self.predictive_gain > 0.0
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "samples": self.samples,
+            "model_loss": self.model_loss,
+            "persistence_loss": self.persistence_loss,
+            "status": self.status,
+        }
+
+    @classmethod
+    def restore(cls, payload: Mapping[str, Any]) -> ShadowPrediction:
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"checkpoint payload must be a Mapping, got {type(payload).__name__}")
+        expected_keys = {"source_id", "target_id", "samples", "model_loss", "persistence_loss", "status"}
+        if set(payload.keys()) != expected_keys:
+            raise ValueError(
+                f"checkpoint fields do not match expected schema: expected {sorted(expected_keys)}, got {sorted(payload.keys())}"
+            )
+        return cls(
+            source_id=_require_non_empty_str(payload["source_id"], "source_id"),
+            target_id=_require_non_empty_str(payload["target_id"], "target_id"),
+            samples=_require_non_negative_int(payload["samples"], "samples"),
+            model_loss=_require_finite_number(payload["model_loss"], "model_loss"),
+            persistence_loss=_require_finite_number(payload["persistence_loss"], "persistence_loss"),
+            status=_require_status(payload["status"]),
+        )
+
 
 
 @dataclass(slots=True)
@@ -141,8 +216,20 @@ class LaggedShadowPrediction:
     _target_history: Deque[float] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.source_id = _require_non_empty_str(self.source_id, "source_id")
+        self.target_id = _require_non_empty_str(self.target_id, "target_id")
+        if isinstance(self.lag_ticks, bool) or not isinstance(self.lag_ticks, int):
+            raise ValueError("lag_ticks must be an integer")
         if not 1 <= self.lag_ticks <= 16:
             raise ValueError("lag_ticks must be within [1, 16]")
+        self.samples = _require_non_negative_int(self.samples, "samples")
+        self.model_loss = _require_finite_number(self.model_loss, "model_loss")
+        self.persistence_loss = _require_finite_number(self.persistence_loss, "persistence_loss")
+        if self.model_loss < 0.0:
+            raise ValueError(f"model_loss must be non-negative, got {self.model_loss}")
+        if self.persistence_loss < 0.0:
+            raise ValueError(f"persistence_loss must be non-negative, got {self.persistence_loss}")
+        self.status = _require_status(self.status)
         self._source_history: Deque[float] = deque(maxlen=self.lag_ticks + 1)
         self._target_history: Deque[float] = deque(maxlen=2)
 
@@ -172,6 +259,61 @@ class LaggedShadowPrediction:
     def promotable(self) -> bool:
         return self.status == "supported" and self.samples >= 8 and self.predictive_gain > 0.0
 
+    def checkpoint(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "lag_ticks": self.lag_ticks,
+            "samples": self.samples,
+            "model_loss": self.model_loss,
+            "persistence_loss": self.persistence_loss,
+            "status": self.status,
+            "source_history": list(self._source_history),
+            "target_history": list(self._target_history),
+        }
+
+    @classmethod
+    def restore(cls, payload: Mapping[str, Any]) -> LaggedShadowPrediction:
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"checkpoint payload must be a Mapping, got {type(payload).__name__}")
+        expected_keys = {
+            "source_id",
+            "target_id",
+            "lag_ticks",
+            "samples",
+            "model_loss",
+            "persistence_loss",
+            "status",
+            "source_history",
+            "target_history",
+        }
+        if set(payload.keys()) != expected_keys:
+            raise ValueError(
+                f"checkpoint fields do not match expected schema: expected {sorted(expected_keys)}, got {sorted(payload.keys())}"
+            )
+        instance = cls(
+            source_id=_require_non_empty_str(payload["source_id"], "source_id"),
+            target_id=_require_non_empty_str(payload["target_id"], "target_id"),
+            lag_ticks=payload["lag_ticks"],
+            samples=_require_non_negative_int(payload["samples"], "samples"),
+            model_loss=_require_finite_number(payload["model_loss"], "model_loss"),
+            persistence_loss=_require_finite_number(payload["persistence_loss"], "persistence_loss"),
+            status=_require_status(payload["status"]),
+        )
+        source_hist = payload["source_history"]
+        target_hist = payload["target_history"]
+        if not isinstance(source_hist, list) or not isinstance(target_hist, list):
+            raise ValueError("source_history and target_history must be lists")
+        if len(source_hist) > instance.lag_ticks + 1:
+            raise ValueError("source_history exceeds maximum capacity for lag_ticks")
+        if len(target_hist) > 2:
+            raise ValueError("target_history exceeds maximum capacity")
+        for val in source_hist:
+            instance._source_history.append(_require_finite_number(val, "source_history item"))
+        for val in target_hist:
+            instance._target_history.append(_require_finite_number(val, "target_history item"))
+        return instance
+
 
 @dataclass(slots=True)
 class ComposedShadowPrediction:
@@ -199,8 +341,21 @@ class ComposedShadowPrediction:
     _second_pairs: Deque[tuple[float, float]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.source_id = _require_non_empty_str(self.source_id, "source_id")
+        self.intermediate_id = _require_non_empty_str(self.intermediate_id, "intermediate_id")
+        self.target_id = _require_non_empty_str(self.target_id, "target_id")
+        if isinstance(self.window_ticks, bool) or not isinstance(self.window_ticks, int):
+            raise ValueError("window_ticks must be an integer")
         if not 8 <= self.window_ticks <= 256:
             raise ValueError("window_ticks must be within [8, 256]")
+        self.samples = _require_non_negative_int(self.samples, "samples")
+        self.model_loss = _require_finite_number(self.model_loss, "model_loss")
+        self.persistence_loss = _require_finite_number(self.persistence_loss, "persistence_loss")
+        if self.model_loss < 0.0:
+            raise ValueError(f"model_loss must be non-negative, got {self.model_loss}")
+        if self.persistence_loss < 0.0:
+            raise ValueError(f"persistence_loss must be non-negative, got {self.persistence_loss}")
+        self.status = _require_status(self.status)
         self._source_history = deque(maxlen=3)
         self._intermediate_history = deque(maxlen=2)
         self._target_history = deque(maxlen=2)
@@ -258,3 +413,89 @@ class ComposedShadowPrediction:
     @property
     def promotable(self) -> bool:
         return self.status == "supported" and self.samples >= 8 and self.predictive_gain > 0.0
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "intermediate_id": self.intermediate_id,
+            "target_id": self.target_id,
+            "window_ticks": self.window_ticks,
+            "samples": self.samples,
+            "model_loss": self.model_loss,
+            "persistence_loss": self.persistence_loss,
+            "status": self.status,
+            "source_history": list(self._source_history),
+            "intermediate_history": list(self._intermediate_history),
+            "target_history": list(self._target_history),
+            "first_pairs": [list(p) for p in self._first_pairs],
+            "second_pairs": [list(p) for p in self._second_pairs],
+        }
+
+    @classmethod
+    def restore(cls, payload: Mapping[str, Any]) -> ComposedShadowPrediction:
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"checkpoint payload must be a Mapping, got {type(payload).__name__}")
+        expected_keys = {
+            "source_id",
+            "intermediate_id",
+            "target_id",
+            "window_ticks",
+            "samples",
+            "model_loss",
+            "persistence_loss",
+            "status",
+            "source_history",
+            "intermediate_history",
+            "target_history",
+            "first_pairs",
+            "second_pairs",
+        }
+        if set(payload.keys()) != expected_keys:
+            raise ValueError(
+                f"checkpoint fields do not match expected schema: expected {sorted(expected_keys)}, got {sorted(payload.keys())}"
+            )
+        instance = cls(
+            source_id=_require_non_empty_str(payload["source_id"], "source_id"),
+            intermediate_id=_require_non_empty_str(payload["intermediate_id"], "intermediate_id"),
+            target_id=_require_non_empty_str(payload["target_id"], "target_id"),
+            window_ticks=payload["window_ticks"],
+            samples=_require_non_negative_int(payload["samples"], "samples"),
+            model_loss=_require_finite_number(payload["model_loss"], "model_loss"),
+            persistence_loss=_require_finite_number(payload["persistence_loss"], "persistence_loss"),
+            status=_require_status(payload["status"]),
+        )
+        source_hist = payload["source_history"]
+        inter_hist = payload["intermediate_history"]
+        target_hist = payload["target_history"]
+        first_pairs = payload["first_pairs"]
+        second_pairs = payload["second_pairs"]
+        for name, lst, max_len in (
+            ("source_history", source_hist, 3),
+            ("intermediate_history", inter_hist, 2),
+            ("target_history", target_hist, 2),
+        ):
+            if not isinstance(lst, list):
+                raise ValueError(f"{name} must be a list")
+            if len(lst) > max_len:
+                raise ValueError(f"{name} exceeds maximum capacity")
+
+        for val in source_hist:
+            instance._source_history.append(_require_finite_number(val, "source_history item"))
+        for val in inter_hist:
+            instance._intermediate_history.append(_require_finite_number(val, "intermediate_history item"))
+        for val in target_hist:
+            instance._target_history.append(_require_finite_number(val, "target_history item"))
+
+        for name, pairs in (("first_pairs", first_pairs), ("second_pairs", second_pairs)):
+            if not isinstance(pairs, list):
+                raise ValueError(f"{name} must be a list")
+            if len(pairs) > instance.window_ticks:
+                raise ValueError(f"{name} exceeds window_ticks capacity")
+            for pair in pairs:
+                if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                    raise ValueError(f"{name} items must be 2-element tuples/lists")
+                x = _require_finite_number(pair[0], f"{name} item[0]")
+                y = _require_finite_number(pair[1], f"{name} item[1]")
+                getattr(instance, f"_{name}").append((x, y))
+
+        return instance
