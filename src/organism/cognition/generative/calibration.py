@@ -32,7 +32,7 @@ class PredictionCalibration:
     ) -> None:
         self._validate(model_id, operation, depth, uncertainty)
         key = self._key(model_id, operation, depth, uncertainty)
-        bucket = self._buckets.setdefault(key, [0.0, 0.0, 0.0])
+        bucket = self._buckets.setdefault(key, [0.0, 0.0, 0.0, 0.0])
         bucket[0] += 1
         bucket[2] += uncertainty
 
@@ -48,14 +48,14 @@ class PredictionCalibration:
         self._validate(model_id, operation, depth, uncertainty)
         unit_interval(observed_error, name="observed_error")
         key = self._key(model_id, operation, depth, uncertainty)
-        bucket = self._buckets.setdefault(key, [0.0, 0.0, 0.0])
+        bucket = self._buckets.setdefault(key, [0.0, 0.0, 0.0, 0.0])
         if bucket[1] >= bucket[0]:
             raise ValueError("comparison requires an unpaired prediction in the same bucket")
         bucket[1] += 1
-        bucket.append(observed_error)
+        bucket[3] += observed_error
 
     def checkpoint(self) -> dict[str, object]:
-        """Persist bounded aggregate calibration, never generated trajectories."""
+        """Persist bounded aggregate calibration sufficient statistics, never unbounded lists."""
         return {
             "buckets": [
                 {
@@ -66,7 +66,7 @@ class PredictionCalibration:
                     "prediction_count": int(values[0]),
                     "comparable_count": int(values[1]),
                     "uncertainty_sum": float(values[2]),
-                    "errors": [float(value) for value in values[3:]],
+                    "error_sum": float(values[3]),
                 }
                 for (model_id, operation, depth_bucket, uncertainty_bucket), values in sorted(
                     self._buckets.items(),
@@ -93,10 +93,17 @@ class PredictionCalibration:
         for item in raw_buckets:
             if not isinstance(item, dict):
                 raise ValueError("invalid calibration bucket")
-            if set(item) != {
+            # Support both new bounded shape (error_sum) and historical shape (errors)
+            has_error_sum = "error_sum" in item
+            expected_fields_bounded = {
+                "model_id", "operation", "depth_bucket", "uncertainty_bucket",
+                "prediction_count", "comparable_count", "uncertainty_sum", "error_sum",
+            }
+            expected_fields_legacy = {
                 "model_id", "operation", "depth_bucket", "uncertainty_bucket",
                 "prediction_count", "comparable_count", "uncertainty_sum", "errors",
-            }:
+            }
+            if set(item) != expected_fields_bounded and set(item) != expected_fields_legacy:
                 raise ValueError("invalid calibration bucket shape")
             try:
                 model_id = bounded_identifier(item["model_id"], name="model_id")
@@ -106,9 +113,15 @@ class PredictionCalibration:
                 prediction_count = _required_int(item["prediction_count"], "prediction_count")
                 comparable_count = _required_int(item["comparable_count"], "comparable_count")
                 uncertainty_sum = _required_number(item["uncertainty_sum"], "uncertainty_sum")
-                if not isinstance(item["errors"], list):
-                    raise ValueError("errors must be a list")
-                errors = [_required_number(value, "error") for value in item["errors"]]
+                if has_error_sum:
+                    error_sum = _required_number(item["error_sum"], "error_sum")
+                else:
+                    if not isinstance(item["errors"], list):
+                        raise ValueError("errors must be a list")
+                    legacy_errors = [_required_number(value, "error") for value in item["errors"]]
+                    if len(legacy_errors) != comparable_count or any(not 0.0 <= error <= 1.0 for error in legacy_errors):
+                        raise ValueError("invalid legacy calibration bucket errors")
+                    error_sum = sum(legacy_errors)
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError("invalid calibration bucket") from exc
             if (
@@ -117,9 +130,8 @@ class PredictionCalibration:
                 or prediction_count < 0
                 or comparable_count < 0
                 or comparable_count > prediction_count
-                or len(errors) != comparable_count
                 or not 0.0 <= uncertainty_sum <= float(prediction_count)
-                or any(not 0.0 <= error <= 1.0 for error in errors)
+                or not 0.0 <= error_sum <= float(comparable_count)
             ):
                 raise ValueError("invalid calibration bucket values")
             key = (model_id, operation, depth_bucket, uncertainty_bucket)
@@ -129,7 +141,7 @@ class PredictionCalibration:
                 float(prediction_count),
                 float(comparable_count),
                 uncertainty_sum,
-                *errors,
+                float(error_sum),
             ]
         return obj
 
@@ -138,18 +150,17 @@ class PredictionCalibration:
     ) -> CalibrationBucket:
         self._validate(model_id, operation, depth, uncertainty)
         values = self._buckets.get(
-            self._key(model_id, operation, depth, uncertainty), [0.0, 0.0, 0.0]
+            self._key(model_id, operation, depth, uncertainty), [0.0, 0.0, 0.0, 0.0]
         )
-        prediction_count, comparable_count, uncertainty_sum = values[:3]
-        errors = values[3:]
+        prediction_count, comparable_count, uncertainty_sum, error_sum = values[:4]
         mean_uncertainty = uncertainty_sum / prediction_count if prediction_count else 0.0
-        mean_error = sum(errors) / len(errors) if errors else 0.0
+        mean_error = error_sum / comparable_count if comparable_count else 0.0
         return CalibrationBucket(
             int(prediction_count),
             int(comparable_count),
             mean_uncertainty,
             mean_error,
-            abs(mean_uncertainty - mean_error) if errors else 0.0,
+            abs(mean_uncertainty - mean_error) if comparable_count else 0.0,
         )
 
     @staticmethod
