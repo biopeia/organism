@@ -152,6 +152,90 @@ def test_action_commitment_restore_round_trips_active_and_terminal_state():
     assert ActionCommitment.restore(terminal.checkpoint()).checkpoint() == terminal.checkpoint()
 
 
+_ACTION_COMMITMENT_SCHEMA_KEYS = (
+    "schema_version",
+    "commitment_id",
+    "proposal_id",
+    "effect_target_id",
+    "competence_id",
+    "started_tick",
+    "controller_id",
+    "surface_fingerprint",
+    "embodiment_id",
+    "intent_id",
+    "interruptibility",
+    "minimum_duration",
+    "maximum_duration",
+    "status",
+    "ended_tick",
+    "end_reason",
+)
+
+
+@pytest.mark.parametrize("field", _ACTION_COMMITMENT_SCHEMA_KEYS)
+def test_action_commitment_restore_rejects_omitted_schema_fields(field):
+    payload = _commitment().checkpoint()
+    del payload[field]
+
+    with pytest.raises(ValueError, match="fields do not match"):
+        ActionCommitment.restore(payload)
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "schema_version",
+        "commitment_id",
+        "proposal_id",
+        "started_tick",
+        "controller_id",
+        "surface_fingerprint",
+        "interruptibility",
+        "minimum_duration",
+        "status",
+    ),
+)
+def test_action_commitment_restore_rejects_null_required_fields(field):
+    payload = _commitment().checkpoint()
+    payload[field] = None
+
+    with pytest.raises((TypeError, ValueError)):
+        ActionCommitment.restore(payload)
+
+
+def test_action_commitment_restore_preserves_explicit_nullable_fields():
+    commitment = _commitment(
+        effect_target_id=None,
+        competence_id=None,
+        embodiment_id=None,
+        intent_id=None,
+        maximum_duration=None,
+        ended_tick=None,
+        end_reason=None,
+    )
+    payload = commitment.checkpoint()
+
+    assert ActionCommitment.restore(payload).checkpoint() == payload
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("started_tick", True),
+        ("minimum_duration", 1.5),
+        ("maximum_duration", False),
+        ("interruptibility", True),
+        ("status", "not-a-commitment-status"),
+    ),
+)
+def test_action_commitment_restore_rejects_malformed_required_values(field, value):
+    payload = _commitment().checkpoint()
+    payload[field] = value
+
+    with pytest.raises((TypeError, ValueError)):
+        ActionCommitment.restore(payload)
+
+
 @pytest.mark.parametrize(
     "updates",
     [
