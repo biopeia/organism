@@ -415,3 +415,88 @@ def test_registry_checkpoint_decoder_rejects_previous_schema_without_compatibili
 
     with pytest.raises(InvalidContinuationCheckpoint, match="unsupported canonical registry schema"):
         CanonicalContinuationRegistry.from_bytes(json.dumps(saved).encode())
+
+
+def test_durable_lineage_restart_rejects_stale_predecessor_checkpoint():
+    """Restart within the same durable store lineage rejects stale predecessor checkpoints."""
+    initial = continuation(step=0)
+    step1 = continuation(step=1, state=b"step-1-state")
+    step2 = continuation(step=2, state=b"step-2-state")
+
+    # Initial session publishes genesis and progresses to step 1
+    session1_registry = CanonicalContinuationRegistry()
+    session1_registry.register_genesis(initial)
+    with session1_registry.acquire(initial) as lease:
+        lease.commit(step1)
+
+    # Durable store saves snapshot of session 1
+    durable_store_bytes = session1_registry.to_bytes()
+
+    # Session 2 resumes from the durable store and progresses to step 2
+    session2_registry = CanonicalContinuationRegistry.from_bytes(durable_store_bytes)
+    with session2_registry.acquire(step1) as lease:
+        lease.commit(step2)
+
+    # Updated durable store after session 2 commit
+    updated_durable_store = session2_registry.to_bytes()
+
+    # Session 3 resumes from updated store: attempting to acquire step 0 or step 1 fails cleanly
+    session3_registry = CanonicalContinuationRegistry.from_bytes(updated_durable_store)
+
+    with pytest.raises(StaleCanonicalContinuation, match="not the current canonical continuation state"):
+        session3_registry.acquire(initial)
+
+    with pytest.raises(StaleCanonicalContinuation, match="not the current canonical continuation state"):
+        session3_registry.acquire(step1)
+
+    # Acquiring current step 2 succeeds
+    with session3_registry.acquire(step2) as lease:
+        assert lease.current == step2
+
+
+def test_rejected_acquisition_does_not_mutate_registry_or_owner_state():
+    """Failed acquisition does not leave dangling leases or mutate registry records."""
+    initial = continuation(step=0)
+    registry = CanonicalContinuationRegistry()
+    registry.register_genesis(initial)
+
+    # Progress to step 1
+    step1 = continuation(step=1, state=b"progressed")
+    with registry.acquire(initial) as lease:
+        lease.commit(step1)
+
+    pre_attempt_bytes = registry.to_bytes()
+
+    # Attempt to acquire with invalid/stale state
+    invalid_continuation = continuation(step=99, state=b"forged")
+    with pytest.raises(StaleCanonicalContinuation):
+        registry.acquire(invalid_continuation)
+
+    with pytest.raises(StaleCanonicalContinuation):
+        registry.acquire(initial)
+
+    # Registry state is identical, and step1 can still be cleanly acquired
+    assert registry.to_bytes() == pre_attempt_bytes
+    with registry.acquire(step1) as lease:
+        assert lease.current == step1
+
+
+def test_stale_writer_cannot_commit_after_competing_advancement():
+    """A lease holder that attempts to commit after a competing advancement is rejected."""
+    initial = continuation(step=0)
+    registry = CanonicalContinuationRegistry()
+    registry.register_genesis(initial)
+
+    lease = registry.acquire(initial)
+
+    # Competing modification occurs behind the lease's back
+    competing_step = continuation(step=1, state=b"competing-update")
+    with registry._authority.lock:
+        registry._authority.records[initial.identity] = registry._record(competing_step)
+
+    # Original lease attempts to commit step 1
+    my_step = continuation(step=1, state=b"my-update")
+    with pytest.raises(StaleCanonicalContinuation, match="no longer current"):
+        lease.commit(my_step)
+
+    lease.close()
