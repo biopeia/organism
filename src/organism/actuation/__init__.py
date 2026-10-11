@@ -14,6 +14,10 @@ from .command import motor_command_from_frame
 from .context import ActuatorEvidenceContext
 from .controller import ControllerFrame, SequenceController
 from .domain import ActionDomain, ActionSelection
+from .derivation import (
+    DerivedCompetenceRecord,
+    derive_motor_competence_from_evidence,
+)
 from .pipeline import (
     AdmittedActionPlan,
     ExecutedActionPipelineResult,
@@ -66,6 +70,7 @@ __all__ = [
     "ActionProposal",
     "ActionSelection",
     "ActionSource",
+    "DerivedCompetenceRecord",
     "ExecutedActionPipelineResult",
     "AgencyEstimate",
     "AgencyModel",
@@ -106,5 +111,6 @@ __all__ = [
     "SequentialCompositionEvidence",
     "compose_action_from_admitted_decision",
     "derive_actuator_constitution",
+    "derive_motor_competence_from_evidence",
     "motor_command_from_frame",
 ]
