@@ -117,6 +117,10 @@ class GenerativeScheduler:
         elif self._used.get((tick, mode), 0) >= self._quotas[mode]:
             allowed, reason = False, "mode_quota_exhausted"
         if allowed:
+            # Prune past ticks whose usage can no longer affect decisions
+            self._used = {
+                (t, m): c for (t, m), c in self._used.items() if t >= tick
+            }
             self._used[(tick, mode)] = self._used.get((tick, mode), 0) + 1
         return ScheduleDecision(allowed, mode, tick, reason)
 

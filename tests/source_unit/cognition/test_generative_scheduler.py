@@ -45,3 +45,22 @@ def test_scheduler_fails_closed_without_target_or_budget():
         ).reason
         == "model_budget_exhausted"
     )
+
+
+def test_scheduler_usage_prunes_past_ticks_and_remains_bounded():
+    scheduler = GenerativeScheduler(online_quota=1)
+    for t in range(100):
+        decision = scheduler.schedule(
+            mode=GenerativeMode.ONLINE,
+            tick=t,
+            has_target=True,
+            workspace_open=True,
+            model_queries_remaining=1,
+        )
+        assert decision.allowed is True
+
+    payload = scheduler.checkpoint()
+    # At tick 99, all past ticks < 99 must be pruned, leaving only tick 99
+    assert len(payload["used"]) == 1
+    assert payload["used"][0]["tick"] == 99
+    assert payload["used"][0]["count"] == 1
