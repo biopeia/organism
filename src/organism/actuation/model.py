@@ -10,12 +10,14 @@ to exist first.
 from __future__ import annotations
 
 import hashlib
+import math
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .evidence import CausalEvidence, CausalEvidenceLedger, Opportunities, OpportunityView
+
 
 
 class CausalSourceKind(StrEnum):
@@ -366,6 +368,180 @@ def _dimension_keys(
 MAX_ESTIMATES = 8192
 
 
+def _require_int(
+    value: object,
+    *,
+    field: str,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{field} must be at least {minimum}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{field} must be at most {maximum}")
+    return value
+
+
+def _require_float(
+    value: object,
+    *,
+    field: str,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{field} must be finite")
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{field} must be at least {minimum}")
+    if maximum is not None and number > maximum:
+        raise ValueError(f"{field} must be at most {maximum}")
+    return number
+
+
+def _require_optional_float(
+    value: object,
+    *,
+    field: str,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float | None:
+    if value is None:
+        return None
+    return _require_float(value, field=field, minimum=minimum, maximum=maximum)
+
+
+def _require_str(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} must be a non-empty string")
+    return value
+
+
+def _require_optional_str(value: object, *, field: str) -> str | None:
+    if value is None:
+        return None
+    return _require_str(value, field=field)
+
+
+def _require_causal_source_kind(value: object, *, field: str) -> CausalSourceKind:
+    if not isinstance(value, (str, CausalSourceKind)):
+        raise ValueError(f"{field} must be a valid CausalSourceKind")
+    try:
+        return CausalSourceKind(str(value))
+    except ValueError as exc:
+        raise ValueError(f"invalid {field}: {value!r}") from exc
+
+
+def _restore_controllability_estimate(raw: object) -> ControllabilityEstimate:
+    if not isinstance(raw, Mapping):
+        raise ValueError("invalid controllability estimate entry")
+    expected_fields = {
+        "source_kind",
+        "source_ref",
+        "effect_id",
+        "context_id",
+        "confidence",
+        "reliability",
+        "counterfactual_rate",
+        "causal_advantage",
+        "action_support",
+        "counterfactual_support",
+        "last_updated_tick",
+    }
+    if set(raw) != expected_fields:
+        raise ValueError("invalid controllability estimate fields")
+    source_kind = _require_causal_source_kind(raw["source_kind"], field="source_kind")
+    source_ref = _require_str(raw["source_ref"], field="source_ref")
+    effect_id = _require_str(raw["effect_id"], field="effect_id")
+    context_id = _require_optional_str(raw["context_id"], field="context_id")
+    confidence = _require_float(raw["confidence"], field="confidence", minimum=0.0, maximum=1.0)
+    reliability = _require_float(raw["reliability"], field="reliability", minimum=0.0, maximum=1.0)
+    counterfactual_rate = _require_optional_float(
+        raw["counterfactual_rate"], field="counterfactual_rate", minimum=0.0, maximum=1.0
+    )
+    causal_advantage = _require_optional_float(
+        raw["causal_advantage"], field="causal_advantage", minimum=-1.0, maximum=1.0
+    )
+    action_support = _require_int(raw["action_support"], field="action_support", minimum=0)
+    counterfactual_support = _require_int(
+        raw["counterfactual_support"], field="counterfactual_support", minimum=0
+    )
+    last_updated_tick = _require_int(
+        raw["last_updated_tick"], field="last_updated_tick", minimum=0
+    )
+    return ControllabilityEstimate(
+        source_kind=source_kind,
+        source_ref=source_ref,
+        effect_id=effect_id,
+        context_id=context_id,
+        confidence=confidence,
+        reliability=reliability,
+        counterfactual_rate=counterfactual_rate,
+        causal_advantage=causal_advantage,
+        action_support=action_support,
+        counterfactual_support=counterfactual_support,
+        last_updated_tick=last_updated_tick,
+    )
+
+
+def _restore_agency_estimate(raw: object) -> AgencyEstimate:
+    if not isinstance(raw, Mapping):
+        raise ValueError("invalid agency estimate entry")
+    expected_fields = {
+        "source_kind",
+        "source_ref",
+        "effect_id",
+        "context_id",
+        "confidence",
+        "temporal_contingency",
+        "causal_specificity",
+        "prediction_match",
+        "support",
+        "counterfactual_support",
+        "last_updated_tick",
+    }
+    if set(raw) != expected_fields:
+        raise ValueError("invalid agency estimate fields")
+    source_kind = _require_causal_source_kind(raw["source_kind"], field="source_kind")
+    source_ref = _require_str(raw["source_ref"], field="source_ref")
+    effect_id = _require_str(raw["effect_id"], field="effect_id")
+    context_id = _require_optional_str(raw["context_id"], field="context_id")
+    confidence = _require_float(raw["confidence"], field="confidence", minimum=0.0, maximum=1.0)
+    temporal = _require_float(
+        raw["temporal_contingency"], field="temporal_contingency", minimum=0.0, maximum=1.0
+    )
+    specificity = _require_float(
+        raw["causal_specificity"], field="causal_specificity", minimum=0.0, maximum=1.0
+    )
+    prediction_match = _require_optional_float(
+        raw["prediction_match"], field="prediction_match", minimum=0.0, maximum=1.0
+    )
+    support = _require_int(raw["support"], field="support", minimum=0)
+    counterfactual_support = _require_int(
+        raw["counterfactual_support"], field="counterfactual_support", minimum=0
+    )
+    last_updated_tick = _require_int(
+        raw["last_updated_tick"], field="last_updated_tick", minimum=0
+    )
+    return AgencyEstimate(
+        source_kind=source_kind,
+        source_ref=source_ref,
+        effect_id=effect_id,
+        context_id=context_id,
+        confidence=confidence,
+        temporal_contingency=temporal,
+        causal_specificity=specificity,
+        prediction_match=prediction_match,
+        support=support,
+        counterfactual_support=counterfactual_support,
+        last_updated_tick=last_updated_tick,
+    )
+
+
 class _SourceIndexed:
     """Shared per-source lookup, bound and persistence for estimate registries."""
 
@@ -399,30 +575,57 @@ class _SourceIndexed:
             self._by_source.setdefault((key[0], key[1]), set()).add(key)
             self._by_kind.setdefault(key[0], set()).add(key)
 
-    def checkpoint(self) -> list[dict[str, object]]:
-        return [
-            {
-                field: (value.value if isinstance(value, CausalSourceKind) else value)
-                for field, value in (
-                    (name, getattr(estimate, name))
-                    for name in self._estimate_type.__dataclass_fields__
-                )
-            }
-            for estimate in self.estimates
-        ]
+    def checkpoint(self) -> dict[str, object]:
+        return {
+            "schema_version": getattr(self, "SCHEMA_VERSION", 1),
+            "estimates": [
+                {
+                    field: (value.value if isinstance(value, CausalSourceKind) else value)
+                    for field, value in (
+                        (name, getattr(estimate, name))
+                        for name in self._estimate_type.__dataclass_fields__
+                    )
+                }
+                for estimate in self.estimates
+            ],
+        }
 
     def restore_estimates(self, payload: object) -> None:
-        if not isinstance(payload, list) or len(payload) > MAX_ESTIMATES + MAX_ESTIMATES // 8:
+        if isinstance(payload, Mapping):
+            schema = payload.get("schema_version")
+            expected_schema = getattr(self, "SCHEMA_VERSION", 1)
+            if (
+                isinstance(schema, bool)
+                or not isinstance(schema, int)
+                or schema != expected_schema
+            ):
+                raise ValueError("unsupported causal estimate checkpoint schema")
+            if set(payload) != {"schema_version", "estimates"}:
+                raise ValueError("invalid causal estimate checkpoint fields")
+            raw_items = payload["estimates"]
+        elif isinstance(payload, list):
+            raw_items = payload
+        else:
             raise ValueError("invalid or unbounded causal estimate table")
+
+        if not isinstance(raw_items, list) or len(raw_items) > MAX_ESTIMATES + MAX_ESTIMATES // 8:
+            raise ValueError("invalid or unbounded causal estimate table")
+
         self._estimates = {}
         self._by_source = {}
         self._by_kind = {}
-        for raw in payload:
-            if not isinstance(raw, Mapping):
-                raise ValueError("invalid causal estimate")
-            values = dict(raw)
-            values["source_kind"] = CausalSourceKind(str(values["source_kind"]))
-            estimate = self._estimate_type(**values)
+        for raw in raw_items:
+            if self._estimate_type is ControllabilityEstimate:
+                estimate = _restore_controllability_estimate(raw)
+            elif self._estimate_type is AgencyEstimate:
+                estimate = _restore_agency_estimate(raw)
+            else:
+                if not isinstance(raw, Mapping):
+                    raise ValueError("invalid causal estimate")
+                values = dict(raw)
+                values["source_kind"] = CausalSourceKind(str(values["source_kind"]))
+                estimate = self._estimate_type(**values)
+
             self._store(
                 (
                     estimate.source_kind,
@@ -438,6 +641,7 @@ class _SourceIndexed:
         return tuple(
             self._estimates[key] for key in sorted(keys, key=lambda k: (k[1], k[2], k[3] or ""))
         )
+
 
     def __len__(self) -> int:
         return len(self._estimates)
@@ -484,7 +688,15 @@ class ControllabilityEstimate:
 class ControllabilityModel(_SourceIndexed):
     """Infer control only when intervention evidence beats alternatives."""
 
+    SCHEMA_VERSION = 1
     _estimate_type = ControllabilityEstimate
+
+    @classmethod
+    def restore(cls, payload: object) -> "ControllabilityModel":
+        model = cls()
+        model.restore_estimates(payload)
+        return model
+
 
     def __init__(self) -> None:
         self._estimates: dict[_Key, ControllabilityEstimate] = {}
@@ -600,7 +812,15 @@ class AgencyModel(_SourceIndexed):
     estimate is zero whatever the prediction agreement.
     """
 
+    SCHEMA_VERSION = 1
     _estimate_type = AgencyEstimate
+
+    @classmethod
+    def restore(cls, payload: object) -> "AgencyModel":
+        model = cls()
+        model.restore_estimates(payload)
+        return model
+
 
     def __init__(self) -> None:
         self._estimates: dict[_Key, AgencyEstimate] = {}

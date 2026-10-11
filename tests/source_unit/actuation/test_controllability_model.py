@@ -480,3 +480,177 @@ def test_real_ledger_rejects_passive_window_overlapping_an_active_command():
     assert estimate.counterfactual_support == 0
     assert estimate.counterfactual_rate is None
     assert estimate.confidence == 0.0
+
+
+def test_controllability_model_checkpoint_and_restore_roundtrip():
+    model = ControllabilityModel()
+    ledger = CausalEvidenceLedger(capacity=16, passive_capacity=16)
+    _record_action(
+        ledger,
+        signature="signature.a",
+        commitment="commitment.a",
+        effect="effect.shared",
+        tick=0,
+    )
+    _record_passive(ledger, effect=None, tick=1)
+    est = model.update_from_ledger(
+        ledger,
+        source_kind=CausalSourceKind.INTERVENTION,
+        source_ref="signature.a",
+        effect_id="effect.shared",
+        context_id=None,
+        tick=2,
+    )
+
+    checkpoint = model.checkpoint()
+    assert checkpoint["schema_version"] == ControllabilityModel.SCHEMA_VERSION
+    assert len(checkpoint["estimates"]) == 1
+    assert checkpoint["estimates"][0]["source_ref"] == "signature.a"
+    assert checkpoint["estimates"][0]["reliability"] == est.reliability
+
+    restored = ControllabilityModel.restore(checkpoint)
+    assert len(restored) == 1
+    restored_est = restored.estimate(
+        source_kind=CausalSourceKind.INTERVENTION,
+        source_ref="signature.a",
+        effect_id="effect.shared",
+        context_id=None,
+    )
+    assert restored_est == est
+    assert restored.for_source(CausalSourceKind.INTERVENTION, "signature.a") == (est,)
+    assert restored.estimates_for(CausalSourceKind.INTERVENTION) == (est,)
+
+    # Direct restore_estimates with raw list should also work
+    model2 = ControllabilityModel()
+    model2.restore_estimates(checkpoint["estimates"])
+    assert model2.estimate(
+        source_kind=CausalSourceKind.INTERVENTION,
+        source_ref="signature.a",
+        effect_id="effect.shared",
+        context_id=None,
+    ) == est
+
+
+def test_agency_model_checkpoint_and_restore_roundtrip():
+    model = AgencyModel()
+    ledger = CausalEvidenceLedger(capacity=16, passive_capacity=16)
+    _record_action(
+        ledger,
+        signature="signature.a",
+        commitment="commitment.a",
+        effect="effect.shared",
+        tick=0,
+    )
+    _record_passive(ledger, effect=None, tick=1)
+    est = model.update_from_ledger(
+        ledger,
+        source_kind=CausalSourceKind.INTERVENTION,
+        source_ref="signature.a",
+        effect_id="effect.shared",
+        context_id=None,
+        tick=2,
+        prediction_match=0.9,
+    )
+
+    checkpoint = model.checkpoint()
+    assert checkpoint["schema_version"] == AgencyModel.SCHEMA_VERSION
+    assert len(checkpoint["estimates"]) == 1
+    assert checkpoint["estimates"][0]["source_ref"] == "signature.a"
+    assert checkpoint["estimates"][0]["confidence"] == est.confidence
+
+    restored = AgencyModel.restore(checkpoint)
+    assert len(restored) == 1
+    restored_est = restored.estimate(
+        source_kind=CausalSourceKind.INTERVENTION,
+        source_ref="signature.a",
+        effect_id="effect.shared",
+        context_id=None,
+    )
+    assert restored_est == est
+    assert restored.for_source(CausalSourceKind.INTERVENTION, "signature.a") == (est,)
+    assert restored.estimates_for(CausalSourceKind.INTERVENTION) == (est,)
+
+    # Direct restore_estimates with raw list
+    model2 = AgencyModel()
+    model2.restore_estimates(checkpoint["estimates"])
+    assert model2.estimate(
+        source_kind=CausalSourceKind.INTERVENTION,
+        source_ref="signature.a",
+        effect_id="effect.shared",
+        context_id=None,
+    ) == est
+
+
+def test_controllability_and_agency_restore_fail_closed_validation():
+    # Unsupported schema version
+    with pytest.raises(ValueError, match="unsupported causal estimate checkpoint schema"):
+        ControllabilityModel.restore({"schema_version": 999, "estimates": []})
+
+    with pytest.raises(ValueError, match="unsupported causal estimate checkpoint schema"):
+        ControllabilityModel.restore({"schema_version": True, "estimates": []})
+
+    with pytest.raises(ValueError, match="invalid causal estimate checkpoint fields"):
+        ControllabilityModel.restore({"schema_version": 1, "estimates": [], "extra": 123})
+
+    with pytest.raises(ValueError, match="invalid or unbounded causal estimate table"):
+        ControllabilityModel.restore("not-a-dict")
+
+    # Controllability estimate validation errors
+    valid_ctrl = {
+        "source_kind": "intervention",
+        "source_ref": "sig.1",
+        "effect_id": "eff.1",
+        "context_id": None,
+        "confidence": 0.5,
+        "reliability": 0.8,
+        "counterfactual_rate": 0.1,
+        "causal_advantage": 0.7,
+        "action_support": 10,
+        "counterfactual_support": 8,
+        "last_updated_tick": 4,
+    }
+
+    # Missing field
+    bad_fields = dict(valid_ctrl)
+    del bad_fields["confidence"]
+    with pytest.raises(ValueError, match="invalid controllability estimate fields"):
+        ControllabilityModel.restore({"schema_version": 1, "estimates": [bad_fields]})
+
+    # Out of bounds confidence
+    bad_conf = dict(valid_ctrl, confidence=1.5)
+    with pytest.raises(ValueError, match="confidence must be at most 1.0"):
+        ControllabilityModel.restore({"schema_version": 1, "estimates": [bad_conf]})
+
+    # Non-finite number
+    bad_rel = dict(valid_ctrl, reliability=float("nan"))
+    with pytest.raises(ValueError, match="reliability must be finite"):
+        ControllabilityModel.restore({"schema_version": 1, "estimates": [bad_rel]})
+
+    # Invalid source kind
+    bad_kind = dict(valid_ctrl, source_kind="unknown_kind")
+    with pytest.raises(ValueError, match="invalid source_kind"):
+        ControllabilityModel.restore({"schema_version": 1, "estimates": [bad_kind]})
+
+    # Agency estimate validation errors
+    valid_agency = {
+        "source_kind": "competence",
+        "source_ref": "comp.1",
+        "effect_id": "eff.1",
+        "context_id": "ctx.1",
+        "confidence": 0.6,
+        "temporal_contingency": 0.8,
+        "causal_specificity": 0.5,
+        "prediction_match": 0.9,
+        "support": 12,
+        "counterfactual_support": 10,
+        "last_updated_tick": 5,
+    }
+
+    bad_agency_fields = dict(valid_agency)
+    del bad_agency_fields["temporal_contingency"]
+    with pytest.raises(ValueError, match="invalid agency estimate fields"):
+        AgencyModel.restore({"schema_version": 1, "estimates": [bad_agency_fields]})
+
+    bad_agency_spec = dict(valid_agency, causal_specificity=-0.1)
+    with pytest.raises(ValueError, match="causal_specificity must be at least 0.0"):
+        AgencyModel.restore({"schema_version": 1, "estimates": [bad_agency_spec]})
