@@ -1581,7 +1581,9 @@ class CompetenceDevelopmentEngine:
         organism_id: str,
         embodiment_fingerprint: str | None = None,
         expected_max_concurrent: int | None = None,
+        gate: CompetenceGate = DEFAULT_COMPETENCE_GATE,
     ) -> "CompetenceDevelopmentEngine":
+
         schema = _require_int(
             payload.get("schema_version", -1),
             field="sensorimotor schema_version",
@@ -2087,7 +2089,10 @@ class CompetenceDevelopmentEngine:
         learner.primitives_pressure = CapacityPressure.restore(
             payload.get("primitives_pressure"), capacity=_MAX_PRIMITIVES
         )
+        if gate is not DEFAULT_COMPETENCE_GATE:
+            learner.set_gate(gate)
         return learner
+
 
     @property
     def historical_primitive_candidate_ids(self) -> tuple[str, ...]:

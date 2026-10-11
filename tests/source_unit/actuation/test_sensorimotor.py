@@ -6,7 +6,7 @@ import random
 import pytest
 
 import organism.actuation.sensorimotor as sensorimotor_module
-from organism.actuation.competence import CompetenceMaturity
+from organism.actuation.competence import CompetenceGate, CompetenceMaturity
 from organism.actuation.sensorimotor import CompetenceDevelopmentEngine, MotorPrimitive
 
 
@@ -468,6 +468,30 @@ def test_restore_rejects_max_concurrent_mismatch_and_invalid_checkpoint_value():
             organism_id="org-config-mismatch",
             embodiment_fingerprint=_test_embodiment_fingerprint("org-config-mismatch", ids),
         )
+
+
+def test_checkpoint_restore_preserves_non_default_competence_gate():
+    ids = _ids(6)
+    custom_gate = CompetenceGate(min_support=5, min_consistency=0.85)
+    learner = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-custom-gate",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-custom-gate", ids),
+    )
+    learner.set_gate(custom_gate)
+    assert learner.gate == custom_gate
+
+    payload = learner.checkpoint()
+    restored = CompetenceDevelopmentEngine.restore(
+        payload,
+        actuator_ids=ids,
+        organism_id="org-custom-gate",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-custom-gate", ids),
+        gate=custom_gate,
+    )
+    assert restored.gate == custom_gate
+    assert all(p.gate == custom_gate for p in restored.primitives)
+
 
 
 def test_cognitive_primitive_replays_only_learned_motor_pattern():
