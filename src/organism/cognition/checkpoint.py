@@ -217,9 +217,9 @@ def export_safety_state(state: SafetyState) -> dict[str, Any]:
     return {"consecutive_failures": state.consecutive_failures, "frozen": state.frozen}
 
 
-def restore_safety_state(payload: dict[str, Any] | None) -> SafetyState:
+def restore_safety_state(payload: dict[str, Any] | None) -> SafetyState | None:
     if payload is None:
-        return SafetyState()
+        return None
     if not isinstance(payload, dict):
         raise GraphError("safety_state checkpoint must be an object")
     if set(payload) != {"consecutive_failures", "frozen"}:
