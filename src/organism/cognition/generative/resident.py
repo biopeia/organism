@@ -49,7 +49,7 @@ from .types import (
 )
 from .workspace import GenerativeWorkspace
 
-RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 4
+RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 5
 
 
 def _contains_model_reference(value: object) -> bool:
@@ -271,6 +271,7 @@ class ResidentGenerativeCognition:
             "reconciliation_count": self.reconciliation_count,
             "contradicted_hypothesis_count": self.contradicted_hypothesis_count,
             "factual_contamination_count": self.factual_contamination_count,
+            "agenda_overflow_count": self.agenda_overflow_count,
         }
 
     @classmethod
@@ -298,6 +299,7 @@ class ResidentGenerativeCognition:
                 "generative_use",
                 "reconciliation_count", "contradicted_hypothesis_count",
                 "factual_contamination_count",
+                "agenda_overflow_count",
             }
             or type(payload["schema_version"]) is not int
             or payload["schema_version"] != RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION
@@ -350,16 +352,19 @@ class ResidentGenerativeCognition:
             raw_reconciliations = payload["reconciliation_count"]
             raw_contradicted = payload["contradicted_hypothesis_count"]
             raw_contamination = payload["factual_contamination_count"]
+            raw_overflow = payload["agenda_overflow_count"]
             for name, value in (
                 ("reconciliation_count", raw_reconciliations),
                 ("contradicted_hypothesis_count", raw_contradicted),
                 ("factual_contamination_count", raw_contamination),
+                ("agenda_overflow_count", raw_overflow),
             ):
                 if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                     raise ValueError(f"invalid {name}")
             resident.reconciliation_count = raw_reconciliations
             resident.contradicted_hypothesis_count = raw_contradicted
             resident.factual_contamination_count = raw_contamination
+            resident.agenda_overflow_count = raw_overflow
 
             raw_hypotheses = payload["hypotheses"]
             if not isinstance(raw_hypotheses, list) or len(raw_hypotheses) > 128:
