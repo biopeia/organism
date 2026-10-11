@@ -110,3 +110,55 @@ The overall payload remains explicitly bounded, not a complete Organism continua
 - `src/organism/memory/experience.py`
 - `src/organism/cognition/generative/{resident,agenda,scheduler,workspace,persistence,calibration,consolidation,hypothesis,types}.py`
 - `src/organism/genetics/{checkpoint,genome,germline,expression,schema}.py`
+
+## Additional TARGET restore entry points inventoried at the current base
+
+The following production decoder/restore entry points are outside the bounded
+`CognitiveRuntimeCheckpoint` graph above. This list records entry points found
+in the current TARGET source tree; it does not claim that their complete owner
+state is composed into one portable continuation. Field classifications are
+recorded here only for the `ActionCommitment` slice covered below. The remaining
+entries still require contract-backed field inventories before their restore
+coverage can be considered complete.
+
+| Source | Restore entry point | Inventory status |
+|---|---|---|
+| `src/organism/checkpoint.py` | `OrganismCheckpoint.from_bytes` | Separate envelope/dependency-reference contract; not reclassified here. |
+| `src/organism/transition.py` | `OrganismTransitionState.from_bytes` | Separate transition-state envelope; not reclassified here. |
+| `src/organism/continuation.py` | `OrganismContinuation.from_bytes`; `CanonicalContinuationRegistry.from_bytes` | Separate continuation/registry envelopes; not reclassified here. |
+| `src/organism/capacity.py` | `CapacityPressure.restore` | Component entry point; not reclassified here. |
+| `src/organism/provenance.py` | `ProvenanceLog.restore` | Component entry point; not reclassified here. |
+| `src/organism/memory/experience.py` | `ExperienceRecord.restore` | Component entry point; not reclassified here. |
+| `src/organism/memory/ledger.py` | `ExperienceLedger.restore` | Component entry point; not reclassified here. |
+| `src/organism/actuation/commitment.py` | `ActionCommitment.restore` | Bounded required/null/malformed/round-trip test slice in this change. |
+| `src/organism/actuation/{binding,evidence,composition,dimension,effects,footprint,intervention,sensorimotor}.py` | Component `restore` methods | Entry points found; per-component field inventory remains outstanding. `CausalEvidenceLedger.restore` is in `evidence.py`. |
+| `src/organism/agency/{executive_outcome,intention,value}.py` | Component `restore` methods | Entry points found; per-component field inventory remains outstanding. |
+| `src/organism/agency/prospective.py` | `ProspectiveAgency.restore` | Entry point found; per-component field inventory remains outstanding. |
+| `src/organism/cognition/generative/persistence.py` | `restore` | Entry point found; per-component field inventory remains outstanding. |
+| `src/organism/genetics/checkpoint.py` | checkpoint/genetic restore functions | Entry points found; matrix above covers the cognitive-runtime genetic trio only. |
+
+### `ActionCommitment.restore` bounded field contract
+
+At the current source base, the writer `ActionCommitment.checkpoint()` emits
+exactly the 16 keys listed in `ActionCommitment.restore`; the decoder rejects
+missing and unknown keys. The following keys are explicitly nullable in the
+writer/type contract and still must be present:
+
+```text
+effect_target_id, competence_id, embodiment_id, intent_id,
+maximum_duration, ended_tick, end_reason
+```
+
+The remaining keys are present and non-null in the current writer contract.
+Restore validates schema version, identifier/value types, tick/duration types,
+status, and active-versus-terminal fields. Tests exercise omitted required
+keys, null for required keys, malformed values, preservation of explicit nulls
+for nullable fields, and exact round-trip controls for active and terminal
+commitments. This is a test-coverage slice; it does not change the decoder or
+assert that every persisted Organism component is covered.
+
+This additional entry-point list is a scoped inventory of symbols identified
+during this slice, not proof that every restore method in the repository has
+been enumerated. It does not
+import or translate legacy checkpoint fields, and it does not resolve the
+separate semantic disposition of historical time names.
