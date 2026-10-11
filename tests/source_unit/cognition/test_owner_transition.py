@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from organism import (
+    CheckpointDependency,
     EmbodimentContextRef,
     OrganismCheckpoint,
     OrganismIdentity,
@@ -22,6 +23,7 @@ from organism.cognition import (
     SenseProvenance,
     advance_organism_from_sense_signals,
 )
+from organism.cognition.portable_checkpoint import CognitiveRuntimeCheckpointError
 from organism.cognition.graph import CognitiveGraph, PlasticEdge, PlasticNode
 from organism.cognition.limits import KernelLimits
 from organism.cognition.sense_input import (
@@ -134,6 +136,33 @@ def test_accepted_cognition_state_round_trips_with_transition_counter() -> None:
     activations = dict(runtime.state.previous_activations)
     assert activations["private.state"] == pytest.approx(0.6351489523872873)
     assert activations["sense.channel"] == pytest.approx(0.75)
+
+
+def test_accepted_transition_declares_no_external_owner_dependencies() -> None:
+    result = _advance(_current(), _provenance())
+
+    assert result.state.owner_checkpoint.dependencies == ()
+    owner_payload = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+        result.state.owner_checkpoint, kernel_limits=LIMITS
+    )
+    assert owner_payload.state.last_causal_tick == 10
+
+
+def test_caller_dependencies_cannot_be_carried_into_next_owner_step() -> None:
+    current = _current()
+    forged = OrganismCheckpoint(
+        current.identity,
+        current.owner_checkpoint.private_state,
+        (CheckpointDependency("models/unverified", "0" * 64),),
+    )
+    current = replace(current, owner_checkpoint=forged)
+    before = current.to_bytes()
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="do not match"):
+        _advance(current, _provenance())
+
+    assert current.to_bytes() == before
+    assert current.organism_step == 4
 
 
 def test_mismatched_signal_is_rejected_without_publishing_or_incrementing() -> None:

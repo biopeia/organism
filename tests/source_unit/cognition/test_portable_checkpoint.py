@@ -13,6 +13,7 @@ from organism.cognition.generative import (
     GenerativeTarget,
     ResidentGenerativeCognition,
 )
+from organism.cognition.generative.adapters import EpisodicReplayAdapter
 from organism.cognition.generative.registry import GenerativeModelRegistry
 from organism.cognition.graph import CognitiveGraph, PlasticEdge, PlasticNode
 from organism.cognition.limits import KernelLimits
@@ -189,18 +190,20 @@ def test_portable_checkpoint_preserves_unestablished_normalizer_continuation() -
         )
 
 
-def test_portable_checkpoint_schema_v6_is_not_accepted_as_a_current_payload() -> None:
+@pytest.mark.parametrize("prior_version", [6, 7])
+def test_prior_portable_checkpoint_schemas_are_not_accepted(prior_version: int) -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
-    document["schema_version"] = 6
+    document["schema_version"] = prior_version
     with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
         CognitiveRuntimeCheckpoint.from_bytes(
             json.dumps(document).encode(), kernel_limits=KernelLimits()
         )
 
 
-def test_portable_checkpoint_rejects_non_integer_schema_version() -> None:
+@pytest.mark.parametrize("invalid_version", [8.0, True])
+def test_portable_checkpoint_rejects_non_integer_schema_version(invalid_version: object) -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
-    document["schema_version"] = 6.0
+    document["schema_version"] = invalid_version
 
     with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported"):
         CognitiveRuntimeCheckpoint.from_bytes(
@@ -423,7 +426,7 @@ def test_portable_checkpoint_round_trips_explicit_generative_resident_state() ->
     assert restored.generative_resident.agenda.targets == resident.agenda.targets
 
 
-def test_portable_checkpoint_restore_uses_explicit_external_model_registry() -> None:
+def test_portable_checkpoint_restores_with_explicit_empty_model_registry() -> None:
     resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
     registry = GenerativeModelRegistry()
     payload = CognitiveRuntimeCheckpoint(
@@ -472,40 +475,66 @@ def test_cognitive_checkpoint_requires_experience_records_in_current_schema() ->
         )
 
 
-def test_organism_checkpoint_restore_requires_and_verifies_dependency_closure() -> None:
+def test_owner_payload_rejects_caller_declared_dependencies() -> None:
     artifact = b"private learned model fixture"
-    checkpoint = CognitiveRuntimeCheckpoint(_state(), _graph()).to_organism_checkpoint(
-        dependencies=(
-            CheckpointDependency("models/model-1", sha256(artifact).hexdigest()),
-        )
+    checkpoint = CognitiveRuntimeCheckpoint(_state(), _graph()).to_organism_checkpoint()
+    assert checkpoint.dependencies == ()
+    extra = type(checkpoint)(
+        checkpoint.identity,
+        checkpoint.private_state,
+        (CheckpointDependency("models/model-1", sha256(artifact).hexdigest()),),
     )
 
-    with pytest.raises(CognitiveRuntimeCheckpointError, match="resolver is required"):
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="do not match"):
         CognitiveRuntimeCheckpoint.from_organism_checkpoint(
-            checkpoint, kernel_limits=KernelLimits()
+            extra, kernel_limits=KernelLimits()
         )
-
-    def missing_dependency(_locator: str) -> bytes:
-        raise FileNotFoundError("not present")
-
-    with pytest.raises(CognitiveRuntimeCheckpointError, match="closure is invalid"):
-        CognitiveRuntimeCheckpoint.from_organism_checkpoint(
-            checkpoint,
-            kernel_limits=KernelLimits(),
-            read_dependency=missing_dependency,
-        )
-
-    with pytest.raises(CognitiveRuntimeCheckpointError, match="closure is invalid"):
-        CognitiveRuntimeCheckpoint.from_organism_checkpoint(
-            checkpoint,
-            kernel_limits=KernelLimits(),
-            read_dependency=lambda _locator: b"wrong content",
-        )
-
     restored = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
-        checkpoint,
-        kernel_limits=KernelLimits(),
-        read_dependency=lambda locator: artifact if locator == "models/model-1" else b"",
+        checkpoint, kernel_limits=KernelLimits()
     )
     assert restored.state.identity == checkpoint.identity
-    assert restored.graph is not None
+
+
+def test_owner_payload_rejects_undeclared_external_generative_state() -> None:
+    resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
+    resident.register_model(EpisodicReplayAdapter("model-1", projector=lambda _context: ()))
+    runtime = CognitiveRuntimeCheckpoint(_state(), _graph(), generative_resident=resident)
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="external generative dependencies"):
+        runtime.to_organism_checkpoint()
+
+    resident.registry.unregister("model-1")
+    resident.set_factual_evidence_resolver(lambda _ref: True)
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="external generative dependencies"):
+        runtime.to_bytes()
+
+
+def test_owner_payload_rejects_injected_registry() -> None:
+    resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
+    runtime = CognitiveRuntimeCheckpoint(_state(), _graph(), generative_resident=resident)
+    checkpoint = runtime.to_organism_checkpoint()
+    registry = GenerativeModelRegistry()
+    registry.register(EpisodicReplayAdapter("model-1", projector=lambda _context: ()))
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="external generative dependencies"):
+        CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+            checkpoint, kernel_limits=KernelLimits(), generative_registry=registry
+        )
+
+
+@pytest.mark.parametrize("invalid_closure", [None, False, 0, "", {}, [1], [{"locator": "x"}]])
+def test_owner_payload_rejects_unsupported_dependency_manifest(invalid_closure: object) -> None:
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    document["dependency_closure"] = invalid_closure
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="unsupported external dependency"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
+
+def test_owner_payload_requires_dependency_manifest() -> None:
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+
+    del document["dependency_closure"]
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="shape"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )

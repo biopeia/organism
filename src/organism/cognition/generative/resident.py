@@ -184,6 +184,11 @@ class ResidentGenerativeCognition:
             raise ValueError("factual evidence resolver must be callable")
         self._factual_evidence_resolver = resolver
 
+    @property
+    def has_external_runtime_dependencies(self) -> bool:
+        """Whether this resident needs capabilities absent from its durable payload."""
+        return bool(self.registry.model_ids) or self._factual_evidence_resolver is not None
+
     def checkpoint(self) -> dict[str, object]:
         """Persist durable resident GC state without persisting model owners."""
         return {

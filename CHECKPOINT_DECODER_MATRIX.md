@@ -2,18 +2,19 @@
 
 ## Scope and status
 
-This inventory describes the current TARGET `CognitiveRuntimeCheckpoint` writer/decoder graph at implementation base `2ab8775440b94675551bfbd6993afd56df63ba4d` (2026-10-10). It is a decoder-field inventory, not a claim that this bounded payload is the complete Organism continuation checkpoint. It does not authorize compatibility with historical Symbiont payloads and does not rename or map any time field.
+This inventory describes the TARGET `CognitiveRuntimeCheckpoint` writer/decoder graph, originally inventoried at implementation base `2ab8775440b94675551bfbd6993afd56df63ba4d` (2026-10-10) and updated for the bounded owner-dependency-closure slice. It is a decoder-field inventory, not a claim that this bounded payload is the complete Organism continuation checkpoint. It does not authorize compatibility with historical Symbiont payloads and does not rename or map any time field.
 
 “Required” means the key is required by the current decoder, including when its value is explicitly `null`. “Explicitly nullable” means the writer/decoder supports a present key whose value is `null`; it never means the key may be omitted. Empty collections are noted separately. Value constraints remain those enforced by each listed decoder and its domain types.
 
-## Root payload: `biopeia.organism.cognitive-runtime`, version 7
+## Root payload: `biopeia.organism.cognitive-runtime`, version 8
 
-All twelve keys below are required, with no unknown keys accepted.
+All thirteen keys below are required, with no unknown keys accepted.
 
 | Key | Required value / supported absence representation |
 |---|---|
 | `schema` | Exact string `biopeia.organism.cognitive-runtime`; required, non-null. |
-| `schema_version` | Exact integer `7` (booleans rejected); required, non-null. |
+| `schema_version` | Exact integer `8` (booleans rejected); required, non-null. |
+| `dependency_closure` | Required empty list. This bounded owner payload supports no external runtime dependencies; registered generative models and factual-evidence resolvers are rejected rather than represented by caller-supplied envelope references. |
 | `identity` | Required parseable `OrganismIdentity`; non-null. |
 | `transition` | Required `CognitiveTransitionState` payload; non-null. |
 | `graph` | Required graph payload; `null` is rejected by the composed decoder. |
