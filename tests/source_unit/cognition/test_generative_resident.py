@@ -145,6 +145,27 @@ def test_resident_checkpoint_rejects_pre_hypothesis_continuation_schema() -> Non
         ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
 
 
+def test_resident_checkpoint_rejects_pre_overflow_count_schema() -> None:
+    checkpoint = ResidentGenerativeCognition(organism_id="organism.restore").checkpoint()
+    checkpoint["schema_version"] = 4
+    del checkpoint["agenda_overflow_count"]
+
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
+
+
+def test_resident_checkpoint_preserves_agenda_overflow_count_exactly() -> None:
+    resident = ResidentGenerativeCognition(organism_id="organism.restore")
+    resident.agenda_overflow_count = 7
+
+    checkpoint = resident.checkpoint()
+    assert checkpoint["schema_version"] == 5
+    assert checkpoint["agenda_overflow_count"] == 7
+
+    restored = ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
+    assert restored.agenda_overflow_count == 7
+
+
 def test_resident_checkpoint_preserves_effective_budget_and_rejects_conflicting_override() -> None:
     budget = GenerativeBudget(
         max_states=4,
