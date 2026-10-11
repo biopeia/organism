@@ -226,10 +226,8 @@ from organism.cognition.checkpoint import export_safety_state, restore_safety_st
 from organism.cognition.metaplasticity import SafetyState
 
 
-def test_safety_state_none_round_trips_to_a_fresh_state():
-    restored = restore_safety_state(None)
-    assert restored.consecutive_failures == 0
-    assert not restored.frozen
+def test_safety_state_none_remains_explicitly_absent():
+    assert restore_safety_state(None) is None
 
 
 def test_frozen_safety_state_survives_round_trip():

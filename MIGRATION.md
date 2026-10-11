@@ -969,3 +969,13 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - This owner payload now declares an exact, required, empty external dependency closure. It is portable only for the self-contained subset it can prove. Serialization rejects a resident with registered generative models or an external factual-evidence resolver; restoration rejects injected registered models, nonempty owner closure, and caller-supplied envelope dependencies. The canonical owner transition no longer carries unverified references into the next checkpoint.
 - Validation: `tests/source_unit/cognition/test_portable_checkpoint.py` and `test_owner_transition.py` cover self-contained round-trip, undeclared runtime-capability rejection, injected registry rejection, malformed or missing owner closure, and rejection of unverified references without advancing the Organism step. Schema version 8 is strict; older payloads are not accepted. Exact-head CI and adversarial review are required before merge.
 - Limitations: this does not serialize or recover model objects, prove model artifact binding, verify any external owner-required blob, or establish the complete Organism private-state closure. A capability that needs such an external dependency is explicitly unsupported by this bounded codec. Issue #33 and parent #34 remain open for complete owner declaration and portable continuation; no claim of full continuation is made.
+
+
+## Incremental correction: preserve explicit-null safety state (issue #60)
+
+- Implementation base: `biopeia/organism@c34147afa7f83b3fbd036861c356215aef576092` (after PR #99).
+- Source provenance: the historical checkpoint implementation at `symbiont/src/symbiont/cognition/checkpoint.py` is provenance only; this is a TARGET decoder correction and does not copy source behavior.
+- Finding: the bounded v8 cognitive checkpoint contract explicitly permits `safety_state: null` and preserves it as `None`, but direct `restore_safety_state(None)` instead fabricated a fresh `SafetyState`. The composed decoder avoided the inconsistency with its own null branch, leaving the component decoder's behavior divergent.
+- Disposition: `REWRITE` of the existing TARGET decoder only. Explicit null remains valid and is now preserved; no absent key, default state, or legacy compatibility behavior is introduced.
+- Target paths: `src/organism/cognition/checkpoint.py::restore_safety_state`; `tests/source_unit/cognition/test_graph_checkpoint.py`.
+- Validation: direct null preservation and existing non-null round-trip/invalid-field tests. This addresses only the direct component decoder semantic mismatch; it does not close issue #60 or establish complete Organism checkpoint continuity. No historical `symbiont-lab` files are changed.
