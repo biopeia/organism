@@ -37,6 +37,30 @@ class StructuralPlasticity:
         self._motor_association_counts: dict[tuple[str, str], int] = {}
         self._cooldown_until: dict[str, int] = {}
 
+    @property
+    def min_candidate_support(self) -> int:
+        return self._min_candidate_support
+
+    @property
+    def tentative_lifetime_ticks(self) -> int:
+        return self._tentative_lifetime_ticks
+
+    @property
+    def cooldown_ticks(self) -> int:
+        return self._cooldown_ticks
+
+    @property
+    def coactivation_counts(self) -> dict[tuple[str, str], int]:
+        return dict(self._coactivation_counts)
+
+    @property
+    def motor_association_counts(self) -> dict[tuple[str, str], int]:
+        return dict(self._motor_association_counts)
+
+    @property
+    def cooldown_until(self) -> dict[str, int]:
+        return dict(self._cooldown_until)
+
     def reconcile(self, allowed_node_ids: Collection[str]) -> None:
         """Drop tracked state referencing nodes that no longer exist."""
         allowed = set(allowed_node_ids)
@@ -111,6 +135,9 @@ class StructuralPlasticity:
     def export_checkpoint(self) -> dict[str, object]:
         """Persist only bounded structural evidence, never activations."""
         return {
+            "min_candidate_support": self._min_candidate_support,
+            "tentative_lifetime_ticks": self._tentative_lifetime_ticks,
+            "cooldown_ticks": self._cooldown_ticks,
             "coactivation_counts": [
                 {"source_id": source_id, "target_id": target_id, "count": count}
                 for (source_id, target_id), count in sorted(self._coactivation_counts.items())
@@ -129,22 +156,54 @@ class StructuralPlasticity:
         cls,
         payload: Mapping[str, object] | None,
         *,
-        min_candidate_support: int,
-        tentative_lifetime_ticks: int,
-        cooldown_ticks: int,
+        min_candidate_support: int | None = None,
+        tentative_lifetime_ticks: int | None = None,
+        cooldown_ticks: int | None = None,
         allowed_node_ids: Collection[str],
     ) -> "StructuralPlasticity":
-        model = cls(
-            min_candidate_support=min_candidate_support,
-            tentative_lifetime_ticks=tentative_lifetime_ticks,
-            cooldown_ticks=cooldown_ticks,
-        )
         if not isinstance(payload, Mapping):
             raise ValueError("structural plasticity checkpoint must be an object")
-        if set(payload) != {
-            "coactivation_counts", "motor_association_counts", "cooldown_until"
-        }:
+
+        payload_keys = set(payload)
+        base_keys = {"coactivation_counts", "motor_association_counts", "cooldown_until"}
+        config_keys = {"min_candidate_support", "tentative_lifetime_ticks", "cooldown_ticks"}
+
+        if payload_keys == base_keys:
+            # Legacy payload format: requires all config values explicitly supplied
+            if min_candidate_support is None or tentative_lifetime_ticks is None or cooldown_ticks is None:
+                raise ValueError("configuration parameters required when restoring legacy structural plasticity checkpoint")
+            eff_min_candidate_support = min_candidate_support
+            eff_tentative_lifetime_ticks = tentative_lifetime_ticks
+            eff_cooldown_ticks = cooldown_ticks
+        elif payload_keys == base_keys | config_keys:
+            raw_min = payload["min_candidate_support"]
+            raw_tent = payload["tentative_lifetime_ticks"]
+            raw_cool = payload["cooldown_ticks"]
+            for name, val in (
+                ("min_candidate_support", raw_min),
+                ("tentative_lifetime_ticks", raw_tent),
+                ("cooldown_ticks", raw_cool),
+            ):
+                if isinstance(val, bool) or not isinstance(val, int):
+                    raise ValueError(f"{name} must be an integer")
+            if min_candidate_support is not None and min_candidate_support != raw_min:
+                raise ValueError("min_candidate_support conflicts with checkpoint value")
+            if tentative_lifetime_ticks is not None and tentative_lifetime_ticks != raw_tent:
+                raise ValueError("tentative_lifetime_ticks conflicts with checkpoint value")
+            if cooldown_ticks is not None and cooldown_ticks != raw_cool:
+                raise ValueError("cooldown_ticks conflicts with checkpoint value")
+            eff_min_candidate_support = raw_min
+            eff_tentative_lifetime_ticks = raw_tent
+            eff_cooldown_ticks = raw_cool
+        else:
             raise ValueError("structural plasticity checkpoint fields do not match the current schema")
+
+        model = cls(
+            min_candidate_support=eff_min_candidate_support,
+            tentative_lifetime_ticks=eff_tentative_lifetime_ticks,
+            cooldown_ticks=eff_cooldown_ticks,
+        )
+
 
         allowed = set(allowed_node_ids)
         raw_counts = payload["coactivation_counts"]
