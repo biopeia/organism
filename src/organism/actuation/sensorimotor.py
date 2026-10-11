@@ -210,6 +210,9 @@ class MotorPrimitive:
     samples: int
     effect_mean: float
     effect_variance: float
+    # Motor-effect quality/strength measure derived from learned effect
+    # statistics (mean effect x reproducibility x directional consistency).
+    # Not causal confidence.
     controllability: float
     directional_consistency: float
     # Organism configuration, not evidence: never checkpointed with the primitive.

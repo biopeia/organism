@@ -92,9 +92,10 @@ class AffordanceResolver:
             context_ref=context_ref,
             embodiment_id=embodiment_id,
             prediction_confidence=max(0.0, min(1.0, prediction_confidence)),
-            controllability=(
-                control.confidence if control is not None else binding.controllability
-            ),
+            # Execution binding quality is not evidence of causal control.
+            # An absent causal estimate is explicitly unknown/zero here; do
+            # not substitute a differently-owned metric.
+            controllability=control.confidence if control is not None else 0.0,
             executability_confidence=binding.reliability,
             prediction_ref=prediction_ref,
             evidence_refs=binding.evidence_refs[-8:],
