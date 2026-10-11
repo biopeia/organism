@@ -45,6 +45,7 @@ class CompetenceExecutionBinding:
     effect_id: str
     evidence_refs: tuple[str, ...]
     reliability: float
+    # Binding/execution metric supplied by owner contract; not a causal estimate.
     controllability: float
     last_evidence_tick: int
     status: BindingStatus = BindingStatus.VALID

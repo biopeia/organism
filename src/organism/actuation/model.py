@@ -138,16 +138,40 @@ _Key = tuple[CausalSourceKind, str, str, str | None]
 def controllability_confidence(
     action_n: int, action_hits: int, other_n: int, other_hits: int
 ) -> float:
-    """Intervention reliability beyond the alternative rate, times support."""
-    # Owner-ratified evidence invariant: a causal-confidence value cannot be
-    # positive without any action-linked observation of the effect.  In
-    # particular, absence of alternatives is not itself evidence of control.
+    """Evidence-grounded causal controllability confidence in range [0.0, 1.0].
+
+    Controllability confidence measures causal attribution: the extent to which
+    an action source reliably causes an observed effect above the background or
+    alternative rate.
+
+    Specification & Invariants:
+    - Input parameters:
+      * ``action_n``: Total intervention opportunities observed for the source.
+      * ``action_hits``: Successful occurrences of the effect under this source.
+      * ``other_n``: Total comparison/alternative windows in the evidence ledger.
+      * ``other_hits``: Occurrences of the effect during alternative windows.
+    - Zero-evidence floor: If ``action_n <= 0`` or ``action_hits <= 0``, returns
+      ``0.0``. Absence of alternatives or passive silence is never evidence of
+      control without positive action-linked observation.
+    - Reliability: Evaluated as empirical hit rate ``action_hits / action_n``.
+    - Uncontrasted baseline (``other_n == 0``): When no alternative or passive
+      observations exist, causal attribution is uncontrasted. Confidence is
+      bounded by a provisional ceiling (0.25) and scaled jointly by reliability
+      and action evidence support: ``0.25 * reliability * min(1.0, action_hits / 8.0)``.
+    - Contrasted baseline (``other_n > 0``): Causal advantage is evaluated
+      against alternative occurrence rate:
+      ``advantage = reliability - (other_hits / other_n)``.
+      Support weighting saturates at 8 observations across both intervention and
+      alternative evidence:
+      ``support = min(1.0, min(action_n, other_n) / 8.0)``.
+      Confidence is clamped to ``[0.0, 1.0]``: ``max(0.0, min(1.0, advantage * support))``.
+    """
     if action_n <= 0 or action_hits <= 0:
         return 0.0
-    reliability = action_hits / action_n if action_n else 0.0
-    if other_n == 0:
-        return min(0.25, action_n / 32.0)
-    advantage = reliability - other_hits / other_n
+    reliability = action_hits / action_n
+    if other_n <= 0:
+        return max(0.0, min(0.25, 0.25 * reliability * min(1.0, action_hits / 8.0)))
+    advantage = reliability - (other_hits / other_n)
     support = min(1.0, min(action_n, other_n) / 8.0)
     return max(0.0, min(1.0, advantage * support))
 
