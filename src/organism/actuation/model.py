@@ -105,7 +105,7 @@ class CompetenceEffectModel:
         )
 
 
-def source_opportunities(
+def controllability_source_opportunities(
     ledger: OpportunityView,
     *,
     source_kind: CausalSourceKind,
@@ -114,7 +114,50 @@ def source_opportunities(
     context_id: str | None,
     dimension_signature_refs: tuple[str, ...] | None = None,
 ) -> Opportunities:
-    """Intervention-versus-alternative opportunities for any causal source."""
+    """Return source-specific actions against explicit passive windows.
+
+    Other active sources remain available in the ledger but are not a no-action
+    counterfactual. Returned counts are retained-row counts, not independent
+    trials; unattributable rows are excluded by the ledger.
+    """
+    if source_kind is CausalSourceKind.COMPETENCE:
+        return ledger.controllability_opportunities(
+            effect_id,
+            field="competence_id",
+            values=(source_ref,),
+            context_ref=context_id,
+        )
+    if source_kind is CausalSourceKind.INTERVENTION:
+        return ledger.controllability_opportunities(
+            effect_id,
+            field="intervention_signature_id",
+            values=(source_ref,),
+            context_ref=context_id,
+        )
+    if not dimension_signature_refs:
+        raise ValueError("dimension opportunities require its intervention families")
+    return ledger.controllability_opportunities(
+        effect_id,
+        field="intervention_signature_id",
+        values=dimension_signature_refs,
+        context_ref=context_id,
+    )
+
+
+def agency_source_opportunities(
+    ledger: OpportunityView,
+    *,
+    source_kind: CausalSourceKind,
+    source_ref: str,
+    effect_id: str,
+    context_id: str | None,
+    dimension_signature_refs: tuple[str, ...] | None = None,
+) -> Opportunities:
+    """Preserve Agency's existing intervention-versus-alternatives semantics.
+
+    Controllability's stricter passive-baseline attribution is intentionally
+    separate: changing that estimator must not silently redefine Agency.
+    """
     if source_kind is CausalSourceKind.COMPETENCE:
         return ledger.effect_opportunities(
             effect_id, competence_id=source_ref, context_ref=context_id
@@ -140,9 +183,12 @@ def controllability_confidence(
 ) -> float:
     """Evidence-grounded causal controllability confidence in range [0.0, 1.0].
 
-    Controllability confidence measures causal attribution: the extent to which
-    an action source reliably causes an observed effect above the background or
-    alternative rate.
+    This bounded score is not a calibrated probability or scientific causal
+    identification. Action and comparison denominators are retained evidence
+    rows: source rows for the selected action and exact-context passive windows
+    for comparison. The ledger excludes co-issued or overlapping active rows
+    that cannot be attributed to one source. Repeated rows can share a
+    commitment and are not asserted to be independent trials.
 
     Specification & Invariants:
     - Input parameters:
@@ -154,10 +200,9 @@ def controllability_confidence(
       ``0.0``. Absence of alternatives or passive silence is never evidence of
       control without positive action-linked observation.
     - Reliability: Evaluated as empirical hit rate ``action_hits / action_n``.
-    - Uncontrasted baseline (``other_n == 0``): When no alternative or passive
-      observations exist, causal attribution is uncontrasted. Confidence is
-      bounded by a provisional ceiling (0.25) and scaled jointly by reliability
-      and action evidence support: ``0.25 * reliability * min(1.0, action_hits / 8.0)``.
+    - No comparable passive baseline (``other_n == 0``): causal contrast is not
+      estimable, so confidence is zero. Action reliability remains available as
+      a descriptive rate but is not causal attribution.
     - Contrasted baseline (``other_n > 0``): Causal advantage is evaluated
       against alternative occurrence rate:
       ``advantage = reliability - (other_hits / other_n)``.
@@ -168,9 +213,9 @@ def controllability_confidence(
     """
     if action_n <= 0 or action_hits <= 0:
         return 0.0
-    reliability = action_hits / action_n
     if other_n <= 0:
-        return max(0.0, min(0.25, 0.25 * reliability * min(1.0, action_hits / 8.0)))
+        return 0.0
+    reliability = action_hits / action_n
     advantage = reliability - (other_hits / other_n)
     support = min(1.0, min(action_n, other_n) / 8.0)
     return max(0.0, min(1.0, advantage * support))
@@ -378,7 +423,7 @@ class ControllabilityModel(_SourceIndexed):
         tick: int,
         dimension_signature_refs: tuple[str, ...] | None = None,
     ) -> ControllabilityEstimate:
-        action_n, action_hits, other_n, other_hits = source_opportunities(
+        action_n, action_hits, other_n, other_hits = controllability_source_opportunities(
             ledger,
             source_kind=source_kind,
             source_ref=source_ref,
@@ -495,7 +540,7 @@ class AgencyModel(_SourceIndexed):
         prediction_match: float | None,
         dimension_signature_refs: tuple[str, ...] | None = None,
     ) -> AgencyEstimate:
-        action_n, action_hits, other_n, other_hits = source_opportunities(
+        action_n, action_hits, other_n, other_hits = agency_source_opportunities(
             ledger,
             source_kind=source_kind,
             source_ref=source_ref,
