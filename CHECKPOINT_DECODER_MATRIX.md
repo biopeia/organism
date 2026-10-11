@@ -131,7 +131,7 @@ coverage can be considered complete.
 | `src/organism/memory/experience.py` | `ExperienceRecord.restore` | Component entry point; not reclassified here. |
 | `src/organism/memory/ledger.py` | `ExperienceLedger.restore` | Component entry point; not reclassified here. |
 | `src/organism/actuation/commitment.py` | `ActionCommitment.restore` | Bounded required/null/malformed/round-trip test slice in this change. |
-| `src/organism/actuation/{binding,causal_evidence,composition,dimension,effects,footprint,intervention,sensorimotor}.py` | Component `restore` methods | Entry points found; per-component field inventory remains outstanding. |
+| `src/organism/actuation/{binding,evidence,composition,dimension,effects,footprint,intervention,sensorimotor}.py` | Component `restore` methods | Entry points found; per-component field inventory remains outstanding. `CausalEvidenceLedger.restore` is in `evidence.py`. |
 | `src/organism/agency/{executive_outcome,intention,value}.py` | Component `restore` methods | Entry points found; per-component field inventory remains outstanding. |
 | `src/organism/agency/prospective.py` | `ProspectiveAgency.restore` | Entry point found; per-component field inventory remains outstanding. |
 | `src/organism/cognition/generative/persistence.py` | `restore` | Entry point found; per-component field inventory remains outstanding. |
@@ -157,6 +157,8 @@ for nullable fields, and exact round-trip controls for active and terminal
 commitments. This is a test-coverage slice; it does not change the decoder or
 assert that every persisted Organism component is covered.
 
-The inventory is intentionally bounded to current TARGET symbols. It does not
+This additional entry-point list is a scoped inventory of symbols identified
+during this slice, not proof that every restore method in the repository has
+been enumerated. It does not
 import or translate legacy checkpoint fields, and it does not resolve the
 separate semantic disposition of historical time names.

@@ -181,6 +181,14 @@ def test_action_commitment_restore_rejects_omitted_schema_fields(field):
         ActionCommitment.restore(payload)
 
 
+def test_action_commitment_restore_rejects_unknown_schema_fields():
+    payload = _commitment().checkpoint()
+    payload["unexpected"] = "not part of this schema"
+
+    with pytest.raises(ValueError, match="fields do not match"):
+        ActionCommitment.restore(payload)
+
+
 @pytest.mark.parametrize(
     "field",
     (
