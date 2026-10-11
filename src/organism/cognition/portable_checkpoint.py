@@ -9,13 +9,9 @@ It is not a complete cognition or Organism checkpoint.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from organism.checkpoint import (
-    CheckpointDependency,
-    CheckpointDependencyMismatch,
-    MissingCheckpointDependency,
     OrganismCheckpoint,
 )
 from organism.genetics import GeneExpressionState, Genome, GermlineState
@@ -89,10 +85,10 @@ class CognitiveRuntimeCheckpoint:
 
     This payload includes only explicitly supplied state. The genome, germline
     and expression state are an all-or-none unit. A generative resident
-    contributes its durable state, but its model registry and transient
-    factual-evidence resolver are not captured. Restore callers must provide
-    model owners separately when that capability is required. This is not a
-    complete Organism checkpoint.
+    contributes its durable state only when it has no active external model
+    registration or factual-evidence resolver. Those capabilities have no
+    verified artifact binding and cannot be declared portable here. This is
+    not a complete Organism checkpoint.
     """
 
     state: CognitiveTransitionState
@@ -170,9 +166,19 @@ class CognitiveRuntimeCheckpoint:
         # Nested germline/expression values are mutable; revalidate the actual
         # snapshot being serialized instead of trusting construction-time state.
         _validate_genetic_state(self.genome, self.germline_state, self.expression_state)
+        if (
+            self.generative_resident is not None
+            and self.generative_resident.has_external_runtime_dependencies
+        ):
+            raise CognitiveRuntimeCheckpointError(
+                "portable checkpoint does not support external generative dependencies"
+            )
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
-            "schema_version": 7,
+            "schema_version": 8,
+            # This owner payload supports only the self-contained subset.
+            # External model objects and factual resolvers are rejected above.
+            "dependency_closure": [],
             "identity": str(self.state.identity),
             "transition": self.state.checkpoint_payload(),
             "graph": export_graph_checkpoint(self.graph),
@@ -223,14 +229,27 @@ class CognitiveRuntimeCheckpoint:
                 "genome",
                 "germline_state",
                 "expression_state",
+                "dependency_closure",
             }:
                 raise CognitiveRuntimeCheckpointError("invalid cognitive runtime checkpoint shape")
             if (
                 document["schema"] != "biopeia.organism.cognitive-runtime"
                 or type(document["schema_version"]) is not int
-                or document["schema_version"] != 7
+                or document["schema_version"] != 8
             ):
                 raise CognitiveRuntimeCheckpointError("unsupported cognitive runtime checkpoint")
+            if document["dependency_closure"] != []:
+                raise CognitiveRuntimeCheckpointError(
+                    "unsupported external dependency closure in cognitive checkpoint"
+                )
+            if (
+                document["generative_resident"] is not None
+                and generative_registry is not None
+                and generative_registry.model_ids
+            ):
+                raise CognitiveRuntimeCheckpointError(
+                    "portable checkpoint does not support external generative dependencies"
+                )
             identity = OrganismIdentity.parse(document["identity"])
             state = CognitiveTransitionState.from_checkpoint_payload(document["transition"])
             if state.identity != identity:
@@ -255,6 +274,13 @@ class CognitiveRuntimeCheckpoint:
                     registry=generative_registry,
                 )
             )
+            if (
+                generative_resident is not None
+                and generative_resident.has_external_runtime_dependencies
+            ):
+                raise CognitiveRuntimeCheckpointError(
+                    "portable checkpoint contains external generative dependencies"
+                )
             raw_genome = document["genome"]
             raw_germline = document["germline_state"]
             raw_expression = document["expression_state"]
@@ -305,11 +331,9 @@ class CognitiveRuntimeCheckpoint:
                 CognitiveTransitionError) as exc:
             raise CognitiveRuntimeCheckpointError("malformed cognitive runtime checkpoint") from exc
 
-    def to_organism_checkpoint(
-        self, *, dependencies: tuple[CheckpointDependency, ...] = ()
-    ) -> OrganismCheckpoint:
-        """Wrap this owner payload in the generic Organism checkpoint envelope."""
-        return OrganismCheckpoint(self.state.identity, self.to_bytes(), dependencies)
+    def to_organism_checkpoint(self) -> OrganismCheckpoint:
+        """Wrap the supported self-contained owner payload without caller refs."""
+        return OrganismCheckpoint(self.state.identity, self.to_bytes(), ())
 
     @classmethod
     def from_organism_checkpoint(
@@ -317,29 +341,15 @@ class CognitiveRuntimeCheckpoint:
         checkpoint: OrganismCheckpoint,
         *,
         kernel_limits: KernelLimits,
-        read_dependency: Callable[[str], bytes] | None = None,
         generative_registry: GenerativeModelRegistry | None = None,
         running_version: tuple[int, int, int] | None = None,
         genome_schema: GenomeSchema = DEFAULT_GENOME_SCHEMA,
     ) -> CognitiveRuntimeCheckpoint:
-        """Restore the composed payload after validating declared dependencies.
-
-        Dependency references are part of the checkpoint's portability closure.
-        A caller restoring an envelope with references must provide a resolver;
-        silently ignoring those references could accept an incomplete
-        continuation.
-        """
+        """Restore only this owner's explicitly self-contained payload subset."""
         if checkpoint.dependencies:
-            if read_dependency is None:
-                raise CognitiveRuntimeCheckpointError(
-                    "dependency resolver is required for referenced Organism state"
-                )
-            try:
-                checkpoint.verify_dependency_closure(read_dependency)
-            except (MissingCheckpointDependency, CheckpointDependencyMismatch) as exc:
-                raise CognitiveRuntimeCheckpointError(
-                    "Organism checkpoint dependency closure is invalid"
-                ) from exc
+            raise CognitiveRuntimeCheckpointError(
+                "envelope dependencies do not match the supported owner payload"
+            )
         restored = cls.from_bytes(
             checkpoint.private_state,
             kernel_limits=kernel_limits,

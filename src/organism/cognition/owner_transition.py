@@ -8,7 +8,6 @@ Organism dependency closure.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Callable
 
 from organism.checkpoint import OrganismCheckpoint
 from organism.transition import (
@@ -47,7 +46,6 @@ def advance_organism_from_sense_signals(
     *,
     expected_provenance: SenseProvenance,
     kernel_limits: KernelLimits,
-    read_dependency: Callable[[str], bytes] | None = None,
     generative_registry: GenerativeModelRegistry | None = None,
     running_version: tuple[int, int, int] | None = None,
     learning: tuple[EdgeLearningInstruction, ...] = (),
@@ -84,7 +82,6 @@ def advance_organism_from_sense_signals(
     runtime = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
         current.owner_checkpoint,
         kernel_limits=kernel_limits,
-        read_dependency=read_dependency,
         generative_registry=generative_registry,
         running_version=running_version,
     )
@@ -101,9 +98,7 @@ def advance_organism_from_sense_signals(
         state=composition.state,
         graph=composition.graph,
     )
-    next_checkpoint = next_runtime.to_organism_checkpoint(
-        dependencies=current.owner_checkpoint.dependencies
-    )
+    next_checkpoint = next_runtime.to_organism_checkpoint()
     proposal = OrganismTransitionProposal(
         owner_checkpoint=next_checkpoint,
         embodiment=current.embodiment,
