@@ -1,9 +1,10 @@
 """Organism-owned continuation identity and process-local canonical authority.
 
-The registry is an in-memory compare-and-commit guard. Its durable snapshot may
-be stored by an Organism owner, but this implementation does not coordinate
-separate processes or copied stores and must not be treated as global identity
-uniqueness.
+The registry coordinates repeated restores of the same serialized authority
+lineage within a process, including stale-snapshot rejection after registry
+objects are collected. Durable storage must still provide cross-process
+compare-and-commit, and independent/copied authorities are not globally
+coordinated.
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ import binascii
 from dataclasses import dataclass
 import json
 from threading import RLock
-from uuid import UUID
+from uuid import UUID, uuid4
+from weakref import WeakValueDictionary
 
 from .checkpoint import InvalidOrganismCheckpoint, OrganismCheckpoint
 from .identity import OrganismIdentity
@@ -164,25 +166,87 @@ class _CanonicalRecord:
     state_sha256: str
 
 
-class CanonicalContinuationRegistry:
-    """Single-instance canonical registry with one live lease per identity.
+class _RegistryAuthority:
+    """Live process-local state for one serialized owner-store lineage."""
 
-    The lock serializes operations on this registry object only. A deployment
-    requiring cross-process safety must atomically persist/update its authority
-    state and perform compare-and-commit there.
+    def __init__(self, records: dict[OrganismIdentity, _CanonicalRecord] | None = None) -> None:
+        self.records = records if records is not None else {}
+        self.active: set[OrganismIdentity] = set()
+        self.lock = RLock()
+
+
+_authority_cache_lock = RLock()
+_authority_cache: WeakValueDictionary[UUID, _RegistryAuthority] = WeakValueDictionary()
+# Retain only a compact fingerprint after a live registry is collected. This
+# prevents an old snapshot from recreating stale process-local authority without
+# retaining every registry's records for the process lifetime.
+_authority_fingerprints: dict[UUID, str] = {}
+
+
+def _records_fingerprint(records: dict[OrganismIdentity, _CanonicalRecord]) -> str:
+    canonical = [
+        [str(identity), str(record.continuation_id), record.organism_step, record.state_sha256]
+        for identity, record in sorted(records.items(), key=lambda item: str(item[0]))
+    ]
+    payload = json.dumps(canonical, separators=(",", ":")).encode("utf-8")
+    return _sha256(payload)
+
+
+def _attach_registry_authority(
+    authority_id: UUID,
+    records: dict[OrganismIdentity, _CanonicalRecord] | None = None,
+) -> _RegistryAuthority:
+    """Share live state for repeated restores of the same store in this process."""
+    with _authority_cache_lock:
+        existing = _authority_cache.get(authority_id)
+        if existing is None:
+            restored_records = records if records is not None else {}
+            fingerprint = _records_fingerprint(restored_records)
+            known_fingerprint = _authority_fingerprints.get(authority_id)
+            if known_fingerprint is not None and fingerprint != known_fingerprint:
+                raise StaleCanonicalContinuation(
+                    "serialized registry does not match current process authority state"
+                )
+            _authority_fingerprints[authority_id] = fingerprint
+            authority = _RegistryAuthority(restored_records)
+            _authority_cache[authority_id] = authority
+            return authority
+
+    # Do not acquire an authority lock while holding the cache lock: state
+    # mutations take the authority lock before refreshing the fingerprint.
+    if records is not None:
+        with existing.lock:
+            if existing.records != records:
+                raise StaleCanonicalContinuation(
+                    "serialized registry does not match current process authority state"
+                )
+    return existing
+
+
+def _remember_registry_authority(authority_id: UUID, authority: _RegistryAuthority) -> None:
+    with _authority_cache_lock:
+        _authority_fingerprints[authority_id] = _records_fingerprint(authority.records)
+
+
+class CanonicalContinuationRegistry:
+    """Process-local canonical registry with one live lease per store lineage.
+
+    Repeated restores of one serialized owner store share live state in this
+    Python process. A compact fingerprint remains after collection so stale
+    snapshots cannot recreate old authority. The durable owner store must still
+    perform atomic compare-and-commit for cross-process safety.
     """
 
     def __init__(self) -> None:
-        self._records: dict[OrganismIdentity, _CanonicalRecord] = {}
-        self._active: set[OrganismIdentity] = set()
-        self._lock = RLock()
+        self._authority_id = uuid4()
+        self._authority = _attach_registry_authority(self._authority_id)
 
     SCHEMA = "biopeia.organism-canonical-continuations"
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def to_bytes(self) -> bytes:
         """Serialize owner registry state, not a portable authority token."""
-        with self._lock:
+        with self._authority.lock:
             records = [
                 {
                     "organism_id": str(identity),
@@ -190,10 +254,16 @@ class CanonicalContinuationRegistry:
                     "organism_step": record.organism_step,
                     "state_sha256": record.state_sha256,
                 }
-                for identity, record in sorted(self._records.items(), key=lambda item: str(item[0]))
+                for identity, record in sorted(self._authority.records.items(), key=lambda item: str(item[0]))
             ]
+            _remember_registry_authority(self._authority_id, self._authority)
         return json.dumps(
-            {"schema": self.SCHEMA, "schema_version": self.SCHEMA_VERSION, "records": records},
+            {
+                "schema": self.SCHEMA,
+                "schema_version": self.SCHEMA_VERSION,
+                "authority_id": str(self._authority_id),
+                "records": records,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -203,13 +273,16 @@ class CanonicalContinuationRegistry:
         """Restore owner registry state; caller must load it from its authority store."""
         try:
             doc = json.loads(payload)
-            if not isinstance(doc, dict) or set(doc) != {"schema", "schema_version", "records"}:
+            if not isinstance(doc, dict) or set(doc) != {
+                "schema", "schema_version", "authority_id", "records"
+            }:
                 raise InvalidContinuationCheckpoint("canonical registry has an invalid shape")
             if doc["schema"] != cls.SCHEMA or type(doc["schema_version"]) is not int or doc["schema_version"] != cls.SCHEMA_VERSION:
                 raise InvalidContinuationCheckpoint("unsupported canonical registry schema")
             if not isinstance(doc["records"], list):
                 raise InvalidContinuationCheckpoint("canonical registry records must be a list")
-            registry = cls()
+            authority_id = UUID(doc["authority_id"])
+            records: dict[OrganismIdentity, _CanonicalRecord] = {}
             for raw in doc["records"]:
                 if not isinstance(raw, dict) or set(raw) != {
                     "organism_id", "continuation_id", "organism_step", "state_sha256"
@@ -222,27 +295,31 @@ class CanonicalContinuationRegistry:
                     raise InvalidContinuationCheckpoint("canonical registry step must be non-negative")
                 if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
                     raise InvalidContinuationCheckpoint("canonical registry digest must be SHA-256")
-                if identity in registry._records:
+                if identity in records:
                     raise InvalidContinuationCheckpoint("duplicate Organism identity in canonical registry")
-                registry._records[identity] = _CanonicalRecord(
+                records[identity] = _CanonicalRecord(
                     ContinuationId.parse(raw["continuation_id"]), step, digest
                 )
+            registry = cls.__new__(cls)
+            registry._authority_id = authority_id
+            registry._authority = _attach_registry_authority(authority_id, records)
             return registry
-        except InvalidContinuationCheckpoint:
+        except (InvalidContinuationCheckpoint, StaleCanonicalContinuation):
             raise
         except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
             raise InvalidContinuationCheckpoint("canonical registry is malformed") from exc
 
     def register_genesis(self, candidate: OrganismContinuation) -> None:
         """Install an explicitly authorized initial continuation."""
-        with self._lock:
-            if candidate.identity in self._records:
+        with self._authority.lock:
+            if candidate.identity in self._authority.records:
                 raise DuplicateCanonicalContinuation("Organism identity is already registered")
             if candidate.ancestry is not None:
                 raise ContinuationError("genesis continuation cannot carry branch ancestry")
             if candidate.organism_step != 0:
                 raise ContinuationError("genesis continuation must start at Organism step zero")
-            self._records[candidate.identity] = self._record(candidate)
+            self._authority.records[candidate.identity] = self._record(candidate)
+            _remember_registry_authority(self._authority_id, self._authority)
 
     def designate_branch_from(
         self, candidate: OrganismContinuation, *, source: OrganismContinuation
@@ -252,7 +329,7 @@ class CanonicalContinuationRegistry:
         This checks consistency, not authenticity. Durable owner storage must
         authorize the source and atomically record the resulting identity.
         """
-        with self._lock:
+        with self._authority.lock:
             ancestry = candidate.ancestry
             if ancestry is None:
                 raise ContinuationError("branch designation requires explicit ancestry")
@@ -264,25 +341,26 @@ class CanonicalContinuationRegistry:
                 raise ContinuationError("branch ancestry step does not match source")
             if ancestry.source_checkpoint_sha256 != _sha256(source.state.owner_checkpoint.to_bytes()):
                 raise ContinuationError("branch ancestry checkpoint digest does not match source")
-            if candidate.identity in self._records:
+            if candidate.identity in self._authority.records:
                 raise DuplicateCanonicalContinuation("branch Organism identity is already registered")
-            self._records[candidate.identity] = self._record(candidate)
+            self._authority.records[candidate.identity] = self._record(candidate)
+            _remember_registry_authority(self._authority_id, self._authority)
 
     def acquire(self, candidate: OrganismContinuation) -> "CanonicalContinuationLease":
         """Open only the exact latest state and refuse duplicate live restores."""
-        with self._lock:
-            record = self._records.get(candidate.identity)
+        with self._authority.lock:
+            record = self._authority.records.get(candidate.identity)
             if record is None or not self._matches(record, candidate):
                 raise StaleCanonicalContinuation("checkpoint is not the current canonical continuation state")
-            if candidate.identity in self._active:
+            if candidate.identity in self._authority.active:
                 raise DuplicateCanonicalContinuation("canonical continuation is already live")
-            self._active.add(candidate.identity)
+            self._authority.active.add(candidate.identity)
             return CanonicalContinuationLease(self, candidate)
 
     def _commit(self, current: OrganismContinuation, proposed: OrganismContinuation) -> None:
-        with self._lock:
-            record = self._records.get(current.identity)
-            if current.identity not in self._active or record is None or not self._matches(record, current):
+        with self._authority.lock:
+            record = self._authority.records.get(current.identity)
+            if current.identity not in self._authority.active or record is None or not self._matches(record, current):
                 raise StaleCanonicalContinuation("expected canonical continuation is no longer current")
             if proposed.identity != current.identity or proposed.continuation_id != current.continuation_id:
                 raise ContinuationError("canonical advancement must preserve identity and continuation_id")
@@ -313,11 +391,12 @@ class CanonicalContinuationRegistry:
             )
             if not (ordinary or lifecycle_only):
                 raise ContinuationError("canonical commit must be one active step or one lifecycle transition")
-            self._records[current.identity] = self._record(proposed)
+            self._authority.records[current.identity] = self._record(proposed)
+            _remember_registry_authority(self._authority_id, self._authority)
 
     def _release(self, identity: OrganismIdentity) -> None:
-        with self._lock:
-            self._active.discard(identity)
+        with self._authority.lock:
+            self._authority.active.discard(identity)
 
     @staticmethod
     def _record(candidate: OrganismContinuation) -> _CanonicalRecord:
