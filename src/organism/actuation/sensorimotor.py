@@ -16,7 +16,7 @@ from .competence import (
 from .types import MotorIntent
 
 _HORIZONS = (1, 4, 16, 64)
-SENSORIMOTOR_SCHEMA_VERSION = 12
+SENSORIMOTOR_SCHEMA_VERSION = 13
 _PRIMITIVE_TICKS = 4
 # Evidence independence and spontaneous motor persistence are distinct clocks.
 # An evidence block must be short enough to reject overlapping samples, while a
@@ -104,7 +104,7 @@ def _sequence_payload(sequence: MotorSequence) -> list[list[list[object]]]:
 def _restore_sequence(
     payload: object,
     *,
-    allowed_ids: set[str],
+    allowed_ids: set[str] | None,
 ) -> MotorSequence:
     if not isinstance(payload, list):
         raise ValueError("invalid motor sequence")
@@ -138,7 +138,8 @@ def _restore_sequence(
             or len(pattern) != len(raw_pattern)
             or len(set(actuator_ids)) != len(actuator_ids)
             or any(
-                actuator_id not in allowed_ids or not 0 <= level <= 7
+                (allowed_ids is not None and actuator_id not in allowed_ids)
+                or not 0 <= level <= 7
                 for actuator_id, level in pattern
             )
         ):
@@ -501,6 +502,7 @@ class CompetenceDevelopmentEngine:
         self._primitives: dict[str, MotorPrimitive] = {}
         self._primitive_id_by_sequence: dict[MotorSequence, str] = {}
         self._historical_primitive_candidates: dict[str, MotorSequence] = {}
+        self._historical_primitive_candidate_sources: dict[str, str] = {}
         self._primitives_cache: tuple[MotorPrimitive, ...] | None = None
         self._cognitive_primitives_cache: tuple[MotorPrimitive, ...] | None = None
 
@@ -1225,6 +1227,7 @@ class CompetenceDevelopmentEngine:
         )
         self._primitive_materialized_tick.setdefault(sequence, int(end_tick))
         self._historical_primitive_candidates.pop(primitive_id, None)
+        self._historical_primitive_candidate_sources.pop(primitive_id, None)
         self._invalidate_primitive_caches()
 
         # WARN(invariant): A bounded repertoire must not evict a primitive that has already
@@ -1552,7 +1555,9 @@ class CompetenceDevelopmentEngine:
             "historical_candidates": [
                 {
                     "primitive_id": primitive_id,
-                    "embodiment_fingerprint": self._embodiment_fingerprint,
+                    "embodiment_fingerprint": self._historical_primitive_candidate_sources[
+                        primitive_id
+                    ],
                     "sequence": _sequence_payload(sequence),
                 }
                 for primitive_id, sequence in sorted(self._historical_primitive_candidates.items())
@@ -1950,16 +1955,18 @@ class CompetenceDevelopmentEngine:
                 "primitive_id", "embodiment_fingerprint", "sequence"
             }:
                 raise ValueError("invalid historical primitive candidate")
-            if item.get("embodiment_fingerprint") != learner.embodiment_fingerprint:
-                raise ValueError("historical primitive embodiment scope mismatch")
+            source_fingerprint = item.get("embodiment_fingerprint")
+            if not isinstance(source_fingerprint, str) or not source_fingerprint:
+                raise ValueError("invalid historical primitive source embodiment scope")
             primitive_id = item.get("primitive_id")
             if not isinstance(primitive_id, str) or not primitive_id:
                 raise ValueError("invalid historical primitive id")
-            sequence = _restore_sequence(item.get("sequence"), allowed_ids=allowed)
+            # Historical hypotheses keep their original actuator identities.
+            # They are not executable on the current body; only new evidence
+            # observed through the current engine can materialize a primitive.
+            sequence = _restore_sequence(item.get("sequence"), allowed_ids=None)
             if len(sequence) != _PRIMITIVE_TICKS:
                 raise ValueError("historical primitive has invalid temporal duration")
-            if not learner._sequence_respects_exclusive_groups(sequence):
-                raise ValueError("historical primitive violates exclusive actuator groups")
             if (
                 primitive_id in learner._primitives
                 or primitive_id in learner._historical_primitive_candidates
@@ -1967,7 +1974,9 @@ class CompetenceDevelopmentEngine:
             ):
                 raise ValueError("duplicate historical primitive identity or sequence")
             learner._historical_primitive_candidates[primitive_id] = sequence
-            learner._primitive_id_by_sequence[sequence] = primitive_id
+            learner._historical_primitive_candidate_sources[primitive_id] = source_fingerprint
+            if all(actuator_id in allowed for pattern in sequence for actuator_id, _ in pattern):
+                learner._primitive_id_by_sequence[sequence] = primitive_id
         replay_id = payload["replay_id"]
         if replay_id is not None and not isinstance(replay_id, str):
             raise ValueError("invalid sensorimotor replay id")
@@ -2084,30 +2093,42 @@ class CompetenceDevelopmentEngine:
     def register_historical_primitive_candidates(
         self, payloads: Sequence[Mapping[str, object]]
     ) -> int:
-        """Register prior-body motor hypotheses without granting competence."""
+        """Retain prior-body hypotheses without granting current executability.
+
+        Their source embodiment identity and actuator identities are preserved.
+        A candidate can only materialize through observations in this engine;
+        this method never remaps channels or imports source-body evidence.
+        """
         allowed = set(self._ids)
         added = 0
         for item in payloads:
             primitive_id = item.get("primitive_id")
+            source_fingerprint = item.get("embodiment_fingerprint")
             if not isinstance(primitive_id, str) or not primitive_id:
                 continue
-            if item.get("embodiment_fingerprint") != self._embodiment_fingerprint:
+            if not isinstance(source_fingerprint, str) or not source_fingerprint:
                 continue
             try:
-                sequence = _restore_sequence(item.get("sequence"), allowed_ids=allowed)
+                sequence = _restore_sequence(item.get("sequence"), allowed_ids=None)
             except ValueError:
                 continue
             if (
                 len(sequence) != _PRIMITIVE_TICKS
-                or not self._sequence_respects_exclusive_groups(sequence)
                 or primitive_id in self._primitives
+                or primitive_id in self._historical_primitive_candidates
                 or sequence in self._primitive_id_by_sequence
             ):
                 continue
             if len(self._historical_primitive_candidates) >= _MAX_PRIMITIVES:
                 break
             self._historical_primitive_candidates[primitive_id] = sequence
-            self._primitive_id_by_sequence[sequence] = primitive_id
+            self._historical_primitive_candidate_sources[primitive_id] = source_fingerprint
+            if all(
+                actuator_id in allowed
+                for pattern in sequence
+                for actuator_id, _ in pattern
+            ):
+                self._primitive_id_by_sequence[sequence] = primitive_id
             added += 1
         return added
 

@@ -19,6 +19,10 @@ def _test_embodiment_fingerprint(organism_id: str, actuator_ids: tuple[str, ...]
     return f"test-embodiment:{organism_id}:{digest}"
 
 
+def _sequence_payload_for_test(sequence):
+    return [[[actuator_id, level] for actuator_id, level in pattern] for pattern in sequence]
+
+
 def test_exploration_covers_all_actuators_without_single_channel_monopoly():
     learner = CompetenceDevelopmentEngine(
         _ids(),
@@ -247,7 +251,7 @@ def test_checkpoint_controller_presence_does_not_create_established_competence()
     )
 
     payload = learner.checkpoint()
-    assert payload["schema_version"] == 12
+    assert payload["schema_version"] == 13
     assert payload["primitives"] == []
 
     restored = CompetenceDevelopmentEngine.restore(
@@ -405,7 +409,7 @@ def test_checkpoint_restore_preserves_identity_and_effective_concurrency_output(
         learner.motor_intents(tick)
 
     payload = learner.checkpoint()
-    assert payload["schema_version"] == 12
+    assert payload["schema_version"] == 13
     assert payload["organism_id"] == "org-checkpoint-config"
     assert payload["max_concurrent"] == 1
 
@@ -1099,10 +1103,11 @@ def test_primitive_episode_provenance_is_ephemeral_and_independent():
 
 
 def test_historical_primitive_requires_fresh_evidence_before_cognitive_reuse():
+    current_fingerprint = "body-b-current-surface"
     learner = CompetenceDevelopmentEngine(
         _ids(4),
         organism_id="org-historical-revalidation",
-        embodiment_fingerprint=_test_embodiment_fingerprint("org-historical-revalidation", _ids(4)),
+        embodiment_fingerprint=current_fingerprint,
         max_concurrent=4,
     )
     historical_id = "primitive.historical"
@@ -1117,7 +1122,7 @@ def test_historical_primitive_requires_fresh_evidence_before_cognitive_reuse():
         [
             {
                 "primitive_id": historical_id,
-                "embodiment_fingerprint": learner.embodiment_fingerprint,
+                "embodiment_fingerprint": "body-a-source-surface",
                 "sequence": [
                     [["actuator.0", 5]],
                     [["actuator.1", 5]],
@@ -1130,6 +1135,9 @@ def test_historical_primitive_requires_fresh_evidence_before_cognitive_reuse():
 
     assert added == 1
     assert learner.historical_primitive_candidate_ids == (historical_id,)
+    assert learner.checkpoint()["historical_candidates"][0]["embodiment_fingerprint"] == (
+        "body-a-source-surface"
+    )
     assert learner.available_cognitive_primitive_ids() == ()
     assert learner.primitive_intents(historical_id) == ()
 
@@ -1155,6 +1163,49 @@ def test_historical_primitive_requires_fresh_evidence_before_cognitive_reuse():
     assert learner.available_cognitive_primitive_ids() == (historical_id,)
     assert learner.historical_primitive_candidate_ids == ()
     assert learner.has_cognitive_primitive(historical_id)
+    assert learner.checkpoint()["primitives"][0]["embodiment_fingerprint"] == current_fingerprint
+
+
+def test_prior_body_hypothesis_with_old_actuator_ids_is_retained_but_not_executable():
+    current_ids = _ids(4)
+    learner = CompetenceDevelopmentEngine(
+        current_ids,
+        organism_id="org-prior-body-unmapped",
+        embodiment_fingerprint="body-b-current-surface",
+    )
+    prior_ids = tuple(f"prior.actuator.{index}" for index in range(4))
+    prior_sequence = tuple(((actuator_id, 5),) for actuator_id in prior_ids)
+
+    added = learner.register_historical_primitive_candidates(
+        [
+            {
+                "primitive_id": "primitive.from-body-a",
+                "embodiment_fingerprint": "body-a-source-surface",
+                "sequence": _sequence_payload_for_test(prior_sequence),
+            }
+        ]
+    )
+
+    assert added == 1
+    assert learner.historical_primitive_candidate_ids == ("primitive.from-body-a",)
+    assert learner.available_cognitive_primitive_ids() == ()
+    assert learner.primitive_intents("primitive.from-body-a") == ()
+
+    checkpoint = learner.checkpoint()
+    assert checkpoint["historical_candidates"][0] == {
+        "primitive_id": "primitive.from-body-a",
+        "embodiment_fingerprint": "body-a-source-surface",
+        "sequence": _sequence_payload_for_test(prior_sequence),
+    }
+    restored = CompetenceDevelopmentEngine.restore(
+        checkpoint,
+        actuator_ids=current_ids,
+        organism_id="org-prior-body-unmapped",
+        embodiment_fingerprint="body-b-current-surface",
+    )
+    assert restored.historical_primitive_candidate_ids == ("primitive.from-body-a",)
+    assert restored.available_cognitive_primitive_ids() == ()
+    assert restored.primitive_intents("primitive.from-body-a") == ()
 
 
 def test_sensorimotor_pre_v9_checkpoint_is_not_reinterpreted_as_current_evidence():
@@ -1195,7 +1246,7 @@ def test_exclusive_motor_groups_never_babble_antagonistic_channels_together():
 
     assert seen == set(ids)
     checkpoint = learner.checkpoint()
-    assert checkpoint["schema_version"] == 12
+    assert checkpoint["schema_version"] == 13
     assert checkpoint["exclusive_actuator_groups"] == [list(group) for group in groups]
 
     restored = CompetenceDevelopmentEngine.restore(
