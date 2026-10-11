@@ -52,6 +52,19 @@ from .workspace import GenerativeWorkspace
 RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 4
 
 
+def _contains_model_reference(value: object) -> bool:
+    """Find model identities retained by the resident's strict checkpoint codec."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"model_id", "model_ids", "source_model_ids"} and item:
+                return True
+            if _contains_model_reference(item):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_contains_model_reference(item) for item in value)
+    return False
+
+
 def _resident_budget(value: object) -> GenerativeBudget:
     names = {
         "max_states",
@@ -186,8 +199,18 @@ class ResidentGenerativeCognition:
 
     @property
     def has_external_runtime_dependencies(self) -> bool:
-        """Whether this resident needs capabilities absent from its durable payload."""
-        return bool(self.registry.model_ids) or self._factual_evidence_resolver is not None
+        """Whether portable state depends on an external model/evidence capability.
+
+        Model IDs retained in generated states, hypotheses, or calibration are
+        dependency references even after the corresponding model is unregistered.
+        The bounded portable codec cannot verify their artifacts, so an empty
+        current registry must not make that history appear self-contained.
+        """
+        return (
+            bool(self.registry.model_ids)
+            or self._factual_evidence_resolver is not None
+            or _contains_model_reference(self.checkpoint())
+        )
 
     def checkpoint(self) -> dict[str, object]:
         """Persist durable resident GC state without persisting model owners."""

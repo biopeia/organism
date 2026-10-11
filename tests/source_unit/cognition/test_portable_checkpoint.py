@@ -11,9 +11,13 @@ from organism.cognition.activation import SensoryNormalizer
 from organism.cognition.generative import (
     AgendaSource,
     GenerativeTarget,
+    GenerativeMode,
     ResidentGenerativeCognition,
 )
-from organism.cognition.generative.adapters import EpisodicReplayAdapter
+from organism.cognition.generative.adapters import (
+    EpisodicReplayAdapter,
+    SensorimotorDynamicsGenerativeAdapter,
+)
 from organism.cognition.generative.registry import GenerativeModelRegistry
 from organism.cognition.graph import CognitiveGraph, PlasticEdge, PlasticNode
 from organism.cognition.limits import KernelLimits
@@ -506,6 +510,31 @@ def test_owner_payload_rejects_undeclared_external_generative_state() -> None:
     resident.set_factual_evidence_resolver(lambda _ref: True)
     with pytest.raises(CognitiveRuntimeCheckpointError, match="external generative dependencies"):
         runtime.to_bytes()
+
+
+def test_owner_payload_rejects_unregistered_model_referenced_by_persisted_state() -> None:
+    resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
+    resident.register_model(
+        SensorimotorDynamicsGenerativeAdapter(
+            "model-1", predictor=lambda _context: {"predicted": 0.5}
+        )
+    )
+    resident.step(
+        tick=1,
+        cognition=None,
+        prospective_candidate_ids=("competence.1",),
+        mode=GenerativeMode.ONLINE,
+    )
+    assert resident.last_workspace is not None
+    assert any(
+        state.source_model_ids == ("model-1",)
+        for state in resident.last_workspace.states
+    )
+
+    resident.registry.unregister("model-1")
+    runtime = CognitiveRuntimeCheckpoint(_state(), _graph(), generative_resident=resident)
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="external generative dependencies"):
+        runtime.to_organism_checkpoint()
 
 
 def test_owner_payload_rejects_injected_registry() -> None:
