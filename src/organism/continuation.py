@@ -1,10 +1,12 @@
 """Organism-owned continuation identity and process-local canonical authority.
 
 The registry coordinates repeated restores of the same serialized authority
-lineage within a process, including stale-snapshot rejection after registry
-objects are collected. Durable storage must still provide cross-process
-compare-and-commit, and independent/copied authorities are not globally
-coordinated.
+lineage and rejects duplicate Organism identity claims across authority
+lineages within one process, including stale-snapshot rejection after registry
+objects are collected. The process-local identity reservations are retained for
+the process lifetime and grow with distinct identities. Durable storage must
+still provide cross-process compare-and-commit; this module does not coordinate
+separate processes or authenticate copied stores.
 """
 
 from __future__ import annotations
@@ -181,6 +183,27 @@ _authority_cache: WeakValueDictionary[UUID, _RegistryAuthority] = WeakValueDicti
 # prevents an old snapshot from recreating stale process-local authority without
 # retaining every registry's records for the process lifetime.
 _authority_fingerprints: dict[UUID, str] = {}
+_identity_authorities_lock = RLock()
+# One Organism identity cannot be registered by two different owner-store
+# lineages in the same process. Independent stores must mint a new identity for
+# a branch; a copied store is not an authorized continuation.
+_identity_authorities: dict[OrganismIdentity, UUID] = {}
+
+
+def _claim_identities(authority_id: UUID, identities: set[OrganismIdentity]) -> None:
+    with _identity_authorities_lock:
+        conflicts = [
+            identity
+            for identity in identities
+            if (owner := _identity_authorities.get(identity)) is not None
+            and owner != authority_id
+        ]
+        if conflicts:
+            raise DuplicateCanonicalContinuation(
+                "Organism identity is already registered to another process-local authority"
+            )
+        for identity in identities:
+            _identity_authorities[identity] = authority_id
 
 
 def _records_fingerprint(records: dict[OrganismIdentity, _CanonicalRecord]) -> str:
@@ -207,6 +230,7 @@ def _attach_registry_authority(
                 raise StaleCanonicalContinuation(
                     "serialized registry does not match current process authority state"
                 )
+            _claim_identities(authority_id, set(restored_records))
             _authority_fingerprints[authority_id] = fingerprint
             authority = _RegistryAuthority(restored_records)
             _authority_cache[authority_id] = authority
@@ -220,6 +244,7 @@ def _attach_registry_authority(
                 raise StaleCanonicalContinuation(
                     "serialized registry does not match current process authority state"
                 )
+            _claim_identities(authority_id, set(records))
     return existing
 
 
@@ -232,9 +257,12 @@ class CanonicalContinuationRegistry:
     """Process-local canonical registry with one live lease per store lineage.
 
     Repeated restores of one serialized owner store share live state in this
-    Python process. A compact fingerprint remains after collection so stale
-    snapshots cannot recreate old authority. The durable owner store must still
-    perform atomic compare-and-commit for cross-process safety.
+    Python process; distinct authority lineages cannot claim the same
+    Organism identity in this process. A compact fingerprint remains after
+    collection so stale snapshots cannot recreate old authority. The durable
+    owner store must still perform atomic compare-and-commit for cross-process
+    safety. Identity reservations are intentionally not released during this
+    process lifetime, so their memory use grows with distinct identities.
     """
 
     def __init__(self) -> None:
@@ -304,7 +332,11 @@ class CanonicalContinuationRegistry:
             registry._authority_id = authority_id
             registry._authority = _attach_registry_authority(authority_id, records)
             return registry
-        except (InvalidContinuationCheckpoint, StaleCanonicalContinuation):
+        except (
+            InvalidContinuationCheckpoint,
+            StaleCanonicalContinuation,
+            DuplicateCanonicalContinuation,
+        ):
             raise
         except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
             raise InvalidContinuationCheckpoint("canonical registry is malformed") from exc
@@ -318,7 +350,9 @@ class CanonicalContinuationRegistry:
                 raise ContinuationError("genesis continuation cannot carry branch ancestry")
             if candidate.organism_step != 0:
                 raise ContinuationError("genesis continuation must start at Organism step zero")
-            self._authority.records[candidate.identity] = self._record(candidate)
+            record = self._record(candidate)
+            _claim_identities(self._authority_id, {candidate.identity})
+            self._authority.records[candidate.identity] = record
             _remember_registry_authority(self._authority_id, self._authority)
 
     def designate_branch_from(
@@ -343,7 +377,9 @@ class CanonicalContinuationRegistry:
                 raise ContinuationError("branch ancestry checkpoint digest does not match source")
             if candidate.identity in self._authority.records:
                 raise DuplicateCanonicalContinuation("branch Organism identity is already registered")
-            self._authority.records[candidate.identity] = self._record(candidate)
+            record = self._record(candidate)
+            _claim_identities(self._authority_id, {candidate.identity})
+            self._authority.records[candidate.identity] = record
             _remember_registry_authority(self._authority_id, self._authority)
 
     def acquire(self, candidate: OrganismContinuation) -> "CanonicalContinuationLease":

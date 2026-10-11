@@ -1,8 +1,11 @@
 import json
 from hashlib import sha256
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from uuid import UUID
 
 import pytest
+import organism.continuation as continuation_module
 
 from organism import (
     CanonicalContinuationRegistry,
@@ -28,6 +31,13 @@ IDENTITY = OrganismIdentity.create(UUID("a0a0a0a0-0000-4000-8000-000000000001"))
 CONTINUATION = ContinuationId.create(UUID("b0b0b0b0-0000-4000-8000-000000000001"))
 BRANCH_IDENTITY = OrganismIdentity.create(UUID("a0a0a0a0-0000-4000-8000-000000000002"))
 BRANCH_CONTINUATION = ContinuationId.create(UUID("b0b0b0b0-0000-4000-8000-000000000002"))
+
+
+@pytest.fixture(autouse=True)
+def isolate_process_authority_registry(monkeypatch):
+    # Each test models a fresh runtime process; multi-registry collision tests
+    # exercise shared authority within one test.
+    monkeypatch.setattr(continuation_module, "_identity_authorities", {})
 
 
 def continuation(identity=IDENTITY, continuation_id=CONTINUATION, step=0, state=b"private"):
@@ -114,6 +124,49 @@ def test_registry_snapshot_restores_exact_owner_authority_state():
 
     with restored.acquire(initial) as lease:
         assert lease.current == initial
+
+
+def test_distinct_process_local_authorities_cannot_register_same_organism_identity():
+    initial = continuation()
+    first = CanonicalContinuationRegistry()
+    second = CanonicalContinuationRegistry()
+    first.register_genesis(initial)
+
+    with pytest.raises(DuplicateCanonicalContinuation, match="another process-local authority"):
+        second.register_genesis(initial)
+
+    with first.acquire(initial):
+        pass
+
+
+def test_racing_process_local_authorities_cannot_both_claim_same_identity():
+    initial = continuation()
+    registries = [CanonicalContinuationRegistry(), CanonicalContinuationRegistry()]
+    start = Barrier(len(registries))
+
+    def register(registry):
+        start.wait()
+        try:
+            registry.register_genesis(initial)
+        except DuplicateCanonicalContinuation:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=len(registries)) as pool:
+        results = list(pool.map(register, registries))
+
+    assert sorted(results) == [False, True]
+
+
+def test_copied_registry_with_new_authority_id_cannot_reclaim_same_identity_in_process():
+    initial = continuation()
+    source = CanonicalContinuationRegistry()
+    source.register_genesis(initial)
+    copied = json.loads(source.to_bytes())
+    copied["authority_id"] = "12345678-1234-5678-1234-567812345678"
+
+    with pytest.raises(DuplicateCanonicalContinuation, match="another process-local authority"):
+        CanonicalContinuationRegistry.from_bytes(json.dumps(copied).encode())
 
 
 def test_restored_registries_share_process_local_authority_for_same_store_lineage():
