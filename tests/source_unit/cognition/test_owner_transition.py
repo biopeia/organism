@@ -216,3 +216,57 @@ def test_invalid_or_non_cognition_owner_checkpoint_fails_closed() -> None:
         _advance(invalid, _provenance())
 
     assert invalid.organism_step == 4
+
+
+def test_sequential_steps_advance_organism_step_and_world_correlation_monotonically() -> None:
+    current = _current()
+    assert current.organism_step == 4
+
+    # Step 1: causal_tick 10 -> organism_step 5
+    step1_prov = _provenance(causal_tick=10, physical_step_id="step-10")
+    step1 = advance_organism_from_sense_signals(
+        current,
+        (SenseChannelBinding("channel-1", "receptor-1", "sense.channel"),),
+        (_signal(step1_prov, value=0.5),),
+        expected_provenance=step1_prov,
+        kernel_limits=LIMITS,
+    )
+    assert step1.state.organism_step == 5
+    assert step1.state.world_correlation == WorldCausalCorrelation("world-1", 10)
+
+    # Step 2: causal_tick 11 -> organism_step 6
+    step2_prov = _provenance(causal_tick=11, physical_step_id="step-11")
+    step2 = advance_organism_from_sense_signals(
+        step1.state,
+        (SenseChannelBinding("channel-1", "receptor-1", "sense.channel"),),
+        (_signal(step2_prov, value=0.8),),
+        expected_provenance=step2_prov,
+        kernel_limits=LIMITS,
+    )
+    assert step2.state.organism_step == 6
+    assert step2.state.world_correlation == WorldCausalCorrelation("world-1", 11)
+
+    # Step 3: verify unmutated earlier states and distinct checkpoints
+    assert current.organism_step == 4
+    assert step1.state.organism_step == 5
+    assert step2.state.owner_checkpoint != step1.state.owner_checkpoint
+    assert step1.state.owner_checkpoint != current.owner_checkpoint
+
+
+def test_dormant_or_terminated_lifecycle_rejects_sense_progression() -> None:
+    from organism.transition import transition_organism_lifecycle
+
+    active = _current()
+    dormant = transition_organism_lifecycle(
+        active,
+        OrganismLifecycle.DORMANT,
+        transition_id="trans-dormant-1",
+        request_ref="presence-loss",
+    )
+    before_bytes = dormant.to_bytes()
+
+    with pytest.raises(OrganismTransitionError, match="requires an ACTIVE Organism"):
+        _advance(dormant, _provenance())
+
+    assert dormant.to_bytes() == before_bytes
+    assert dormant.organism_step == active.organism_step
