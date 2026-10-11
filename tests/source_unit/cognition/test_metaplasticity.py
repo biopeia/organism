@@ -163,3 +163,55 @@ def test_safety_state_frozen_never_clears_without_explicit_reset():
     state.reset()
     assert not state.frozen
     assert state.consecutive_failures == 0
+
+
+def test_meta_parameter_checkpoint_and_restore_roundtrip():
+    param = MetaParameter(value=0.75, minimum=0.1, maximum=0.9, max_step=0.05)
+    payload = param.checkpoint()
+    assert payload == {
+        "value": 0.75,
+        "minimum": 0.1,
+        "maximum": 0.9,
+        "max_step": 0.05,
+    }
+
+    restored = MetaParameter.restore(payload)
+    assert restored.value == 0.75
+    assert restored.minimum == 0.1
+    assert restored.maximum == 0.9
+    assert restored.max_step == 0.05
+
+
+def test_meta_parameter_validation_and_restore_fail_closed():
+    # Value out of range
+    with pytest.raises(ValueError, match="value.*must be within"):
+        MetaParameter(value=1.5, minimum=0.0, maximum=1.0, max_step=0.1)
+
+    # Minimum > Maximum
+    with pytest.raises(ValueError, match="minimum.*cannot exceed maximum"):
+        MetaParameter(value=0.5, minimum=1.0, maximum=0.0, max_step=0.1)
+
+    # Negative max_step
+    with pytest.raises(ValueError, match="max_step must be at least 0.0"):
+        MetaParameter(value=0.5, minimum=0.0, maximum=1.0, max_step=-0.1)
+
+    # Non-finite values
+    with pytest.raises(ValueError, match="value must be finite"):
+        MetaParameter(value=float("nan"), minimum=0.0, maximum=1.0, max_step=0.1)
+
+    # Restore bad payload type
+    with pytest.raises(ValueError, match="checkpoint must be an object"):
+        MetaParameter.restore([0.5, 0.0, 1.0, 0.1])
+
+    # Restore missing/extra fields
+    with pytest.raises(ValueError, match="fields do not match expected schema"):
+        MetaParameter.restore({"value": 0.5, "minimum": 0.0, "maximum": 1.0})
+
+    with pytest.raises(ValueError, match="fields do not match expected schema"):
+        MetaParameter.restore(
+            {"value": 0.5, "minimum": 0.0, "maximum": 1.0, "max_step": 0.1, "extra": 1}
+        )
+
+    # Restore boolean / invalid types
+    with pytest.raises(ValueError, match="value must be a number"):
+        MetaParameter.restore({"value": True, "minimum": 0.0, "maximum": 1.0, "max_step": 0.1})

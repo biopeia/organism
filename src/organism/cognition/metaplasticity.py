@@ -3,7 +3,28 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, fields
 
+
+def _require_finite(
+    value: object,
+    *,
+    field: str,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{field} must be finite")
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{field} must be at least {minimum}")
+    if maximum is not None and number > maximum:
+        raise ValueError(f"{field} must be at most {maximum}")
+    return number
+
+
 _LOWER_IS_BETTER = ("prediction_error", "representation_cost", "instability")
+
 _HIGHER_IS_BETTER = ("information_retained", "calibration")
 
 
@@ -47,6 +68,18 @@ class MetaParameter:
     maximum: float
     max_step: float
 
+    def __post_init__(self) -> None:
+        self.value = _require_finite(self.value, field="value")
+        self.minimum = _require_finite(self.minimum, field="minimum")
+        self.maximum = _require_finite(self.maximum, field="maximum")
+        self.max_step = _require_finite(self.max_step, field="max_step", minimum=0.0)
+        if self.minimum > self.maximum:
+            raise ValueError(f"minimum ({self.minimum}) cannot exceed maximum ({self.maximum})")
+        if not (self.minimum <= self.value <= self.maximum):
+            raise ValueError(
+                f"value ({self.value}) must be within [{self.minimum}, {self.maximum}]"
+            )
+
     def propose(
         self,
         *,
@@ -61,6 +94,29 @@ class MetaParameter:
             return  # things got worse -- never commit
         clipped_delta = max(-self.max_step, min(self.max_step, candidate_delta))
         self.value = max(self.minimum, min(self.maximum, self.value + clipped_delta))
+
+    def checkpoint(self) -> dict[str, float]:
+        return {
+            "value": self.value,
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+            "max_step": self.max_step,
+        }
+
+    @classmethod
+    def restore(cls, payload: object) -> "MetaParameter":
+        if not isinstance(payload, dict):
+            raise ValueError("metaparameter checkpoint must be an object")
+        expected_fields = {"value", "minimum", "maximum", "max_step"}
+        if set(payload) != expected_fields:
+            raise ValueError("metaparameter checkpoint fields do not match expected schema")
+        return cls(
+            value=_require_finite(payload["value"], field="value"),
+            minimum=_require_finite(payload["minimum"], field="minimum"),
+            maximum=_require_finite(payload["maximum"], field="maximum"),
+            max_step=_require_finite(payload["max_step"], field="max_step", minimum=0.0),
+        )
+
 
 
 @dataclass(slots=True)
