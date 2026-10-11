@@ -14,6 +14,11 @@ from .command import motor_command_from_frame
 from .context import ActuatorEvidenceContext
 from .controller import ControllerFrame, SequenceController
 from .domain import ActionDomain, ActionSelection
+from .pipeline import (
+    AdmittedActionPlan,
+    ExecutedActionPipelineResult,
+    compose_action_from_admitted_decision,
+)
 from .competence import (
     CompetenceCandidate,
     CompetenceEvidence,
@@ -50,6 +55,7 @@ from .surface import (
 from .types import Actuation, MotorIntent
 
 __all__ = [
+    "AdmittedActionPlan",
     "CompetenceExecutionBinding",
     "CompetenceExecutionBindingRegistry",
     "ActionArbitrator",
@@ -60,6 +66,7 @@ __all__ = [
     "ActionProposal",
     "ActionSelection",
     "ActionSource",
+    "ExecutedActionPipelineResult",
     "AgencyEstimate",
     "AgencyModel",
     "Actuation",
@@ -97,6 +104,7 @@ __all__ = [
     "SensorimotorV2Snapshot",
     "SequenceController",
     "SequentialCompositionEvidence",
+    "compose_action_from_admitted_decision",
     "derive_actuator_constitution",
     "motor_command_from_frame",
 ]
