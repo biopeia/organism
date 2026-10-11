@@ -65,6 +65,11 @@ class AffordanceResolver:
         binding = self._bindings.get(competence.competence_id)
         if binding is None:
             return None
+        if (
+            self._surface_fingerprint is not None
+            and binding.surface_fingerprint != self._surface_fingerprint
+        ):
+            return None
         prediction = self._predict(
             competence_id=competence.competence_id,
             context_id=context_ref,

@@ -354,3 +354,81 @@ def test_binding_restore_rejects_malformed_pending_transition_and_history():
     history_payload["revision_history"]["competence.a"].pop("ref_n")
     with pytest.raises(ValueError, match="revision history"):
         CompetenceExecutionBindingRegistry.restore(history_payload)
+
+
+def test_bind_from_evidence_on_different_surface_advances_revision_and_records_transition():
+    registry = CompetenceExecutionBindingRegistry()
+    registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint="surface.one",
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.8,
+        controllability=0.7,
+        tick=10,
+    )
+    (binding1,) = registry.items
+    assert binding1.revision == 0
+    assert binding1.surface_fingerprint == "surface.one"
+    assert binding1.valid_from_tick == 10
+
+    # Bind to a new surface
+    registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint="surface.two",
+        effect_id="effect.e",
+        evidence_refs=("ev.2",),
+        reliability=0.85,
+        controllability=0.75,
+        tick=25,
+    )
+    (binding2,) = registry.items
+    assert binding2.revision == 1
+    assert binding2.surface_fingerprint == "surface.two"
+    assert binding2.valid_from_tick == 25
+    assert binding2.last_evidence_tick == 25
+    assert binding2.evidence_refs == ("ev.1", "ev.2")
+
+    transitions = registry.drain_transitions()
+    assert len(transitions) == 1
+    assert transitions[0].previous_status == BindingStatus.VALID
+    assert transitions[0].previous_revision == 0
+    assert transitions[0].binding.revision == 1
+
+
+def test_mark_stale_for_surface_transitions_only_non_current_surfaces():
+    registry = CompetenceExecutionBindingRegistry()
+    registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint="surface.old",
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.8,
+        controllability=0.7,
+        tick=10,
+    )
+    registry.bind_from_evidence(
+        competence_id="competence.b",
+        surface_fingerprint="surface.current",
+        effect_id="effect.e",
+        evidence_refs=("ev.2",),
+        reliability=0.9,
+        controllability=0.8,
+        tick=15,
+    )
+
+    invalid_ids = registry.invalid_for_surface("surface.current")
+    assert invalid_ids == ("competence.a",)
+
+    transitions = registry.mark_stale_for_surface(
+        "surface.current", tick=20, cause_refs=("re-embodiment:event-1",)
+    )
+    assert len(transitions) == 1
+    assert transitions[0].competence_id == "competence.a"
+    assert transitions[0].binding.status == BindingStatus.STALE
+    assert transitions[0].binding.status_reason == StalenessReason.SURFACE_NOT_CURRENT
+    assert transitions[0].cause_refs == ("re-embodiment:event-1",)
+
+    # Competence b remains valid on current surface
+    binding_b = registry.get("competence.b")
+    assert binding_b.status == BindingStatus.VALID

@@ -128,7 +128,12 @@ class CompetenceExecutionBindingRegistry:
                 (existing.evidence_refs if existing is not None else ()) + tuple(evidence_refs)
             )
         )
-        revalidated = existing is not None and existing.status is not BindingStatus.VALID
+        surface_changed = (
+            existing is not None and existing.surface_fingerprint != surface_fingerprint
+        )
+        revalidated = existing is not None and (
+            existing.status is not BindingStatus.VALID or surface_changed
+        )
         binding = CompetenceExecutionBinding(
             competence_id=competence_id,
             surface_fingerprint=surface_fingerprint,
@@ -138,7 +143,9 @@ class CompetenceExecutionBindingRegistry:
             controllability=max(0.0, min(1.0, float(controllability))),
             last_evidence_tick=int(tick),
             valid_from_tick=(
-                existing.valid_from_tick if existing is not None and not revalidated else int(tick)
+                int(tick)
+                if existing is None or surface_changed or revalidated
+                else existing.valid_from_tick
             ),
             status_changed_tick=(
                 int(tick) if existing is None or revalidated else existing.status_changed_tick
@@ -291,6 +298,32 @@ class CompetenceExecutionBindingRegistry:
                 if binding.surface_fingerprint != surface_fingerprint
             )
         )
+
+    def mark_stale_for_surface(
+        self,
+        surface_fingerprint: str,
+        *,
+        tick: int,
+        cause_refs: tuple[str, ...] = (),
+    ) -> tuple[BindingTransition, ...]:
+        """Mark all bindings not on ``surface_fingerprint`` as STALE.
+
+        Applies StalenessReason.SURFACE_NOT_CURRENT and records transitions.
+        """
+        transitions: list[BindingTransition] = []
+        for competence_id in self.invalid_for_surface(surface_fingerprint):
+            binding = self._items.get(competence_id)
+            if binding is not None and binding.status is BindingStatus.VALID:
+                transition = self.set_status(
+                    competence_id,
+                    BindingStatus.STALE,
+                    StalenessReason.SURFACE_NOT_CURRENT,
+                    tick=tick,
+                    cause_refs=cause_refs,
+                )
+                if transition is not None:
+                    transitions.append(transition)
+        return tuple(transitions)
 
     @property
     def items(self) -> tuple[CompetenceExecutionBinding, ...]:
