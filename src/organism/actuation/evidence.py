@@ -401,6 +401,102 @@ class CausalEvidenceLedger:
         total_success = global_counter.get(effect_id, 0)
         return action_n, action_success, total_n - action_n, total_success - action_success
 
+    def controllability_opportunities(
+        self,
+        effect_id: str,
+        *,
+        field: str,
+        values: Iterable[str],
+        context_ref: str | None,
+    ) -> Opportunities:
+        """Return source rows and matched passive rows, never other active sources.
+
+        The unit is a retained evidence row, not an independent commitment or
+        statistical sample. Rows sharing a commitment across distinct sources,
+        or whose action windows overlap another source's window, are excluded
+        from source-specific attribution. ``context_ref`` is matched exactly;
+        ``None`` means uncontextualized evidence only, not all contexts.
+        """
+        if field not in (_COMPETENCE, _SIGNATURE):
+            raise ValueError(f"unsupported controllability source field {field!r}")
+        selected = frozenset(values)
+        if not selected:
+            return 0, 0, 0, 0
+
+        contextual = [item for item in self._interventions if item.context_ref == context_ref]
+        source_refs_by_commitment: dict[str, set[str]] = {}
+        for item in contextual:
+            source_ref = getattr(item, field)
+            if source_ref is not None and item.commitment_id is not None:
+                source_refs_by_commitment.setdefault(item.commitment_id, set()).add(source_ref)
+
+        selected_rows = [
+            item for item in contextual if getattr(item, field) in selected
+        ]
+        action_rows: list[CausalEvidence] = []
+        for item in selected_rows:
+            commitment_refs = source_refs_by_commitment.get(item.commitment_id or "", set())
+            if (
+                len(commitment_refs) > 1
+                and commitment_refs.intersection(selected)
+                and not commitment_refs.issubset(selected)
+            ):
+                continue
+            start = item.window_start_tick
+            end = item.observation_tick
+            overlaps_other_source = False
+            if start is not None:
+                for other in contextual:
+                    if getattr(other, field) in selected or other.window_start_tick is None:
+                        continue
+                    if max(start, other.window_start_tick) < min(end, other.observation_tick):
+                        overlaps_other_source = True
+                        break
+            if not overlaps_other_source:
+                action_rows.append(item)
+
+        # Passive records are eligible only in the exact declared context. A
+        # malformed overlap with any active command is not a no-command baseline.
+        passive_rows = [
+            item for item in self._passive if item.context_ref == context_ref
+        ]
+        comparable_passive: list[CausalEvidence] = []
+        for passive in passive_rows:
+            start = passive.window_start_tick
+            end = passive.observation_tick
+            overlaps_action = start is not None and any(
+                active.window_start_tick is not None
+                and max(start, active.window_start_tick) < min(end, active.observation_tick)
+                for active in contextual
+            )
+            if not overlaps_action:
+                comparable_passive.append(passive)
+
+        action_hits = sum(item.effect_id == effect_id for item in action_rows)
+        passive_hits = sum(item.effect_id == effect_id for item in comparable_passive)
+        return len(action_rows), action_hits, len(comparable_passive), passive_hits
+
+    def active_alternative_effect_opportunities(
+        self,
+        effect_id: str,
+        *,
+        field: str,
+        values: Iterable[str],
+        context_ref: str | None,
+    ) -> tuple[int, int]:
+        """Return other active-source rows separately for diagnostics only."""
+        if field not in (_COMPETENCE, _SIGNATURE):
+            raise ValueError(f"unsupported controllability source field {field!r}")
+        selected = frozenset(values)
+        rows = [
+            item
+            for item in self._interventions
+            if item.context_ref == context_ref
+            and getattr(item, field) is not None
+            and getattr(item, field) not in selected
+        ]
+        return len(rows), sum(item.effect_id == effect_id for item in rows)
+
     def atom_opportunities(
         self,
         atom_id: str,
@@ -694,6 +790,15 @@ class OpportunityView(Protocol):
         context_ref: str | None = None,
     ) -> Opportunities: ...
 
+    def controllability_opportunities(
+        self,
+        effect_id: str,
+        *,
+        field: str,
+        values: Iterable[str],
+        context_ref: str | None,
+    ) -> Opportunities: ...
+
     def signature_effects(self, intervention_signature_id: str) -> Mapping[str | None, int]: ...
 
 
@@ -754,6 +859,19 @@ class CounterfactualFreeView:
             effect_id,
             intervention_signature_ids=intervention_signature_ids,
             context_ref=context_ref,
+        )
+        return action_n, action_hits, 0, 0
+
+    def controllability_opportunities(
+        self,
+        effect_id: str,
+        *,
+        field: str,
+        values: Iterable[str],
+        context_ref: str | None,
+    ) -> Opportunities:
+        action_n, action_hits, _, _ = self._ledger.controllability_opportunities(
+            effect_id, field=field, values=values, context_ref=context_ref
         )
         return action_n, action_hits, 0, 0
 
