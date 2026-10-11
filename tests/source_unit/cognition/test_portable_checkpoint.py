@@ -570,6 +570,49 @@ def test_owner_payload_rejects_unregistered_model_referenced_by_persisted_featur
         runtime.to_organism_checkpoint()
 
 
+def test_restore_rejects_unregistered_model_referenced_by_persisted_feature() -> None:
+    resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
+    resident.register_model(
+        SensorimotorDynamicsGenerativeAdapter(
+            "model-1", predictor=lambda _context: {"predicted": 0.5}
+        )
+    )
+    resident.step(
+        tick=1,
+        cognition=None,
+        prospective_candidate_ids=("competence.1",),
+        mode=GenerativeMode.ONLINE,
+    )
+    assert resident.last_workspace is not None
+    generated = next(
+        state
+        for state in resident.last_workspace.states
+        if any(feature.source_model_id == "model-1" for feature in state.features)
+    )
+    # The independently persisted feature reference must be detected even
+    # when the redundant aggregate reference is absent.
+    resident.last_workspace._states[generated.state_id] = replace(
+        generated, source_model_ids=()
+    )
+    document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
+    resident_payload = resident.checkpoint()
+    external_state = next(
+        state
+        for state in resident_payload["workspace"]["states"]
+        if any(
+            feature["source_model_id"] == "model-1" for feature in state["features"]
+        )
+    )
+    external_state["source_model_ids"] = []
+    document["generative_resident"] = resident_payload
+    payload = json.dumps(document).encode()
+
+    with pytest.raises(
+        CognitiveRuntimeCheckpointError, match="external generative dependencies"
+    ):
+        CognitiveRuntimeCheckpoint.from_bytes(payload, kernel_limits=KernelLimits())
+
+
 def test_owner_payload_rejects_injected_registry() -> None:
     resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
     runtime = CognitiveRuntimeCheckpoint(_state(), _graph(), generative_resident=resident)

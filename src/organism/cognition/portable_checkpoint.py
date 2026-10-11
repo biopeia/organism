@@ -274,6 +274,13 @@ class CognitiveRuntimeCheckpoint:
                     registry=generative_registry,
                 )
             )
+            if (
+                generative_resident is not None
+                and generative_resident.has_external_runtime_dependencies
+            ):
+                raise CognitiveRuntimeCheckpointError(
+                    "portable checkpoint contains external generative dependencies"
+                )
             raw_genome = document["genome"]
             raw_germline = document["germline_state"]
             raw_expression = document["expression_state"]
