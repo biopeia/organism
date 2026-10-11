@@ -104,6 +104,85 @@ class CompetenceEffectModel:
             support=support,
         )
 
+    SCHEMA_VERSION = 1
+
+    def checkpoint(self) -> dict[str, object]:
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "max_contexts": self._max_contexts,
+            "contexts": [
+                {
+                    "competence_id": competence_id,
+                    "context_ref": context_ref,
+                    "counts": dict(counts),
+                }
+                for (competence_id, context_ref), counts in sorted(
+                    self._counts.items(),
+                    key=lambda item: (item[0][0], item[0][1] or ""),
+                )
+            ],
+        }
+
+    @classmethod
+    def restore(cls, payload: object) -> "CompetenceEffectModel":
+        if not isinstance(payload, dict):
+            raise ValueError("invalid competence effect model checkpoint")
+        expected_fields = {"schema_version", "max_contexts", "contexts"}
+        if set(payload) != expected_fields:
+            raise ValueError("invalid competence effect model checkpoint fields")
+        version = payload["schema_version"]
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != cls.SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported competence effect model checkpoint version")
+        max_contexts = payload["max_contexts"]
+        if (
+            isinstance(max_contexts, bool)
+            or not isinstance(max_contexts, int)
+            or max_contexts < 1
+        ):
+            raise ValueError("invalid max_contexts in checkpoint")
+        raw_contexts = payload["contexts"]
+        if not isinstance(raw_contexts, list) or len(raw_contexts) > max_contexts:
+            raise ValueError("invalid or unbounded contexts list in checkpoint")
+        model = cls(max_contexts=max_contexts)
+        for entry in raw_contexts:
+            if not isinstance(entry, dict) or set(entry) != {
+                "competence_id",
+                "context_ref",
+                "counts",
+            }:
+                raise ValueError("invalid context entry in checkpoint")
+            competence_id = entry["competence_id"]
+            context_ref = entry["context_ref"]
+            if not isinstance(competence_id, str) or not competence_id:
+                raise ValueError("invalid competence_id in context entry")
+            if context_ref is not None and (
+                not isinstance(context_ref, str) or not context_ref
+            ):
+                raise ValueError("invalid context_ref in context entry")
+            counts = entry["counts"]
+            if not isinstance(counts, dict):
+                raise ValueError("invalid counts in context entry")
+            counter: Counter[str] = Counter()
+            for effect_id, count in counts.items():
+                if not isinstance(effect_id, str) or not effect_id:
+                    raise ValueError("invalid effect_id in counts")
+                if (
+                    isinstance(count, bool)
+                    or not isinstance(count, int)
+                    or count < 1
+                ):
+                    raise ValueError("invalid count in counts")
+                counter[effect_id] = count
+            key = (competence_id, context_ref)
+            if key in model._counts:
+                raise ValueError("duplicate context key in checkpoint")
+            model._counts[key] = counter
+        return model
+
 
 def controllability_source_opportunities(
     ledger: OpportunityView,
