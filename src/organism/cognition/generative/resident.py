@@ -56,7 +56,12 @@ def _contains_model_reference(value: object) -> bool:
     """Find model identities retained by the resident's strict checkpoint codec."""
     if isinstance(value, dict):
         for key, item in value.items():
-            if key in {"model_id", "model_ids", "source_model_ids"} and item:
+            if key in {
+                "model_id",
+                "model_ids",
+                "source_model_id",
+                "source_model_ids",
+            } and item:
                 return True
             if _contains_model_reference(item):
                 return True

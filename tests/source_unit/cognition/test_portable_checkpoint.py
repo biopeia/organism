@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from hashlib import sha256
 from uuid import UUID
 
@@ -532,6 +533,38 @@ def test_owner_payload_rejects_unregistered_model_referenced_by_persisted_state(
     )
 
     resident.registry.unregister("model-1")
+    runtime = CognitiveRuntimeCheckpoint(_state(), _graph(), generative_resident=resident)
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="external generative dependencies"):
+        runtime.to_organism_checkpoint()
+
+
+def test_owner_payload_rejects_unregistered_model_referenced_by_persisted_feature() -> None:
+    resident = ResidentGenerativeCognition(organism_id=str(_state().identity))
+    resident.register_model(
+        SensorimotorDynamicsGenerativeAdapter(
+            "model-1", predictor=lambda _context: {"predicted": 0.5}
+        )
+    )
+    resident.step(
+        tick=1,
+        cognition=None,
+        prospective_candidate_ids=("competence.1",),
+        mode=GenerativeMode.ONLINE,
+    )
+    assert resident.last_workspace is not None
+    generated = next(
+        state
+        for state in resident.last_workspace.states
+        if any(feature.source_model_id == "model-1" for feature in state.features)
+    )
+    # Preserve the feature's independently serialized singular reference while
+    # removing the state's redundant aggregate reference. This isolates the
+    # dependency-closure path that the owner scanner must still detect.
+    resident.last_workspace._states[generated.state_id] = replace(
+        generated, source_model_ids=()
+    )
+    resident.registry.unregister("model-1")
+
     runtime = CognitiveRuntimeCheckpoint(_state(), _graph(), generative_resident=resident)
     with pytest.raises(CognitiveRuntimeCheckpointError, match="external generative dependencies"):
         runtime.to_organism_checkpoint()
