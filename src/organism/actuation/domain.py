@@ -127,6 +127,7 @@ class ActionDomain:
         if any(commitments[key].active for key in closed_ids):
             raise ValueError("active commitment cannot be listed as closed")
 
+        committed_intent_ids: set[str] = set()
         for commitment in commitments.values():
             if commitment.intent_id is None:
                 if (
@@ -140,6 +141,9 @@ class ActionDomain:
                 continue
             if commitment.proposal_source is ActionSource.EXPLORATION:
                 raise ValueError("exploration commitment cannot reference an intent")
+            if commitment.intent_id in committed_intent_ids:
+                raise ValueError("intent is referenced by more than one commitment")
+            committed_intent_ids.add(commitment.intent_id)
             intent = intents.get(commitment.intent_id)
             if intent is None:
                 raise ValueError("commitment references a missing intent")
@@ -160,6 +164,8 @@ class ActionDomain:
             }[commitment.status]
             if intent.status is not expected_status:
                 raise ValueError("commitment and intent lifecycle states do not match")
+            if not commitment.active and intent.termination_reason != commitment.end_reason:
+                raise ValueError("commitment and intent termination reasons do not match")
         active_intent_ids = {
             item.intent_id for item in commitments.values() if item.active and item.intent_id
         }

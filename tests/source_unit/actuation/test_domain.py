@@ -256,6 +256,28 @@ def test_action_domain_restore_preserves_explicit_bounded_exploration_commitment
     assert restored.active_commitment.maximum_duration == 1
 
 
+@pytest.mark.parametrize("mutate", ("termination_reason", "duplicate_reference"))
+def test_action_domain_restore_rejects_conflicting_terminal_intent_joins(mutate):
+    domain, intent, commitment, _ = _active_domain()
+    domain.close(
+        commitment.commitment_id,
+        status=IntentStatus.FAILED,
+        tick=6,
+        reason="controller_failed",
+    )
+    checkpoint = domain.checkpoint()
+    if mutate == "termination_reason":
+        checkpoint["intents"][0]["termination_reason"] = "different_reason"
+    else:
+        duplicate = dict(checkpoint["commitments"][0])
+        duplicate["commitment_id"] = "commitment.duplicate"
+        checkpoint["commitments"].append(duplicate)
+        checkpoint["closed_commitment_ids"].append("commitment.duplicate")
+
+    with pytest.raises(ValueError):
+        ActionDomain.restore(checkpoint)
+
+
 def test_domain_rejects_fabricated_intent_and_mismatched_proposal():
     domain = ActionDomain()
     surface = derive_actuator_constitution(("effector.left",))
