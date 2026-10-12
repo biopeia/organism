@@ -251,7 +251,7 @@ def test_checkpoint_controller_presence_does_not_create_established_competence()
     )
 
     payload = learner.checkpoint()
-    assert payload["schema_version"] == 13
+    assert payload["schema_version"] == 14
     assert payload["primitives"] == []
 
     restored = CompetenceDevelopmentEngine.restore(
@@ -409,7 +409,7 @@ def test_checkpoint_restore_preserves_identity_and_effective_concurrency_output(
         learner.motor_intents(tick)
 
     payload = learner.checkpoint()
-    assert payload["schema_version"] == 13
+    assert payload["schema_version"] == 14
     assert payload["organism_id"] == "org-checkpoint-config"
     assert payload["max_concurrent"] == 1
 
@@ -480,17 +480,87 @@ def test_checkpoint_restore_preserves_non_default_competence_gate():
     )
     learner.set_gate(custom_gate)
     assert learner.gate == custom_gate
+    _teach_repeated_sequence(learner, episodes=5)
+    assert learner.primitives
 
     payload = learner.checkpoint()
+    assert payload["competence_gate"] == {
+        "min_support": 5,
+        "min_consistency": 0.85,
+    }
     restored = CompetenceDevelopmentEngine.restore(
         payload,
         actuator_ids=ids,
         organism_id="org-custom-gate",
         embodiment_fingerprint=_test_embodiment_fingerprint("org-custom-gate", ids),
-        gate=custom_gate,
     )
     assert restored.gate == custom_gate
     assert all(p.gate == custom_gate for p in restored.primitives)
+    assert restored.primitives[0].maturity is learner.primitives[0].maturity
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda payload: payload.pop("competence_gate"), "incomplete sensorimotor checkpoint"),
+        (
+            lambda payload: payload["competence_gate"].update({"unexpected": 1}),
+            "invalid sensorimotor competence gate",
+        ),
+        (
+            lambda payload: payload["competence_gate"].update({"min_support": True}),
+            "sensorimotor competence min_support must be an integer",
+        ),
+        (
+            lambda payload: payload["competence_gate"].update({"min_support": 65}),
+            "sensorimotor competence min_support out of bounds",
+        ),
+        (
+            lambda payload: payload["competence_gate"].update({"min_consistency": 0.0}),
+            "sensorimotor competence min_consistency must be positive",
+        ),
+        (
+            lambda payload: payload["competence_gate"].update({"min_consistency": float("nan")}),
+            "sensorimotor competence min_consistency must be finite",
+        ),
+    ],
+)
+def test_sensorimotor_restore_rejects_missing_or_malformed_competence_gate(mutation, message):
+    ids = _ids(4)
+    engine = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-invalid-gate",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-invalid-gate", ids),
+    )
+    payload = engine.checkpoint()
+    mutation(payload)
+
+    with pytest.raises(ValueError, match=message):
+        CompetenceDevelopmentEngine.restore(
+            payload,
+            actuator_ids=ids,
+            organism_id="org-invalid-gate",
+            embodiment_fingerprint=_test_embodiment_fingerprint("org-invalid-gate", ids),
+        )
+
+
+def test_sensorimotor_restore_rejects_conflicting_external_competence_profile():
+    ids = _ids(4)
+    engine = CompetenceDevelopmentEngine(
+        ids,
+        organism_id="org-profile-mismatch",
+        embodiment_fingerprint=_test_embodiment_fingerprint("org-profile-mismatch", ids),
+    )
+    engine.set_gate(CompetenceGate(min_support=5, min_consistency=0.85))
+
+    with pytest.raises(ValueError, match="sensorimotor competence gate mismatch"):
+        CompetenceDevelopmentEngine.restore(
+            engine.checkpoint(),
+            actuator_ids=ids,
+            organism_id="org-profile-mismatch",
+            embodiment_fingerprint=_test_embodiment_fingerprint("org-profile-mismatch", ids),
+            gate=CompetenceGate(min_support=4, min_consistency=0.75),
+        )
 
 
 
@@ -1270,7 +1340,7 @@ def test_exclusive_motor_groups_never_babble_antagonistic_channels_together():
 
     assert seen == set(ids)
     checkpoint = learner.checkpoint()
-    assert checkpoint["schema_version"] == 13
+    assert checkpoint["schema_version"] == 14
     assert checkpoint["exclusive_actuator_groups"] == [list(group) for group in groups]
 
     restored = CompetenceDevelopmentEngine.restore(

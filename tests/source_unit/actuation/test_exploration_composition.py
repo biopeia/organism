@@ -168,7 +168,7 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
         transition_state=_transition(tick=first.source_causal_tick),
     )
     checkpoint_contract = OrganismCheckpointContract()
-    schema = "biopeia-organism-exploration-checkpoint-v3"
+    schema = "biopeia-organism-exploration-checkpoint-v4"
     assert checkpoint_contract.validate_checkpoint(encoded, str(IDENTITY), schema) is True
     assert checkpoint_contract.validate_checkpoint(encoded, "other-organism", schema) is False
     assert checkpoint_contract.validate_checkpoint(encoded, str(IDENTITY), "unknown-schema") is False
@@ -232,7 +232,7 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
             ),
         )
     duplicated_schema = encoded.replace(
-        b'{"action_domain":', b'{"schema":"biopeia-organism-exploration-checkpoint-v3","action_domain":', 1
+        b'{"action_domain":', b'{"schema":"biopeia-organism-exploration-checkpoint-v4","action_domain":', 1
     )
     with pytest.raises(ValueError, match="duplicate checkpoint field: schema"):
         OrganismExplorationComposer.restore_from_committed_checkpoint(

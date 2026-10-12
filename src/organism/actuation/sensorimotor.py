@@ -16,7 +16,7 @@ from .competence import (
 from .types import MotorIntent
 
 _HORIZONS = (1, 4, 16, 64)
-SENSORIMOTOR_SCHEMA_VERSION = 13
+SENSORIMOTOR_SCHEMA_VERSION = 14
 _PRIMITIVE_TICKS = 4
 # Evidence independence and spontaneous motor persistence are distinct clocks.
 # An evidence block must be short enough to reject overlapping samples, while a
@@ -278,6 +278,7 @@ class MotorPrimitive:
         *,
         allowed_ids: set[str],
         embodiment_fingerprint: str,
+        gate: CompetenceGate | None = None,
     ) -> "MotorPrimitive":
         expected_fields = {
             "primitive_id",
@@ -332,6 +333,7 @@ class MotorPrimitive:
                 minimum=0.0,
                 maximum=1.0,
             ),
+            gate=gate or CompetenceGate(),
         )
 
 
@@ -1484,6 +1486,13 @@ class CompetenceDevelopmentEngine:
         return {
             "schema_version": SENSORIMOTOR_SCHEMA_VERSION,
             "organism_id": self._organism_id,
+            # Preserve the effective profile configuration used by this
+            # longitudinal state. This is a snapshot for exact continuation,
+            # not discovered competence evidence or a new configuration owner.
+            "competence_gate": {
+                "min_support": self.gate.min_support,
+                "min_consistency": self.gate.min_consistency,
+            },
             "actuator_ids": list(self._ids),
             # Store the effective bound, not the constructor's optional input:
             # ``None`` resolves to the exploration-unit ceiling at creation.
@@ -1581,7 +1590,7 @@ class CompetenceDevelopmentEngine:
         organism_id: str,
         embodiment_fingerprint: str | None = None,
         expected_max_concurrent: int | None = None,
-        gate: CompetenceGate = DEFAULT_COMPETENCE_GATE,
+        gate: CompetenceGate | None = None,
     ) -> "CompetenceDevelopmentEngine":
 
         schema = _require_int(
@@ -1596,6 +1605,7 @@ class CompetenceDevelopmentEngine:
             raise ValueError("sensorimotor restore requires the current embodiment fingerprint")
         required_fields = {
             "organism_id",
+            "competence_gate",
             "actuator_ids",
             "max_concurrent",
             "embodiment_fingerprint",
@@ -1633,6 +1643,33 @@ class CompetenceDevelopmentEngine:
             raise ValueError("invalid sensorimotor organism identity")
         if stored_organism_id != organism_id:
             raise ValueError("sensorimotor organism identity mismatch")
+
+        raw_gate = payload["competence_gate"]
+        if not isinstance(raw_gate, Mapping) or set(raw_gate) != {
+            "min_support",
+            "min_consistency",
+        }:
+            raise ValueError("invalid sensorimotor competence gate")
+        min_support = _require_int(
+            raw_gate["min_support"],
+            field="sensorimotor competence min_support",
+            minimum=2,
+            maximum=64,
+        )
+        min_consistency = _require_finite(
+            raw_gate["min_consistency"],
+            field="sensorimotor competence min_consistency",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        if min_consistency == 0.0:
+            raise ValueError("sensorimotor competence min_consistency must be positive")
+        stored_gate = CompetenceGate(
+            min_support=min_support,
+            min_consistency=min_consistency,
+        )
+        if gate is not None and gate != stored_gate:
+            raise ValueError("sensorimotor competence gate mismatch")
 
         expected = tuple(actuator_ids)
         if any(not isinstance(value, str) or not value for value in expected):
@@ -1686,6 +1723,7 @@ class CompetenceDevelopmentEngine:
             embodiment_fingerprint=embodiment_fingerprint,
             exclusive_actuator_groups=exclusive_groups,
         )
+        learner.set_gate(stored_gate)
         if learner._max_concurrent != max_concurrent:
             raise ValueError("sensorimotor max_concurrent exceeds exploration capacity")
         stored_scope = payload["embodiment_fingerprint"]
@@ -1928,6 +1966,7 @@ class CompetenceDevelopmentEngine:
                 item,
                 allowed_ids=allowed,
                 embodiment_fingerprint=learner.embodiment_fingerprint,
+                gate=learner.gate,
             )
             if not learner._sequence_respects_exclusive_groups(primitive.sequence):
                 raise ValueError("motor primitive violates exclusive actuator groups")
@@ -2089,8 +2128,6 @@ class CompetenceDevelopmentEngine:
         learner.primitives_pressure = CapacityPressure.restore(
             payload.get("primitives_pressure"), capacity=_MAX_PRIMITIVES
         )
-        if gate is not DEFAULT_COMPETENCE_GATE:
-            learner.set_gate(gate)
         return learner
 
 

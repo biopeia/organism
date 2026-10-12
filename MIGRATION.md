@@ -142,6 +142,16 @@ Validation is recorded in the migration PR and CI. The source repository remains
 - Validation: focused deterministic-next-output and identity/configuration rejection tests are in `tests/source_unit/actuation/test_sensorimotor.py`; full test/build and PR CI evidence are recorded with the resulting PR.
 - Scope limits: this restores only `CompetenceDevelopmentEngine` state. It does not establish complete Organism continuation, `organism_step`, completeness of caller-supplied checkpoints, World durability, scientific efficacy, or historical behavioral equivalence. No `symbiont-lab` files were changed.
 
+## Incremental slice: persist effective competence gate in sensorimotor continuation (issue #41)
+
+- Target base: `8a8b29384bb588bfb0c3173eb341deebce3fae91`.
+- Target paths: `src/organism/actuation/sensorimotor.py`, `src/organism/actuation/bounded_action.py`, and focused source-unit tests.
+- Disposition: `REWRITE` — sensorimotor component checkpoint advances from schema v13 to v14 and requires the exact effective `CompetenceGate` profile (`min_support`, `min_consistency`). Restore without an override uses the recorded profile; an explicit conflicting profile, missing/unknown fields, invalid types, or invalid bounds are rejected. Restored primitives receive the same recorded gate rather than silently reverting to constructor defaults.
+- The enclosing bounded-exploration checkpoint advances from v3 to v4 because it contains the changed component continuation contract. Older versions are rejected; no compatibility or implicit migration path is added.
+- The stored gate is a snapshot of effective configuration required to continue the existing longitudinal state. It is not competence evidence, scientific validation, or an authority transfer. `CompetenceEffectModel` and caller profile configuration outside this component remain outside this slice.
+- Validation: focused test evidence is recorded with the PR. No historical source files were changed.
+- Scope limits: this does not establish complete Organism continuation, all dependency closure, World durability, scientific efficacy, or historical behavioral equivalence.
+
 ## Incremental slice: fail-closed outcome-value ledger restore
 
 - Source repository: `https://github.com/alessbarb/symbiont-lab`
