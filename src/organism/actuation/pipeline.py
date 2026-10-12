@@ -207,8 +207,64 @@ def compose_action_from_admitted_decision(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class AcceptedActionTransition:
+    """Outcome of executing an action transition anchored to an accepted Organism transition."""
+
+    transition_state: OrganismTransitionState
+    pipeline_result: ExecutedActionPipelineResult
+
+
+def execute_canonical_action_transition(
+    accepted_cognition_or_state: OrganismTransitionState,
+    action_domain: ActionDomain,
+    plan: AdmittedActionPlan,
+    *,
+    controller: SequenceController,
+    surface: ActuatorSurface,
+) -> AcceptedActionTransition:
+    """Execute canonical action pipeline anchored to an accepted Organism transition state.
+
+    Validates that the provided state is an ACTIVE OrganismTransitionState with
+    valid Embodiment context and World causal correlation matching the plan's
+    supporting affordance, controller, and surface, then invokes the action
+    composition pipeline.
+    """
+    if not isinstance(accepted_cognition_or_state, OrganismTransitionState):
+        raise TypeError(
+            "accepted_cognition_or_state must be an OrganismTransitionState"
+        )
+    if accepted_cognition_or_state.lifecycle is not OrganismLifecycle.ACTIVE:
+        raise ValueError(
+            "canonical action transition requires an ACTIVE OrganismTransitionState"
+        )
+    if accepted_cognition_or_state.embodiment is None:
+        raise ValueError(
+            "canonical action transition requires an explicit Embodiment context"
+        )
+    if accepted_cognition_or_state.world_correlation is None:
+        raise ValueError(
+            "canonical action transition requires an explicit World causal correlation"
+        )
+
+    pipeline_result = compose_action_from_admitted_decision(
+        accepted_cognition_or_state,
+        action_domain,
+        plan,
+        controller=controller,
+        surface=surface,
+    )
+
+    return AcceptedActionTransition(
+        transition_state=accepted_cognition_or_state,
+        pipeline_result=pipeline_result,
+    )
+
+
 __all__ = [
+    "AcceptedActionTransition",
     "AdmittedActionPlan",
     "ExecutedActionPipelineResult",
     "compose_action_from_admitted_decision",
+    "execute_canonical_action_transition",
 ]

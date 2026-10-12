@@ -270,3 +270,73 @@ def test_dormant_or_terminated_lifecycle_rejects_sense_progression() -> None:
 
     assert dormant.to_bytes() == before_bytes
     assert dormant.organism_step == active.organism_step
+
+
+def test_owner_transition_to_action_pipeline_connection() -> None:
+    from organism.actuation import (
+        ActionDomain,
+        AdmittedActionPlan,
+        MotorIntent,
+        SequenceController,
+        derive_actuator_constitution,
+        execute_canonical_action_transition,
+    )
+    from organism.agency import ActionAffordance, ProspectiveDecision
+
+    current = _current()
+    prov = _provenance(causal_tick=15)
+    accepted = _advance(current, prov)
+
+    # Now verify the accepted transition directly feeds execute_canonical_action_transition
+    surface = derive_actuator_constitution(("effector.actuator.1",))
+    controller = SequenceController(
+        controller_id="controller.test.1",
+        sequence=((MotorIntent("effector.actuator.1", 0.5),),),
+    )
+    domain = ActionDomain()
+
+    affordance = ActionAffordance(
+        affordance_id="affordance.test.1",
+        competence_id="competence.test.1",
+        anticipated_effect_id="effect.test.1",
+        context_ref="context.test.1",
+        embodiment_id=EMBODIMENT.embodiment_episode_id,
+        prediction_confidence=0.8,
+        controllability=0.7,
+        executability_confidence=0.9,
+        prediction_ref="prediction.test.1",
+        evidence_refs=("evidence.1",),
+    )
+    decision = ProspectiveDecision(
+        competence_id="competence.test.1",
+        anticipated_effect_id="effect.test.1",
+        prediction_ref="prediction.test.1",
+        confidence=0.8,
+        epistemic_relevance=0.7,
+        homeostatic_relevance=0.3,
+        origin_refs=("readout.1",),
+        supporting_affordance_id="affordance.test.1",
+    )
+    plan = AdmittedActionPlan(
+        decision=decision,
+        supporting_affordance=affordance,
+        intent_id="intent.test.1",
+        proposal_id="proposal.test.1",
+        commitment_id="commitment.test.1",
+        controller_id="controller.test.1",
+        command_id="command.test.1",
+        intervention_signature_id="signature.test.1",
+    )
+
+    action_transition = execute_canonical_action_transition(
+        accepted.state,
+        domain,
+        plan,
+        controller=controller,
+        surface=surface,
+    )
+
+    assert action_transition.transition_state is accepted.state
+    assert action_transition.pipeline_result.motor_command.issued_at_tick == 15
+    assert action_transition.pipeline_result.attempt.started_tick == 15
+    assert domain.active_commitment is action_transition.pipeline_result.commitment
