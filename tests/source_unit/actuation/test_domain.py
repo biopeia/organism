@@ -18,6 +18,7 @@ from organism.actuation.action import (
 )
 from organism.actuation.commitment import ActionCommitment
 from organism.actuation.domain import ActionDomain
+from organism.actuation.commitment import CommitmentStatus
 from organism.actuation.surface import derive_actuator_constitution
 from organism.actuation.types import MotorIntent
 from organism.actuation.controller import SequenceController
@@ -101,7 +102,7 @@ def test_admitted_action_composes_to_registered_actuation_and_explicit_close():
         sequence=((MotorIntent("effector.left", 0.75),),),
     )
     command = domain.issue_command(controller, tick=5, command_id="command.1")
-    actuations = domain.execute(command, surface)
+    actuations = domain.execute(command, surface, tick=5)
     assert [(item.actuator_id, item.delivered) for item in actuations] == [
         ("effector.left", 0.75)
     ]
@@ -133,6 +134,152 @@ def test_admitted_action_composes_to_registered_actuation_and_explicit_close():
             tick=7,
             reason="duplicate",
         )
+
+
+def test_exploration_proposal_without_intent_can_commit_and_issue_command():
+    surface = derive_actuator_constitution(("effector.left",))
+    domain = ActionDomain()
+    proposal = ActionProposal(
+        proposal_id="exploration.1",
+        source=ActionSource.EXPLORATION,
+        effect_target_id=None,
+        competence_id=None,
+        justification=ActionJustification(),
+        evaluation=ActionEvaluation(),
+    )
+
+    selected = domain.select_and_commit(
+        (proposal,),
+        tick=7,
+        commitment_id="commitment.exploration.1",
+        controller_id="controller.exploration.1",
+        surface=surface,
+        embodiment_id="embodiment.1",
+        interruptibility=1.0,
+        minimum_duration=0,
+        maximum_duration=2,
+    )
+    commitment = selected.commitment
+    assert commitment is not None
+    assert commitment.intent_id is None
+    assert commitment.competence_id is None
+    assert commitment.effect_target_id is None
+
+    controller = SequenceController(
+        controller_id="controller.exploration.1",
+        sequence=((MotorIntent("effector.left", 0.25),),),
+    )
+    command = domain.issue_command(controller, tick=7, command_id="command.exploration.1")
+    assert command.competence_id is None
+    assert command.channels == (("effector.left", 0.25),)
+    assert domain.execute(command, surface, tick=7)[0].delivered == 0.25
+    assert domain.issue_command(controller, tick=8, command_id="command.exploration.2")
+    with pytest.raises(RuntimeError, match="has expired"):
+        domain.issue_command(controller, tick=9, command_id="command.exploration.3")
+    with pytest.raises(RuntimeError, match="has expired"):
+        domain.execute(command, surface, tick=9)
+    domain.close_exploration(
+        commitment.commitment_id,
+        tick=9,
+        reason="exploration_window_elapsed",
+    )
+    assert not commitment.active
+    assert commitment.status is CommitmentStatus.INVALIDATED
+
+
+@pytest.mark.parametrize(
+    "maximum_duration",
+    (None, 0, 1.5, True),
+)
+def test_intent_free_exploration_requires_positive_duration(maximum_duration):
+    surface = derive_actuator_constitution(("effector.left",))
+    domain = ActionDomain()
+    proposal = ActionProposal(
+        proposal_id="exploration.unbounded",
+        source=ActionSource.EXPLORATION,
+        effect_target_id=None,
+        competence_id=None,
+        justification=ActionJustification(),
+        evaluation=ActionEvaluation(),
+    )
+
+    with pytest.raises(ValueError, match="positive maximum duration"):
+        domain.select_and_commit(
+            (proposal,),
+            tick=7,
+            commitment_id="commitment.exploration.unbounded",
+            controller_id="controller.exploration.unbounded",
+            surface=surface,
+            embodiment_id="embodiment.1",
+            interruptibility=1.0,
+            minimum_duration=0,
+            maximum_duration=maximum_duration,
+        )
+
+
+@pytest.mark.parametrize(
+    "justification,evaluation",
+    (
+        (ActionJustification(prediction_id="prediction.1"), ActionEvaluation()),
+        (ActionJustification(evidence_refs=("evidence.1",)), ActionEvaluation()),
+        (ActionJustification(), ActionEvaluation(effect_confidence=0.1)),
+        (ActionJustification(), ActionEvaluation(controllability=0.1)),
+    ),
+)
+def test_intent_free_exploration_rejects_causal_evidence_claims(justification, evaluation):
+    surface = derive_actuator_constitution(("effector.left",))
+    domain = ActionDomain()
+    proposal = ActionProposal(
+        proposal_id="exploration.unsupported-evidence",
+        source=ActionSource.EXPLORATION,
+        effect_target_id=None,
+        competence_id=None,
+        justification=justification,
+        evaluation=evaluation,
+    )
+
+    with pytest.raises(ValueError, match="cannot claim causal evidence"):
+        domain.select_and_commit(
+            (proposal,),
+            tick=7,
+            commitment_id="commitment.exploration.unsupported-evidence",
+            controller_id="controller.exploration.unsupported-evidence",
+            surface=surface,
+            embodiment_id="embodiment.1",
+            interruptibility=1.0,
+            minimum_duration=0,
+            maximum_duration=2,
+        )
+
+
+@pytest.mark.parametrize(
+    "source",
+    (ActionSource.COMPETENCE, ActionSource.PROSPECTION, ActionSource.PROTECTION),
+)
+def test_non_exploration_proposal_without_intent_is_rejected(source):
+    surface = derive_actuator_constitution(("effector.left",))
+    domain = ActionDomain()
+    proposal = ActionProposal(
+        proposal_id="proposal.without.intent",
+        source=source,
+        effect_target_id=None,
+        competence_id=None,
+        justification=ActionJustification(),
+        evaluation=ActionEvaluation(),
+    )
+
+    with pytest.raises(ValueError, match="only exploration"):
+        domain.select_and_commit(
+            (proposal,),
+            tick=7,
+            commitment_id="commitment.invalid",
+            controller_id="controller.invalid",
+            surface=surface,
+            embodiment_id="embodiment.1",
+            interruptibility=1.0,
+            minimum_duration=0,
+            maximum_duration=None,
+    )
 
 
 def test_action_domain_checkpoint_restores_active_intent_commitment_and_outcomes():
@@ -369,7 +516,7 @@ def test_domain_rejects_unknown_stale_or_provenance_mismatched_command():
         embodiment_id=command.embodiment_id,
     )
     with pytest.raises(RuntimeError, match="registered active commitment"):
-        domain.execute(forged, surface)
+        domain.execute(forged, surface, tick=5)
 
     domain.close(
         commitment.commitment_id,
@@ -378,7 +525,7 @@ def test_domain_rejects_unknown_stale_or_provenance_mismatched_command():
         reason="controller_terminal_failure",
     )
     with pytest.raises(RuntimeError, match="registered active commitment"):
-        domain.execute(command, surface)
+        domain.execute(command, surface, tick=6)
 
 
 def test_no_proposal_does_not_issue_or_create_a_commitment():

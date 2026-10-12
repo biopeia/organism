@@ -276,18 +276,43 @@ class ActionDomain:
             return ActionSelection(decision=decision, commitment=current)
 
         proposal = decision.proposal
-        if not proposal.intent_id:
-            raise ValueError("selected action proposal must reference a registered intent")
-        intent = self._intents.get(proposal.intent_id)
-        if intent is None or intent.status is not IntentStatus.PENDING:
-            raise ValueError("selected proposal does not reference a pending registered intent")
-        _validate_causal_tick(tick, minimum=intent.created_tick, field="tick")
-        if proposal.competence_id != intent.competence_id:
-            raise ValueError("proposal competence does not match its admitted intent")
-        if proposal.effect_target_id != intent.anticipated_effect_id:
-            raise ValueError("proposal effect does not match its admitted intent")
-        if intent.embodiment_id is not None and intent.embodiment_id != embodiment_id:
-            raise ValueError("execution embodiment does not match its intent")
+        intent: ActionIntent | None = None
+        if proposal.intent_id is None:
+            # Exploration is explicitly allowed to request motor authority
+            # without an executive intention. Keep that path narrow: it may
+            # not smuggle in a competence/effect claim that has no admitted
+            # intent backing it.
+            if proposal.source is not ActionSource.EXPLORATION:
+                raise ValueError("only exploration proposals may omit an intent")
+            if proposal.competence_id is not None or proposal.effect_target_id is not None:
+                raise ValueError("intent-free exploration cannot claim competence or effect")
+            if (
+                proposal.justification.originating_need_id is not None
+                or proposal.justification.effect_target_id is not None
+                or proposal.justification.competence_id is not None
+                or proposal.justification.prediction_id is not None
+                or proposal.justification.evidence_refs
+                or proposal.evaluation.effect_confidence != 0.0
+                or proposal.evaluation.controllability is not None
+            ):
+                raise ValueError("intent-free exploration cannot claim causal evidence")
+            if (
+                isinstance(maximum_duration, bool)
+                or not isinstance(maximum_duration, int)
+                or maximum_duration <= 0
+            ):
+                raise ValueError("intent-free exploration requires a positive maximum duration")
+        else:
+            intent = self._intents.get(proposal.intent_id)
+            if intent is None or intent.status is not IntentStatus.PENDING:
+                raise ValueError("selected proposal does not reference a pending registered intent")
+            _validate_causal_tick(tick, minimum=intent.created_tick, field="tick")
+            if proposal.competence_id != intent.competence_id:
+                raise ValueError("proposal competence does not match its admitted intent")
+            if proposal.effect_target_id != intent.anticipated_effect_id:
+                raise ValueError("proposal effect does not match its admitted intent")
+            if intent.embodiment_id is not None and intent.embodiment_id != embodiment_id:
+                raise ValueError("execution embodiment does not match its intent")
         if commitment_id in self._commitments:
             raise ValueError("commitment_id is already registered")
         commitment = ActionCommitment(
@@ -300,7 +325,7 @@ class ActionDomain:
             surface_fingerprint=surface.contract_fingerprint,
             proposal_source=proposal.source,
             embodiment_id=embodiment_id,
-            intent_id=intent.intent_id,
+            intent_id=intent.intent_id if intent is not None else None,
             interruptibility=interruptibility,
             minimum_duration=minimum_duration,
             maximum_duration=maximum_duration,
@@ -320,7 +345,8 @@ class ActionDomain:
                     tick=tick,
                     reason="replaced_by_selected_proposal",
                 )
-        intent.transition(IntentStatus.ACTIVE, tick=tick)
+        if intent is not None:
+            intent.transition(IntentStatus.ACTIVE, tick=tick)
         self._commitments[commitment_id] = commitment
         self._active_commitment_id = commitment_id
         return ActionSelection(decision=decision, commitment=commitment)
@@ -337,6 +363,12 @@ class ActionDomain:
         if commitment is None or self._commitments.get(commitment.commitment_id) is not commitment:
             raise RuntimeError("no registered active action commitment")
         _validate_causal_tick(tick, minimum=commitment.started_tick, field="tick")
+        if (
+            commitment.intent_id is None
+            and commitment.maximum_duration is not None
+            and tick - commitment.started_tick >= commitment.maximum_duration
+        ):
+            raise RuntimeError("intent-free exploration commitment has expired")
         frame = controller.frame(commitment, tick=tick)
         return motor_command_from_frame(
             commitment,
@@ -345,11 +377,24 @@ class ActionDomain:
             issued_at_tick=tick,
         )
 
-    def execute(self, command: MotorCommand, surface: ActuatorSurface) -> tuple[Actuation, ...]:
+    def execute(
+        self,
+        command: MotorCommand,
+        surface: ActuatorSurface,
+        *,
+        tick: int,
+    ) -> tuple[Actuation, ...]:
         """Execute only a command bound to this domain's registered active commitment."""
+        _validate_causal_tick(tick, minimum=command.issued_at_tick, field="tick")
         commitment = self._commitments.get(command.commitment_id)
         if commitment is None or commitment is not self.active_commitment:
             raise RuntimeError("motor command does not reference the registered active commitment")
+        if (
+            commitment.intent_id is None
+            and commitment.maximum_duration is not None
+            and tick - commitment.started_tick >= commitment.maximum_duration
+        ):
+            raise RuntimeError("intent-free exploration commitment has expired")
         if (
             command.controller_id != commitment.controller_id
             or command.competence_id != commitment.competence_id
@@ -435,6 +480,32 @@ class ActionDomain:
             )
         commitment.terminate(tick=tick, status=commitment_status, reason=reason)
         intent.transition(status, tick=tick, reason=reason)
+        self._active_commitment_id = None
+        self._closed_commitments.add(commitment_id)
+
+    def close_exploration(
+        self,
+        commitment_id: str,
+        *,
+        tick: int,
+        reason: str,
+    ) -> None:
+        """End an intent-free exploration commitment without claiming an outcome."""
+        if not reason:
+            raise ValueError("exploration close reason must not be empty")
+        if commitment_id in self._closed_commitments:
+            raise ValueError("action commitment has already been closed")
+        commitment = self._commitments.get(commitment_id)
+        if commitment is None or commitment is not self.active_commitment:
+            raise ValueError("cannot close an unregistered or inactive commitment")
+        if commitment.intent_id is not None:
+            raise ValueError("close_exploration only accepts intent-free commitments")
+        _validate_causal_tick(tick, minimum=commitment.started_tick, field="tick")
+        commitment.terminate(
+            tick=tick,
+            status=CommitmentStatus.INVALIDATED,
+            reason=reason,
+        )
         self._active_commitment_id = None
         self._closed_commitments.add(commitment_id)
 
