@@ -29,6 +29,15 @@ class InvalidOrganismCheckpoint(ValueError):
     """A serialized checkpoint is malformed or fails its integrity check."""
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    document: dict[str, object] = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"duplicate checkpoint field: {key}")
+        document[key] = value
+    return document
+
+
 @dataclass(frozen=True, slots=True)
 class CheckpointDependency:
     """A durable content reference required to restore private Organism state."""
@@ -90,7 +99,7 @@ class OrganismCheckpoint:
     def from_bytes(cls, payload: bytes) -> OrganismCheckpoint:
         """Decode and integrity-check a versioned envelope; reject unknown shapes."""
         try:
-            document = json.loads(payload)
+            document = json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
             if not isinstance(document, dict) or set(document) != {
                 "schema", "schema_version", "identity", "private_state_base64",
                 "private_state_sha256", "dependencies",

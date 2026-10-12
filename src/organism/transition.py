@@ -27,6 +27,15 @@ class InvalidOrganismTransitionCheckpoint(ValueError):
     """A serialized canonical Organism transition state is invalid."""
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    document: dict[str, object] = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"duplicate transition checkpoint field: {key}")
+        document[key] = value
+    return document
+
+
 class OrganismLifecycle(StrEnum):
     """Longitudinal Organism lifecycle, independent of body/presence lifecycle."""
 
@@ -209,7 +218,7 @@ class OrganismTransitionState:
     def from_bytes(cls, payload: bytes) -> "OrganismTransitionState":
         """Restore a strict TARGET transition state; never default progression."""
         try:
-            document = json.loads(payload)
+            document = json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
             expected_keys = {
                 "schema",
                 "schema_version",
