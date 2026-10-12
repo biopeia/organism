@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from organism.actuation.action import MotorCommand
+from organism.actuation.action import ActionSource, MotorCommand
 from organism.actuation.commitment import ActionCommitment, CommitmentStatus
 from organism.actuation.surface import derive_actuator_constitution
 from organism.actuation.system import _ActuatorSystem
@@ -30,7 +30,9 @@ def _commitment(surface, *, commitment_id: str = "commitment.test") -> ActionCom
         started_tick=0,
         controller_id="controller.test",
         surface_fingerprint=surface.contract_fingerprint,
+        proposal_source=ActionSource.EXPLORATION,
         embodiment_id="embodiment.test",
+        maximum_duration=1,
     )
 
 
