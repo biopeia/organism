@@ -56,7 +56,7 @@ This document does not infer that every subsystem in the repository must be in e
 3. `OrganismTransitionState` requires lifecycle and validates its serialized shape, identity, lifecycle history, progression counter and owner envelope.
 4. `OrganismCheckpointContract.restore_transition_checkpoint()` decodes the transition envelope, checks expected Organism identity, and materializes the supported self-contained `CognitiveRuntimeCheckpoint` before returning a `RestoredOrganismTransitionCheckpoint`. The result constructor verifies that its cognitive runtime re-encodes to the exact private checkpoint bytes in the transition envelope. This is a bounded cognition-profile restore, not a general inventory-driven owner composition.
 5. The bounded cognition-profile test restores non-default recurrent state, experience records, safety state, sensory normalization and graph state, verifies exact checkpoint re-encoding, then continues through the public transition boundary from the canonical serialized transition. Negative tests cover malformed payload, unsupported dependency closure, wrong identity, size limit, and a result whose materialized runtime does not match its envelope.
-6. Bounded exploration restoration checks World committed-cut correlation and restores its engine/action-domain payload. Its source docstring explicitly excludes complete Organism continuation.
+6. Bounded exploration restoration checks World committed-cut correlation, materializes the embedded cognitive runtime, validates matching identity and exact private-state bytes, and restores the engine/action-domain payload before returning the composed result. Declared external dependency references still require a resolver and are verified separately. This demonstrates fail-closed restoration of the represented profile only; its source docstring explicitly excludes complete Organism continuation.
 
 ## Open acceptance work for MIG-002
 
@@ -65,7 +65,7 @@ This inventory does **not** close `organism#34`, `#41`, or `#45`. The following 
 1. Name the supported continuation profile(s) exercised by production callers, and trace each to the owner boundary that creates and restores it.
 2. For each required state in that profile, record whether it is embedded, referenced with a verified immutable identity, or intentionally external configuration. Explain why omitted state cannot alter the promised next transition.
 3. Reconcile all separate agency/actuation codecs against the bounded causal-action path; include only state required for that declared profile, but fail closed when any required element is absent.
-4. Add an Organism-owned aggregate validation/restore path that validates the entire supported profile before publishing restored state; component-by-component partial restoration must not escape on failure.
+4. Extend the bounded aggregate validation/restore path to every required state element in the declared production profile; component-by-component partial restoration must not escape on failure. The current exploration restore slice covers its represented cognitive payload, action domain and competence-development engine, but does not establish that these are all required production state.
 5. Test valid restore→next-transition/action continuation and rejection of missing, malformed, inconsistent, unavailable or wrong-identity required state. Preserve exact state where the contract requires it; do not silently initialize defaults.
 6. Re-run the inventory against the candidate commit and link each row to source and tests. Keep claims bounded: no World atomicity, cross-process recovery, scientific efficacy, or full runtime completeness absent separate evidence.
 
@@ -77,6 +77,6 @@ This inventory does **not** close `organism#34`, `#41`, or `#45`. The following 
 - `src/organism/checkpoint.py` — opaque owner payload and declared dependency references.
 - `src/organism/transition.py` — canonical transition/lifecycle envelope.
 - `src/organism/continuation.py` — serialized continuation/ancestry metadata and process-local canonical continuation registry; neither establishes cross-process authority by itself.
-- `src/organism/actuation/bounded_action.py` — bounded exploration/action aggregate, owner checkpoint contract, and bounded cognitive-profile restore result; this is not complete owner continuation.
+- `src/organism/actuation/bounded_action.py` — bounded exploration/action aggregate, owner checkpoint contract, and bounded cognition plus exploration-profile restore result; this is not complete owner continuation.
 - `src/organism/actuation/domain.py`, `sensorimotor.py`, `competence.py`, `binding.py`, and related modules — independently checkpointable action/competence components; not by themselves the general owner aggregate.
 - Tests: `tests/source_unit/cognition/test_portable_checkpoint.py`, `tests/source_unit/cognition/test_owner_transition.py`, `tests/source_unit/actuation/test_exploration_composition.py` (including the bounded cognitive restore profile), `tests/test_continuation.py`, and component checkpoint tests under `tests/source_unit/actuation/`.

@@ -83,7 +83,18 @@ class RestoredOrganismExplorationCheckpoint:
     """
 
     transition_state: OrganismTransitionState
+    cognitive_runtime: CognitiveRuntimeCheckpoint
     action_composer: OrganismExplorationComposer
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.transition_state, OrganismTransitionState):
+            raise TypeError("transition_state must be OrganismTransitionState")
+        if not isinstance(self.cognitive_runtime, CognitiveRuntimeCheckpoint):
+            raise TypeError("cognitive_runtime must be CognitiveRuntimeCheckpoint")
+        if self.transition_state.identity != self.cognitive_runtime.state.identity:
+            raise ValueError("transition and cognitive runtime identities differ")
+        if self.cognitive_runtime.to_bytes() != self.transition_state.owner_checkpoint.private_state:
+            raise ValueError("cognitive runtime does not match transition checkpoint")
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +528,8 @@ class OrganismExplorationComposer:
         expected_physical_step_id: str,
         read_dependency: Callable[[str], bytes] | None = None,
         kernel_limits: KernelLimits | None = None,
+        generative_registry: GenerativeModelRegistry | None = None,
+        running_version: tuple[int, int, int] | None = None,
     ) -> RestoredOrganismExplorationCheckpoint:
         """Restore the checkpoint's bounded state after World cut correlation.
 
@@ -539,6 +552,8 @@ class OrganismExplorationComposer:
             expected_physical_step_id=expected_physical_step_id,
             read_dependency=read_dependency,
             kernel_limits=kernel_limits,
+            generative_registry=generative_registry,
+            running_version=running_version,
         )
         if (
             decoded.world_id != committed_cut.world_id
@@ -557,6 +572,8 @@ class OrganismExplorationComposer:
         expected_physical_step_id: str | None = None,
         read_dependency: Callable[[str], bytes] | None = None,
         kernel_limits: KernelLimits | None = None,
+        generative_registry: GenerativeModelRegistry | None = None,
+        running_version: tuple[int, int, int] | None = None,
     ) -> _DecodedExplorationCheckpoint:
         if not isinstance(encoded, bytes):
             raise TypeError("encoded checkpoint must be bytes")
@@ -624,6 +641,14 @@ class OrganismExplorationComposer:
                     "owner checkpoint dependencies require a dependency reader"
                 )
             transition_state.verify_dependency_closure(read_dependency)
+        cognitive_runtime = CognitiveRuntimeCheckpoint.from_bytes(
+            transition_state.owner_checkpoint.private_state,
+            kernel_limits=limits,
+            generative_registry=generative_registry,
+            running_version=running_version,
+        )
+        if cognitive_runtime.state.identity != transition_state.identity:
+            raise ValueError("cognitive runtime identity does not match transition checkpoint")
         engine_payload = payload["engine"]
         actuator_ids = engine_payload.get("actuator_ids")
         fingerprint = engine_payload.get("embodiment_fingerprint")
@@ -646,7 +671,9 @@ class OrganismExplorationComposer:
         restored = cls(organism_id=organism_id, engine=engine, action_domain=domain)
         restored._generation = payload["generation"]
         return _DecodedExplorationCheckpoint(
-            restored=RestoredOrganismExplorationCheckpoint(transition_state, restored),
+            restored=RestoredOrganismExplorationCheckpoint(
+                transition_state, cognitive_runtime, restored
+            ),
             world_id=payload["world_id"],
             source_causal_tick=payload["source_causal_tick"],
             target_causal_tick=payload["target_causal_tick"],

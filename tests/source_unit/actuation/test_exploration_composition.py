@@ -17,6 +17,7 @@ from organism.actuation import (
     OrganismCheckpointContract,
     OrganismExplorationComposer,
     ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
+    RestoredOrganismExplorationCheckpoint,
     RestoredOrganismTransitionCheckpoint,
 )
 from organism.cognition import (
@@ -210,6 +211,9 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
         committed_cut=_CommittedCut("world.1", first.target_causal_tick, first.commit_id),
         expected_organism_id=str(IDENTITY),
         expected_physical_step_id=first.physical_step_id,
+    )
+    assert restored.cognitive_runtime.to_bytes() == (
+        restored.transition_state.owner_checkpoint.private_state
     )
     with pytest.raises(ValueError, match="does not match committed World cut"):
         OrganismExplorationComposer.restore_from_committed_checkpoint(
@@ -563,6 +567,73 @@ def test_owner_checkpoint_contract_validates_private_cognitive_payload() -> None
         str(IDENTITY),
         ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
     ) is False
+
+
+def test_exploration_restore_rejects_malformed_embedded_cognitive_payload() -> None:
+    surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+    context = _context(surface)
+    composer = _composer(surface, context)
+    candidate = _candidate_with_command(composer, surface, context)
+    transition = _transition(tick=candidate.source_causal_tick)
+    encoded = composer.checkpoint_for_candidate(
+        candidate,
+        transition_state=transition,
+    )
+    payload = json.loads(encoded)
+    malformed_transition = replace(
+        transition,
+        owner_checkpoint=replace(
+            transition.owner_checkpoint,
+            private_state=b"not-a-cognitive-runtime-checkpoint",
+        ),
+    )
+    payload["transition_state_base64"] = base64.b64encode(
+        malformed_transition.to_bytes()
+    ).decode("ascii")
+
+    with pytest.raises(ValueError, match="malformed cognitive runtime checkpoint"):
+        OrganismExplorationComposer.restore_from_committed_checkpoint(
+            json.dumps(payload).encode("utf-8"),
+            committed_cut=_CommittedCut(
+                candidate.world_id,
+                candidate.target_causal_tick,
+                candidate.commit_id,
+            ),
+            expected_organism_id=str(IDENTITY),
+            expected_physical_step_id=candidate.physical_step_id,
+        )
+
+
+def test_restored_exploration_result_rejects_same_identity_with_different_payload() -> None:
+    surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+    context = _context(surface)
+    composer = _composer(surface, context)
+    candidate = _candidate_with_command(composer, surface, context)
+    encoded = composer.checkpoint_for_candidate(
+        candidate,
+        transition_state=_transition(tick=candidate.source_causal_tick),
+    )
+    restored = OrganismExplorationComposer.restore_from_committed_checkpoint(
+        encoded,
+        committed_cut=_CommittedCut(
+            candidate.world_id,
+            candidate.target_causal_tick,
+            candidate.commit_id,
+        ),
+        expected_organism_id=str(IDENTITY),
+        expected_physical_step_id=candidate.physical_step_id,
+    )
+    inconsistent_runtime = replace(
+        restored.cognitive_runtime,
+        state=replace(restored.cognitive_runtime.state, last_causal_tick=99),
+    )
+
+    with pytest.raises(ValueError, match="does not match transition checkpoint"):
+        RestoredOrganismExplorationCheckpoint(
+            transition_state=restored.transition_state,
+            cognitive_runtime=inconsistent_runtime,
+            action_composer=restored.action_composer,
+        )
 
 
 def test_owner_checkpoint_contract_rejects_oversized_bytes_before_decoding() -> None:
