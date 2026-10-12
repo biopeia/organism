@@ -1009,3 +1009,19 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Target paths: `src/organism/cognition/portable_checkpoint.py`; `tests/source_unit/cognition/test_portable_checkpoint.py`.
 - Validation on the candidate: the regression reproduced acceptance of a payload with duplicate top-level `schema_version`; the strict decoder rejects duplicate top-level and nested graph fields. Full package tests, build, and `git diff --check` passed.
 - Limitations: this establishes only unambiguous JSON decoding for this bounded cognitive payload. It does not establish complete owner-private dependency closure, full Organism continuation, World durability, or scientific efficacy; issue #34 remains open. No `symbiont-lab` files were changed.
+
+## Incremental correction: validate owner-private payload at the World checkpoint boundary (issue #34)
+
+- Implementation base: `biopeia/organism@e0984df8ec359d18a4ee710114ee6ef0e7a761a2`.
+- Finding: `OrganismCheckpointContract` structurally decoded the public Organism transition/envelope and checked identity/referenced blobs, but did not validate the opaque private bytes against the currently supported owner payload decoder. A correctly hashed malformed owner payload could therefore pass the owner validation hook without being restorable by the bounded cognitive codec.
+- Disposition: `REWRITE` the TARGET owner-validation adapter only. The generic envelope remains opaque to World; Organism's own contract now validates its selected cognitive payload using explicit kernel resource limits before accepting transition or exploration checkpoints.
+- Target paths: `src/organism/actuation/bounded_action.py::OrganismCheckpointContract`; `tests/source_unit/actuation/test_exploration_composition.py`.
+- Validation: tests cover a valid cognitive owner payload, malformed owner-private bytes inside an otherwise valid transition envelope, and disagreement between the envelope identity and private cognitive identity. Local full suite: 1,296 passed; focused tests: 48 passed; `uv build` built sdist and wheel; `git diff --check` passed. Ruff is unavailable in this environment.
+- Scope limitations: this validates only the currently supported schema-v8 cognitive payload embedded in the transition/exploration forms accepted by this adapter. It does not compose agency/actuation state, make every Organism subsystem portable, prove fresh-process recovery or World durability, or close #33/#34/#41/#60. Exact-head CI and independent adversarial review are required because this changes persisted-state validation. No `symbiont-lab` files were changed.
+
+### Follow-up: bound checkpoint bytes before decoding
+
+- Independent review reproduced acceptance of a JSON-valid transition checkpoint padded with whitespace beyond the existing 8 MiB plastic-state ceiling. That ceiling describes one state component and was not a bound on the complete owner checkpoint; the observation does not establish remote exploitability.
+- The TARGET runtime now declares a separate hard `max_owner_checkpoint_bytes` limit (default 16 MiB). Owner validation rejects oversized encoded bytes before parsing; file-based verification checks file size before reading and still validates the loaded byte count; the cognitive checkpoint decoder also rejects oversized bytes before JSON parsing. The distinct limit avoids treating the component-specific plastic-state ceiling as a total-payload budget.
+- Regression tests cover exact configured boundary acceptance and rejection above the boundary, including the independent review's padded-checkpoint failure mode.
+- This is a resource-bounded decoding guarantee, not a universal denial-of-service or host-memory guarantee. Exact-head CI and independent review of the revised candidate remain required; no full Organism continuation or migration closure claim is made.

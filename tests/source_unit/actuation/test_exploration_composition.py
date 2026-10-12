@@ -501,3 +501,72 @@ def test_target_tick_must_match_world_physical_step_successor() -> None:
             physical_step_id="physical-step.7",
             commit_id="commit.7",
         )
+
+
+def test_owner_checkpoint_contract_validates_private_cognitive_payload() -> None:
+    contract = OrganismCheckpointContract()
+    valid_transition = _transition()
+    assert contract.validate_checkpoint(
+        valid_transition.to_bytes(),
+        str(IDENTITY),
+        ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
+    ) is True
+
+    # The generic envelope remains structurally valid and identity-matched,
+    # but the owner-private payload is not a valid supported cognitive state.
+    malformed_owner_checkpoint = replace(
+        valid_transition.owner_checkpoint,
+        private_state=b"not-a-cognitive-runtime-checkpoint",
+    )
+    malformed_transition = replace(
+        valid_transition,
+        owner_checkpoint=malformed_owner_checkpoint,
+    )
+    assert contract.validate_checkpoint(
+        malformed_transition.to_bytes(),
+        str(IDENTITY),
+        ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
+    ) is False
+
+
+def test_owner_checkpoint_contract_rejects_oversized_bytes_before_decoding() -> None:
+    encoded = _transition().to_bytes()
+    contract = OrganismCheckpointContract()
+    oversized = encoded + b" " * (
+        KernelLimits().max_owner_checkpoint_bytes - len(encoded) + 1
+    )
+
+    assert contract.validate_checkpoint(
+        encoded, str(IDENTITY), ORGANISM_TRANSITION_CHECKPOINT_SCHEMA
+    ) is True
+    assert contract.validate_checkpoint(
+        oversized, str(IDENTITY), ORGANISM_TRANSITION_CHECKPOINT_SCHEMA
+    ) is False
+
+
+def test_owner_checkpoint_contract_rejects_private_identity_mismatch() -> None:
+    contract = OrganismCheckpointContract()
+    transition = _transition()
+    different_identity = OrganismIdentity.create(
+        UUID("d6e5d7f6-e8a2-451e-a9c4-62c27be2c47d")
+    )
+    private_checkpoint = CognitiveRuntimeCheckpoint(
+        state=CognitiveTransitionState.initial(different_identity),
+        graph=CognitiveGraph(
+            nodes=(PlasticNode("node.1", NodeKind.STATE),),
+            edges=(),
+            kernel_limits=KernelLimits(),
+        ),
+    ).to_organism_checkpoint()
+    mismatched_transition = replace(
+        transition,
+        owner_checkpoint=replace(
+            private_checkpoint,
+            identity=transition.identity,
+        ),
+    )
+    assert contract.validate_checkpoint(
+        mismatched_transition.to_bytes(),
+        str(IDENTITY),
+        ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
+    ) is False

@@ -225,6 +225,10 @@ class CognitiveRuntimeCheckpoint:
         running_version: tuple[int, int, int] | None = None,
         genome_schema: GenomeSchema = DEFAULT_GENOME_SCHEMA,
     ) -> CognitiveRuntimeCheckpoint:
+        if not isinstance(payload, bytes):
+            raise CognitiveRuntimeCheckpointError("cognitive checkpoint payload must be bytes")
+        if len(payload) > kernel_limits.max_owner_checkpoint_bytes:
+            raise CognitiveRuntimeCheckpointError("cognitive checkpoint exceeds byte limit")
         try:
             document = json.loads(payload, object_pairs_hook=_reject_duplicate_json_fields)
             if not isinstance(document, dict) or set(document) != {

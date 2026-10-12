@@ -14,6 +14,7 @@ def test_defaults_match_the_design_doc_table():
     assert limits.max_structural_mutations_per_consolidation == 16
     assert limits.consolidation_interval_ticks == 32
     assert limits.max_plastic_checkpoint_bytes == 8 * 1024 * 1024
+    assert limits.max_owner_checkpoint_bytes == 16 * 1024 * 1024
     assert limits.max_consolidation_candidates == 1024
     assert limits.max_salient_event_traces == 64
     assert limits.consolidation_epoch_ticks == 8
@@ -34,6 +35,7 @@ def test_defaults_match_the_design_doc_table():
         "max_structural_mutations_per_consolidation",
         "consolidation_interval_ticks",
         "max_plastic_checkpoint_bytes",
+        "max_owner_checkpoint_bytes",
         "max_consolidation_candidates",
         "max_salient_event_traces",
         "consolidation_epoch_ticks",
