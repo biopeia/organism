@@ -59,6 +59,9 @@ def test_structural_plasticity_restore_rejects_missing_or_lossy_payloads(payload
 
 def test_structural_plasticity_restore_rejects_coerced_identifiers():
     payload = {
+        "min_candidate_support": 2,
+        "tentative_lifetime_ticks": 4,
+        "cooldown_ticks": 3,
         "coactivation_counts": [
             {"source_id": 1, "target_id": "b", "count": 1}
         ],
@@ -101,3 +104,14 @@ def test_structural_plasticity_restore_self_contained_config_and_conflicts():
         StructuralPlasticity.restore_checkpoint(
             chk, cooldown_ticks=99, allowed_node_ids={"a", "b"}
         )
+
+
+def test_structural_plasticity_restore_rejects_pre_config_checkpoint_even_with_config():
+    pre_config_payload = {
+        "coactivation_counts": [],
+        "motor_association_counts": [],
+        "cooldown_until": {},
+    }
+
+    with pytest.raises(ValueError, match="fields do not match the current schema"):
+        _restore(pre_config_payload)
