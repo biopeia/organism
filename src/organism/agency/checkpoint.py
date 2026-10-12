@@ -1,6 +1,7 @@
 """Checkpoint serialisation for L8 Prospective Agency.
 
-Persists: OutcomeValueLedger (learned endogenous value statistics).
+Persists: OutcomeValueLedger (learned endogenous value statistics), query budget,
+and the effective prospective-policy configuration required for continuation.
 
 Not persisted:
 - Pending counterfactuals (ephemeral, cross-restart causality breaks)
@@ -12,7 +13,7 @@ Schema version is checked strictly; unknown versions fail closed.
 
 from __future__ import annotations
 
-PROSPECTIVE_AGENCY_SCHEMA_VERSION = 1
+PROSPECTIVE_AGENCY_SCHEMA_VERSION = 2
 
 __all__ = [
     "PROSPECTIVE_AGENCY_SCHEMA_VERSION",

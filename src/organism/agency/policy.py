@@ -90,8 +90,18 @@ class ProspectivePolicy:
 
         self._organism_id = organism_id
         self._min_model_confidence = float(min_model_confidence)
+        self._min_value_samples = min_value_samples
         self._min_value_confidence = float(min_value_samples) / 16.0
         self._decision_margin = float(decision_margin)
+
+    def checkpoint_configuration(self) -> dict[str, object]:
+        """Return the exact configuration required to resume this policy."""
+        return {
+            "organism_id": self._organism_id,
+            "min_model_confidence": self._min_model_confidence,
+            "min_value_samples": self._min_value_samples,
+            "decision_margin": self._decision_margin,
+        }
 
     def _tiebreak_key(self, action_id: str, tick: int) -> str:
         material = f"{self._organism_id}:{tick}:{action_id}".encode("utf-8")
