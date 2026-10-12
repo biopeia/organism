@@ -4,6 +4,8 @@ import base64
 from dataclasses import dataclass, replace
 import json
 from hashlib import sha256
+from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -12,7 +14,9 @@ from organism.actuation import (
     ActuatorEvidenceContext,
     ActuatorSurface,
     CompetenceDevelopmentEngine,
+    OrganismCheckpointContract,
     OrganismExplorationComposer,
+    ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
 )
 from organism.cognition import (
     CognitiveRuntimeCheckpoint,
@@ -129,7 +133,7 @@ def _candidate_with_command(
     pytest.fail("deterministic bounded exploration produced no command in 64 ticks")
 
 
-def test_production_composer_stages_identity_bound_exploration_without_evidence_claims() -> None:
+def test_production_composer_stages_identity_bound_exploration_without_evidence_claims(tmp_path: Path) -> None:
     surface = ActuatorSurface.from_effector_ids(ACTUATORS)
     context = _context(surface)
     composer = _composer(surface, context)
@@ -163,6 +167,40 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
         first,
         transition_state=_transition(tick=first.source_causal_tick),
     )
+    checkpoint_contract = OrganismCheckpointContract()
+    schema = "biopeia-organism-exploration-checkpoint-v3"
+    assert checkpoint_contract.validate_checkpoint(encoded, str(IDENTITY), schema) is True
+    assert checkpoint_contract.validate_checkpoint(encoded, "other-organism", schema) is False
+    assert checkpoint_contract.validate_checkpoint(encoded, str(IDENTITY), "unknown-schema") is False
+    assert checkpoint_contract.validate_checkpoint(
+        b'{"schema":"duplicate","schema":"duplicate"}', str(IDENTITY), schema
+    ) is False
+    transition_bytes = _transition(tick=first.source_causal_tick).to_bytes()
+    assert checkpoint_contract.validate_checkpoint(
+        transition_bytes, str(IDENTITY), ORGANISM_TRANSITION_CHECKPOINT_SCHEMA
+    ) is True
+    assert checkpoint_contract.validate_checkpoint(
+        transition_bytes, "other-organism", ORGANISM_TRANSITION_CHECKPOINT_SCHEMA
+    ) is False
+    checkpoint_path = tmp_path / "organism-checkpoint.json"
+    checkpoint_path.write_bytes(encoded)
+    reference = SimpleNamespace(
+        owner="organism",
+        owner_identity=str(IDENTITY),
+        schema_version=schema,
+        locator=str(checkpoint_path),
+        sha256=sha256(encoded).hexdigest(),
+    )
+    assert checkpoint_contract.verify_restoration(reference) is True
+    assert checkpoint_contract.verify_restoration(
+        SimpleNamespace(
+            owner=reference.owner,
+            owner_identity=reference.owner_identity,
+            schema_version=reference.schema_version,
+            locator=reference.locator,
+            sha256="0" * 64,
+        )
+    ) is False
     restored = OrganismExplorationComposer.restore_from_committed_checkpoint(
         encoded,
         committed_cut=_CommittedCut("world.1", first.target_causal_tick, first.commit_id),

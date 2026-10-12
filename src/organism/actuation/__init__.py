@@ -16,6 +16,9 @@ from .controller import ControllerFrame, SequenceController
 from .domain import ActionDomain, ActionSelection
 from .bounded_action import (
     ExplorationActionCandidate,
+    ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA,
+    ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
+    OrganismCheckpointContract,
     OrganismExplorationComposer,
     RestoredOrganismExplorationCheckpoint,
 )
@@ -112,6 +115,9 @@ __all__ = [
     "MotorCommand",
     "MotorCompetence",
     "MotorIntent",
+    "ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA",
+    "ORGANISM_TRANSITION_CHECKPOINT_SCHEMA",
+    "OrganismCheckpointContract",
     "OrganismExplorationComposer",
     "RestoredOrganismExplorationCheckpoint",
     "PredictionError",

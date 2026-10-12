@@ -11,6 +11,7 @@ import base64
 import json
 from dataclasses import dataclass
 from hashlib import sha256
+from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
 
 from ..transition import OrganismLifecycle, OrganismTransitionState
@@ -80,6 +81,80 @@ class RestoredOrganismExplorationCheckpoint:
 
     transition_state: OrganismTransitionState
     action_composer: OrganismExplorationComposer
+
+
+@dataclass(frozen=True, slots=True)
+class _DecodedExplorationCheckpoint:
+    restored: RestoredOrganismExplorationCheckpoint
+    world_id: str
+    source_causal_tick: int
+    target_causal_tick: int
+    physical_step_id: str
+    commit_id: str
+
+
+ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA = "biopeia-organism-exploration-checkpoint-v3"
+ORGANISM_TRANSITION_CHECKPOINT_SCHEMA = "organism-transition-v2"
+
+
+class OrganismCheckpointContract:
+    """Owner-side codec contract for World checkpoint validation.
+
+    This adapter validates the two Organism checkpoint forms used by the
+    bounded causal-cycle composition: transition state and staged exploration
+    state. It does not grant World authority over Organism state, and structural
+    verification is not proof that an arbitrary caller is World.
+    """
+
+    owner = "organism"
+
+    def __init__(self, *, read_dependency: Callable[[str], bytes] | None = None) -> None:
+        self._read_dependency = read_dependency
+
+    def validate_checkpoint(self, encoded: bytes, owner_identity: str, schema_version: str) -> bool:
+        try:
+            if schema_version == ORGANISM_TRANSITION_CHECKPOINT_SCHEMA:
+                if not isinstance(encoded, bytes):
+                    return False
+                state = OrganismTransitionState.from_bytes(encoded)
+                if str(state.identity) != owner_identity:
+                    return False
+                if state.owner_checkpoint.dependencies:
+                    if self._read_dependency is None:
+                        return False
+                    state.verify_dependency_closure(self._read_dependency)
+                return True
+            if schema_version == ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA:
+                OrganismExplorationComposer._decode_checkpoint(
+                    encoded,
+                    expected_organism_id=owner_identity,
+                    read_dependency=self._read_dependency,
+                )
+                return True
+        except (TypeError, ValueError):
+            return False
+        return False
+
+    def verify_restoration(self, reference: object) -> bool:
+        """Verify bytes selected by World against its committed reference."""
+        if (
+            getattr(reference, "owner", None) != self.owner
+            or not isinstance(getattr(reference, "owner_identity", None), str)
+            or getattr(reference, "schema_version", None)
+            not in {ORGANISM_TRANSITION_CHECKPOINT_SCHEMA, ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA}
+            or not isinstance(getattr(reference, "locator", None), str)
+            or not isinstance(getattr(reference, "sha256", None), str)
+        ):
+            return False
+        try:
+            encoded = Path(reference.locator).read_bytes()
+        except OSError:
+            return False
+        if sha256(encoded).hexdigest() != reference.sha256:
+            return False
+        return self.validate_checkpoint(
+            encoded, reference.owner_identity, reference.schema_version
+        )
 
 
 class OrganismExplorationComposer:
@@ -325,7 +400,7 @@ class OrganismExplorationComposer:
         correlation = transition_state.world_correlation
         assert correlation is not None
         payload = {
-            "schema": "biopeia-organism-exploration-checkpoint-v3",
+            "schema": ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA,
             "organism_id": self._organism_id,
             "generation": generation,
             "world_id": correlation.world_id,
@@ -360,13 +435,42 @@ class OrganismExplorationComposer:
         transition checkpoint declares external dependencies, this method
         requires and verifies a resolver before returning restored state.
         """
-        if not isinstance(encoded, bytes):
-            raise TypeError("encoded checkpoint must be bytes")
         if not isinstance(committed_cut, CommittedWorldCutReference):
             raise TypeError("restore requires a World committed-cut receipt")
         if not isinstance(expected_organism_id, str) or not expected_organism_id.strip():
             raise ValueError("expected_organism_id must be non-empty")
         if not isinstance(expected_physical_step_id, str) or not expected_physical_step_id.strip():
+            raise ValueError("expected_physical_step_id must be non-empty")
+        decoded = cls._decode_checkpoint(
+            encoded,
+            expected_organism_id=expected_organism_id,
+            expected_physical_step_id=expected_physical_step_id,
+            read_dependency=read_dependency,
+        )
+        if (
+            decoded.world_id != committed_cut.world_id
+            or decoded.target_causal_tick != committed_cut.causal_tick
+            or decoded.commit_id != committed_cut.commit_id
+        ):
+            raise ValueError("exploration checkpoint does not match committed World cut")
+        return decoded.restored
+
+    @classmethod
+    def _decode_checkpoint(
+        cls,
+        encoded: bytes,
+        *,
+        expected_organism_id: str,
+        expected_physical_step_id: str | None = None,
+        read_dependency: Callable[[str], bytes] | None = None,
+    ) -> _DecodedExplorationCheckpoint:
+        if not isinstance(encoded, bytes):
+            raise TypeError("encoded checkpoint must be bytes")
+        if not isinstance(expected_organism_id, str) or not expected_organism_id.strip():
+            raise ValueError("expected_organism_id must be non-empty")
+        if expected_physical_step_id is not None and (
+            not isinstance(expected_physical_step_id, str) or not expected_physical_step_id.strip()
+        ):
             raise ValueError("expected_physical_step_id must be non-empty")
         try:
             payload = json.loads(encoded, object_pairs_hook=_reject_duplicate_keys)
@@ -379,18 +483,11 @@ class OrganismExplorationComposer:
         }
         if not isinstance(payload, dict) or set(payload) != expected:
             raise ValueError("exploration checkpoint fields do not match schema")
-        if payload["schema"] != "biopeia-organism-exploration-checkpoint-v3":
+        if payload["schema"] != ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA:
             raise ValueError("unsupported exploration checkpoint schema")
-        if (
-            payload["world_id"] != committed_cut.world_id
-            or payload["target_causal_tick"] != committed_cut.causal_tick
-            or payload["commit_id"] != committed_cut.commit_id
-        ):
-            raise ValueError("exploration checkpoint does not match committed World cut")
-        if (
-            payload["organism_id"] != expected_organism_id
-            or payload["physical_step_id"] != expected_physical_step_id
-        ):
+        if payload["organism_id"] != expected_organism_id:
+            raise ValueError("exploration checkpoint does not match expected owner or physical step")
+        if expected_physical_step_id is not None and payload["physical_step_id"] != expected_physical_step_id:
             raise ValueError("exploration checkpoint does not match expected owner or physical step")
         if (
             not isinstance(payload["organism_id"], str)
@@ -401,6 +498,8 @@ class OrganismExplorationComposer:
             or payload["source_causal_tick"] < 0
             or type(payload["target_causal_tick"]) is not int
             or payload["target_causal_tick"] != payload["source_causal_tick"] + 1
+            or not isinstance(payload["world_id"], str)
+            or not payload["world_id"]
             or not isinstance(payload["physical_step_id"], str)
             or not payload["physical_step_id"]
             or not isinstance(payload["commit_id"], str)
@@ -449,7 +548,14 @@ class OrganismExplorationComposer:
         domain = ActionDomain.restore(payload["action_domain"])
         restored = cls(organism_id=organism_id, engine=engine, action_domain=domain)
         restored._generation = payload["generation"]
-        return RestoredOrganismExplorationCheckpoint(transition_state, restored)
+        return _DecodedExplorationCheckpoint(
+            restored=RestoredOrganismExplorationCheckpoint(transition_state, restored),
+            world_id=payload["world_id"],
+            source_causal_tick=payload["source_causal_tick"],
+            target_causal_tick=payload["target_causal_tick"],
+            physical_step_id=payload["physical_step_id"],
+            commit_id=payload["commit_id"],
+        )
 
     def _owns_staged_candidate(self, candidate: ExplorationActionCandidate) -> bool:
         return (
