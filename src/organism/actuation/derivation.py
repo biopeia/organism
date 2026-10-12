@@ -27,6 +27,7 @@ from .competence import (
     DEFAULT_COMPETENCE_GATE,
     MotorCompetence,
 )
+from .context import ActuatorEvidenceContext
 from .evidence import CausalEvidenceLedger
 from .model import (
     CausalSourceKind,
@@ -51,8 +52,8 @@ def derive_motor_competence_from_evidence(
     effect_id: str,
     ledger: CausalEvidenceLedger,
     controllability_model: ControllabilityModel,
-    surface_fingerprint: str,
     context_ref: str | None = None,
+    applicability_context: ActuatorEvidenceContext | None = None,
     tick: int,
     competence_library: CompetenceLibrary | None = None,
     binding_registry: CompetenceExecutionBindingRegistry | None = None,
@@ -64,6 +65,11 @@ def derive_motor_competence_from_evidence(
     - ``primitive`` must be an established MotorPrimitive.
     - ``ledger`` must contain positive action-linked opportunities for the primitive
       and a valid non-action/passive baseline.
+    - ``context_ref`` selects the exact evidence context; evidence references in
+      the result are restricted to that same context.
+    - An execution binding is created only when ``applicability_context`` is
+      supplied and ``context_ref`` equals its fingerprint. The context carries
+      the owner-supplied current body/episode/morphology/surface identity.
     - If causal contrast (action hit rate vs passive hit rate) is zero or negative,
       or if no action hits exist, controllability confidence is 0.0.
     """
@@ -73,8 +79,15 @@ def derive_motor_competence_from_evidence(
         raise TypeError("ledger must be a CausalEvidenceLedger")
     if not isinstance(controllability_model, ControllabilityModel):
         raise TypeError("controllability_model must be a ControllabilityModel")
-    if not isinstance(surface_fingerprint, str) or not surface_fingerprint.strip():
-        raise ValueError("surface_fingerprint must be a non-empty string")
+    if applicability_context is not None and not isinstance(
+        applicability_context, ActuatorEvidenceContext
+    ):
+        raise TypeError("applicability_context must be an ActuatorEvidenceContext or None")
+    if applicability_context is not None:
+        if context_ref != applicability_context.fingerprint:
+            raise ValueError(
+                "context_ref must match the explicit current Embodiment applicability context"
+            )
     if not isinstance(effect_id, str) or not effect_id.strip():
         raise ValueError("effect_id must be a non-empty string")
     if isinstance(tick, bool) or not isinstance(tick, int) or tick < 0:
@@ -101,11 +114,13 @@ def derive_motor_competence_from_evidence(
     )
     action_n, action_hits, other_n, other_hits = opportunities
 
-    # Extract matching evidence IDs (most recent action-linked observations)
+    # Extract evidence references from the same context used for the estimate.
     evidence_ids: list[str] = [
         item.evidence_id
         for item in reversed(ledger.intervention_evidence)
-        if item.competence_id == competence_id and item.effect_id == effect_id
+        if item.competence_id == competence_id
+        and item.effect_id == effect_id
+        and item.context_ref == context_ref
     ][:8]
 
     reproducibility = action_hits / action_n if action_n > 0 else 0.0
@@ -138,14 +153,14 @@ def derive_motor_competence_from_evidence(
 
     # 3. Create execution binding if binding_registry supplied and evidence is valid
     binding: CompetenceExecutionBinding | None = None
-    if binding_registry is not None:
+    if binding_registry is not None and applicability_context is not None:
         if evidence_ids and competence.maturity in {
             CompetenceMaturity.ESTABLISHED,
             CompetenceMaturity.ROBUST,
         }:
             binding = binding_registry.bind_from_evidence(
                 competence_id=competence_id,
-                surface_fingerprint=surface_fingerprint,
+                surface_fingerprint=applicability_context.surface_fingerprint,
                 effect_id=effect_id,
                 evidence_refs=tuple(evidence_ids),
                 reliability=reproducibility,
