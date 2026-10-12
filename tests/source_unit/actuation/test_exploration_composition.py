@@ -266,6 +266,38 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
     assert restored_composer._generation == composer._generation
     assert restored_composer._engine.checkpoint() == composer._engine.checkpoint()
     assert restored_composer._domain.checkpoint() == composer._domain.checkpoint()
+
+    # Equal serialized owner state is not sufficient evidence by itself: the
+    # restored composition must consume that state identically on the next
+    # accepted source transition. Compare both action output and the next
+    # staged owner checkpoint under identical inputs.
+    next_transition = _transition(tick=first.target_causal_tick)
+    next_step_id = f"physical-step.{first.target_causal_tick}"
+    next_commit_id = f"commit.{first.target_causal_tick}"
+    next_candidate = composer.prepare(
+        next_transition,
+        actuator_context=context,
+        surface=surface,
+        target_causal_tick=first.target_causal_tick + 1,
+        physical_step_id=next_step_id,
+        commit_id=next_commit_id,
+    )
+    restored_candidate = restored_composer.prepare(
+        next_transition,
+        actuator_context=context,
+        surface=surface,
+        target_causal_tick=first.target_causal_tick + 1,
+        physical_step_id=next_step_id,
+        commit_id=next_commit_id,
+    )
+    assert restored_candidate.proposal == next_candidate.proposal
+    assert restored_candidate.motor_command == next_candidate.motor_command
+    assert restored_candidate.candidate_id == next_candidate.candidate_id
+    assert restored_composer.checkpoint_for_candidate(
+        restored_candidate, transition_state=next_transition
+    ) == composer.checkpoint_for_candidate(
+        next_candidate, transition_state=next_transition
+    )
     with pytest.raises(ValueError, match="stale"):
         composer.adopt_after_world_commit(
             first,
