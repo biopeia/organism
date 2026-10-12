@@ -134,6 +134,75 @@ def test_admitted_action_composes_to_registered_actuation_and_explicit_close():
         )
 
 
+def test_exploration_proposal_without_intent_can_commit_and_issue_command():
+    surface = derive_actuator_constitution(("effector.left",))
+    domain = ActionDomain()
+    proposal = ActionProposal(
+        proposal_id="exploration.1",
+        source=ActionSource.EXPLORATION,
+        effect_target_id=None,
+        competence_id=None,
+        justification=ActionJustification(),
+        evaluation=ActionEvaluation(),
+    )
+
+    selected = domain.select_and_commit(
+        (proposal,),
+        tick=7,
+        commitment_id="commitment.exploration.1",
+        controller_id="controller.exploration.1",
+        surface=surface,
+        embodiment_id="embodiment.1",
+        interruptibility=1.0,
+        minimum_duration=0,
+        maximum_duration=None,
+    )
+    commitment = selected.commitment
+    assert commitment is not None
+    assert commitment.intent_id is None
+    assert commitment.competence_id is None
+    assert commitment.effect_target_id is None
+
+    controller = SequenceController(
+        controller_id="controller.exploration.1",
+        sequence=((MotorIntent("effector.left", 0.25),),),
+    )
+    command = domain.issue_command(controller, tick=7, command_id="command.exploration.1")
+    assert command.competence_id is None
+    assert command.channels == (("effector.left", 0.25),)
+    assert domain.execute(command, surface)[0].delivered == 0.25
+
+
+@pytest.mark.parametrize(
+    "source",
+    (ActionSource.COMPETENCE, ActionSource.PROSPECTION, ActionSource.PROTECTION),
+)
+def test_non_exploration_proposal_without_intent_is_rejected(source):
+    surface = derive_actuator_constitution(("effector.left",))
+    domain = ActionDomain()
+    proposal = ActionProposal(
+        proposal_id="proposal.without.intent",
+        source=source,
+        effect_target_id=None,
+        competence_id=None,
+        justification=ActionJustification(),
+        evaluation=ActionEvaluation(),
+    )
+
+    with pytest.raises(ValueError, match="only exploration"):
+        domain.select_and_commit(
+            (proposal,),
+            tick=7,
+            commitment_id="commitment.invalid",
+            controller_id="controller.invalid",
+            surface=surface,
+            embodiment_id="embodiment.1",
+            interruptibility=1.0,
+            minimum_duration=0,
+            maximum_duration=None,
+        )
+
+
 def test_domain_rejects_fabricated_intent_and_mismatched_proposal():
     domain = ActionDomain()
     surface = derive_actuator_constitution(("effector.left",))

@@ -18,7 +18,7 @@ from ..agency.executive_outcome import (
 from ..agency.affordance import ActionAffordance
 from ..agency.intention import ActionIntent, IntentStatus
 from ..agency.prospective import ProspectiveDecision
-from .action import ActionProposal, MotorCommand
+from .action import ActionProposal, ActionSource, MotorCommand
 from .arbitration import ActionArbitrator, ArbitrationDecision
 from .commitment import ActionCommitment, CommitmentStatus
 from .command import motor_command_from_frame
@@ -139,18 +139,27 @@ class ActionDomain:
             return ActionSelection(decision=decision, commitment=current)
 
         proposal = decision.proposal
-        if not proposal.intent_id:
-            raise ValueError("selected action proposal must reference a registered intent")
-        intent = self._intents.get(proposal.intent_id)
-        if intent is None or intent.status is not IntentStatus.PENDING:
-            raise ValueError("selected proposal does not reference a pending registered intent")
-        _validate_causal_tick(tick, minimum=intent.created_tick, field="tick")
-        if proposal.competence_id != intent.competence_id:
-            raise ValueError("proposal competence does not match its admitted intent")
-        if proposal.effect_target_id != intent.anticipated_effect_id:
-            raise ValueError("proposal effect does not match its admitted intent")
-        if intent.embodiment_id is not None and intent.embodiment_id != embodiment_id:
-            raise ValueError("execution embodiment does not match its intent")
+        intent: ActionIntent | None = None
+        if proposal.intent_id is None:
+            # Exploration is explicitly allowed to request motor authority
+            # without an executive intention. Keep that path narrow: it may
+            # not smuggle in a competence/effect claim that has no admitted
+            # intent backing it.
+            if proposal.source is not ActionSource.EXPLORATION:
+                raise ValueError("only exploration proposals may omit an intent")
+            if proposal.competence_id is not None or proposal.effect_target_id is not None:
+                raise ValueError("intent-free exploration cannot claim competence or effect")
+        else:
+            intent = self._intents.get(proposal.intent_id)
+            if intent is None or intent.status is not IntentStatus.PENDING:
+                raise ValueError("selected proposal does not reference a pending registered intent")
+            _validate_causal_tick(tick, minimum=intent.created_tick, field="tick")
+            if proposal.competence_id != intent.competence_id:
+                raise ValueError("proposal competence does not match its admitted intent")
+            if proposal.effect_target_id != intent.anticipated_effect_id:
+                raise ValueError("proposal effect does not match its admitted intent")
+            if intent.embodiment_id is not None and intent.embodiment_id != embodiment_id:
+                raise ValueError("execution embodiment does not match its intent")
         if commitment_id in self._commitments:
             raise ValueError("commitment_id is already registered")
         commitment = ActionCommitment(
@@ -162,7 +171,7 @@ class ActionDomain:
             controller_id=controller_id,
             surface_fingerprint=surface.contract_fingerprint,
             embodiment_id=embodiment_id,
-            intent_id=intent.intent_id,
+            intent_id=intent.intent_id if intent is not None else None,
             interruptibility=interruptibility,
             minimum_duration=minimum_duration,
             maximum_duration=maximum_duration,
@@ -182,7 +191,8 @@ class ActionDomain:
                     tick=tick,
                     reason="replaced_by_selected_proposal",
                 )
-        intent.transition(IntentStatus.ACTIVE, tick=tick)
+        if intent is not None:
+            intent.transition(IntentStatus.ACTIVE, tick=tick)
         self._commitments[commitment_id] = commitment
         self._active_commitment_id = commitment_id
         return ActionSelection(decision=decision, commitment=commitment)
