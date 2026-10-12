@@ -21,6 +21,7 @@ from .bounded_action import (
     OrganismCheckpointContract,
     OrganismExplorationComposer,
     RestoredOrganismExplorationCheckpoint,
+    RestoredOrganismTransitionCheckpoint,
 )
 from .derivation import (
     DerivedCompetenceRecord,
@@ -120,6 +121,7 @@ __all__ = [
     "OrganismCheckpointContract",
     "OrganismExplorationComposer",
     "RestoredOrganismExplorationCheckpoint",
+    "RestoredOrganismTransitionCheckpoint",
     "PredictionError",
     "SensorimotorSnapshot",
     "SensorimotorTransition",

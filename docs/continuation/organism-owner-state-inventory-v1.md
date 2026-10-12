@@ -52,8 +52,9 @@ This document does not infer that every subsystem in the repository must be in e
 1. Cognitive runtime decoding rejects unknown/missing top-level fields, duplicate JSON keys, unsupported schema versions, invalid identity joins, invalid graph state, non-empty unsupported dependency closure, and mismatched effective `KernelLimits`.
 2. `OrganismCheckpoint` verifies its own private-state digest and each dependency reference it declares. It does not establish that the list is complete.
 3. `OrganismTransitionState` requires lifecycle and validates its serialized shape, identity, lifecycle history, progression counter and owner envelope.
-4. `OrganismCheckpointContract` validates transition or bounded exploration payloads and can verify declared references, but currently delegates to the bounded cognitive profile; this is not a general inventory-driven owner composition.
-5. Bounded exploration restoration checks World committed-cut correlation and restores its engine/action-domain payload. Its source docstring explicitly excludes complete Organism continuation.
+4. `OrganismCheckpointContract.restore_transition_checkpoint()` decodes the transition envelope, checks expected Organism identity, and materializes the supported self-contained `CognitiveRuntimeCheckpoint` before returning a `RestoredOrganismTransitionCheckpoint`. The result constructor verifies that its cognitive runtime re-encodes to the exact private checkpoint bytes in the transition envelope. This is a bounded cognition-profile restore, not a general inventory-driven owner composition.
+5. The bounded cognition-profile test restores non-default recurrent state, experience records, safety state, sensory normalization and graph state, verifies exact checkpoint re-encoding, then continues through the public transition boundary from the canonical serialized transition. Negative tests cover malformed payload, unsupported dependency closure, wrong identity, size limit, and a result whose materialized runtime does not match its envelope.
+6. Bounded exploration restoration checks World committed-cut correlation and restores its engine/action-domain payload. Its source docstring explicitly excludes complete Organism continuation.
 
 ## Open acceptance work for MIG-002
 
@@ -74,6 +75,6 @@ This inventory does **not** close `organism#34`, `#41`, or `#45`. The following 
 - `src/organism/checkpoint.py` — opaque owner payload and declared dependency references.
 - `src/organism/transition.py` — canonical transition/lifecycle envelope.
 - `src/organism/continuation.py` — serialized continuation/ancestry metadata and process-local canonical continuation registry; neither establishes cross-process authority by itself.
-- `src/organism/actuation/bounded_action.py` — bounded exploration/action aggregate and owner checkpoint contract.
+- `src/organism/actuation/bounded_action.py` — bounded exploration/action aggregate, owner checkpoint contract, and bounded cognitive-profile restore result; this is not complete owner continuation.
 - `src/organism/actuation/domain.py`, `sensorimotor.py`, `competence.py`, `binding.py`, and related modules — independently checkpointable action/competence components; not by themselves the general owner aggregate.
-- Tests: `tests/source_unit/cognition/test_portable_checkpoint.py`, `tests/source_unit/cognition/test_owner_transition.py`, `tests/source_unit/actuation/test_exploration_composition.py`, `tests/test_continuation.py`, and component checkpoint tests under `tests/source_unit/actuation/`.
+- Tests: `tests/source_unit/cognition/test_portable_checkpoint.py`, `tests/source_unit/cognition/test_owner_transition.py`, `tests/source_unit/actuation/test_exploration_composition.py` (including the bounded cognitive restore profile), `tests/test_continuation.py`, and component checkpoint tests under `tests/source_unit/actuation/`.

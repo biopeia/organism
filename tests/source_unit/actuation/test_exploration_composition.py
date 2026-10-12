@@ -17,6 +17,7 @@ from organism.actuation import (
     OrganismCheckpointContract,
     OrganismExplorationComposer,
     ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
+    RestoredOrganismTransitionCheckpoint,
 )
 from organism.cognition import (
     CognitiveRuntimeCheckpoint,
@@ -28,6 +29,8 @@ from organism.cognition import (
 )
 from organism.cognition.graph import CognitiveGraph, PlasticNode
 from organism.cognition.limits import KernelLimits
+from organism.cognition.activation import SensoryNormalizer
+from organism.cognition.metaplasticity import SafetyState
 from organism.cognition.sense_input import (
     SCALAR_FIELD_CONTRACT_ID,
     SCALAR_FIELD_CONTRACT_REVISION,
@@ -44,6 +47,7 @@ from organism.transition import (
     WorldCausalCorrelation,
     transition_organism_lifecycle,
 )
+from organism.memory import EpistemicStatus, ExperienceRecord, SourceKind
 
 
 IDENTITY = OrganismIdentity.create(UUID("b52d1a22-49f1-43ad-8b27-10e355e94351"))
@@ -602,3 +606,178 @@ def test_owner_checkpoint_contract_rejects_private_identity_mismatch() -> None:
         str(IDENTITY),
         ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
     ) is False
+
+
+def test_owner_contract_restores_supported_transition_profile_before_returning() -> None:
+    contract = OrganismCheckpointContract()
+    transition_state = _transition(tick=4)
+    safety = SafetyState()
+    safety.record_failure()
+    normalizer = SensoryNormalizer()
+    for value in (0.1, 0.4, 0.7, 0.8):
+        normalizer.normalize(value)
+    source_runtime = CognitiveRuntimeCheckpoint(
+        state=CognitiveTransitionState(
+            identity=IDENTITY,
+            last_causal_tick=4,
+            previous_activations=(("sense.channel", 0.625),),
+        ),
+        graph=CognitiveGraph(
+            nodes=(
+                PlasticNode("node.1", NodeKind.STATE),
+                PlasticNode("sense.channel", NodeKind.SENSE),
+            ),
+            edges=(),
+            kernel_limits=KernelLimits(),
+        ),
+        experience_records=(
+            ExperienceRecord(
+                record_id="experience.1",
+                organism_id=str(IDENTITY),
+                tick_class=4,
+                context_tokens=("opaque.context",),
+                action_token="opaque.action",
+                outcome_tokens=("opaque.outcome",),
+                epistemic_status=EpistemicStatus.OBSERVED,
+                evidence_refs=("causal-record.4",),
+                confidence_class=3,
+                source_kind=SourceKind.DIRECT,
+            ),
+        ),
+        safety_state=safety,
+        sensory_normalizers={"sense.channel": normalizer},
+    )
+    source = replace(
+        transition_state,
+        owner_checkpoint=source_runtime.to_organism_checkpoint(),
+    )
+
+    restored = contract.restore_transition_checkpoint(
+        source.to_bytes(),
+        str(IDENTITY),
+    )
+
+    assert isinstance(restored, RestoredOrganismTransitionCheckpoint)
+    assert restored.transition_state == source
+    assert restored.cognitive_runtime.state == source_runtime.state
+    assert restored.cognitive_runtime.experience_records == source_runtime.experience_records
+    assert restored.cognitive_runtime.safety_state == safety
+    restored_normalizer = restored.cognitive_runtime.sensory_normalizers["sense.channel"]
+    assert restored_normalizer.mean == pytest.approx(normalizer.mean)
+    assert restored_normalizer.variance == pytest.approx(normalizer.variance)
+    assert restored_normalizer.count == normalizer.count
+    assert restored.cognitive_runtime.graph.nodes == source_runtime.graph.nodes
+    assert restored.cognitive_runtime.graph.edges == source_runtime.graph.edges
+    assert restored.cognitive_runtime.graph.kernel_limits == source_runtime.graph.kernel_limits
+    # The complete serialized profile represented by this fixture remains
+    # byte-stable through owner restore and re-encoding.
+    assert (
+        restored.cognitive_runtime.to_organism_checkpoint().to_bytes()
+        == source.owner_checkpoint.to_bytes()
+    )
+
+    provenance = SenseProvenance(
+        world_id="world.1",
+        causal_tick=5,
+        physical_step_id="physical-step.5",
+        environment_id="environment.1",
+        environment_revision="environment.r1",
+        sample_frame_id="world.frame",
+        sample_position_m=(0.0, 0.0, 0.0),
+        body_id="body.1",
+        embodiment_episode_id="episode.1",
+        morphology_revision="morphology.r1",
+    )
+    signal = OpaqueSenseSignal(
+        channel_id="channel.1",
+        receptor_id="receptor.1",
+        value=0.25,
+        provenance=provenance,
+        contract_id=SCALAR_FIELD_CONTRACT_ID,
+        contract_revision=SCALAR_FIELD_CONTRACT_REVISION,
+        quantity_kind=SCALAR_FIELD_QUANTITY_KIND,
+        unit=SCALAR_FIELD_UNIT,
+    )
+    continued = advance_organism_from_sense_signals(
+        restored.transition_state,
+        (SenseChannelBinding("channel.1", "receptor.1", "sense.channel"),),
+        (signal,),
+        expected_provenance=provenance,
+        kernel_limits=KernelLimits(),
+    )
+    assert continued.state.organism_step == source.organism_step + 1
+    assert continued.state.identity == source.identity
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_error"),
+    [
+        (lambda state: replace(state, owner_checkpoint=replace(state.owner_checkpoint, private_state=b"invalid")), ValueError),
+        (
+            lambda state: replace(
+                state,
+                owner_checkpoint=replace(
+                    state.owner_checkpoint,
+                    dependencies=(CheckpointDependency("external", "0" * 64),),
+                ),
+            ),
+            ValueError,
+        ),
+    ],
+)
+def test_owner_contract_does_not_return_partially_restored_transition(
+    mutate, expected_error
+) -> None:
+    contract = OrganismCheckpointContract()
+    source = mutate(_transition())
+
+    with pytest.raises(expected_error):
+        contract.restore_transition_checkpoint(source.to_bytes(), str(IDENTITY))
+
+
+def test_owner_contract_rejects_wrong_identity_and_oversized_transition_before_restore() -> None:
+    source = _transition().to_bytes()
+    contract = OrganismCheckpointContract()
+
+    with pytest.raises(ValueError, match="expected owner"):
+        contract.restore_transition_checkpoint(source, "organism.other")
+    oversized = source + b" " * (KernelLimits().max_owner_checkpoint_bytes - len(source) + 1)
+    with pytest.raises(ValueError, match="byte limit"):
+        contract.restore_transition_checkpoint(oversized, str(IDENTITY))
+
+
+def test_restored_transition_result_rejects_inconsistent_component_identity() -> None:
+    contract = OrganismCheckpointContract()
+    restored = contract.restore_transition_checkpoint(
+        _transition().to_bytes(), str(IDENTITY)
+    )
+    other_identity = OrganismIdentity.create(
+        UUID("d6e5d7f6-e8a2-451e-a9c4-62c27be2c47d")
+    )
+    inconsistent_runtime = replace(
+        restored.cognitive_runtime,
+        state=CognitiveTransitionState.initial(other_identity),
+    )
+
+    with pytest.raises(ValueError, match="identities differ"):
+        RestoredOrganismTransitionCheckpoint(
+            transition_state=restored.transition_state,
+            cognitive_runtime=inconsistent_runtime,
+        )
+
+
+def test_restored_transition_result_rejects_same_identity_with_different_payload() -> None:
+    contract = OrganismCheckpointContract()
+    restored = contract.restore_transition_checkpoint(
+        _transition().to_bytes(), str(IDENTITY)
+    )
+    inconsistent_runtime = replace(
+        restored.cognitive_runtime,
+        state=replace(restored.cognitive_runtime.state, last_causal_tick=99),
+    )
+
+    with pytest.raises(ValueError, match="does not match transition checkpoint"):
+        RestoredOrganismTransitionCheckpoint(
+            transition_state=restored.transition_state,
+            cognitive_runtime=inconsistent_runtime,
+        )

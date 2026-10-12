@@ -17,6 +17,7 @@ from typing import Callable, Protocol, runtime_checkable
 from ..transition import OrganismLifecycle, OrganismTransitionState
 from ..cognition.limits import KernelLimits
 from ..cognition.portable_checkpoint import CognitiveRuntimeCheckpoint
+from ..cognition.generative.registry import GenerativeModelRegistry
 from .action import ActionEvaluation, ActionJustification, ActionProposal, ActionSource, MotorCommand
 from .context import ActuatorEvidenceContext
 from .controller import SequenceController
@@ -86,6 +87,33 @@ class RestoredOrganismExplorationCheckpoint:
 
 
 @dataclass(frozen=True, slots=True)
+class RestoredOrganismTransitionCheckpoint:
+    """Validated materialized view of the supported cognition profile.
+
+    This result covers the serialized Organism transition envelope and its
+    self-contained ``CognitiveRuntimeCheckpoint`` payload. It is not a claim
+    that agency, other action state, or the complete Organism runtime is
+    included. The serialized transition remains the canonical owner state;
+    callers of the public transition API continue from that state, which
+    validates/restores its embedded payload at the transition boundary.
+    """
+
+    transition_state: OrganismTransitionState
+    cognitive_runtime: CognitiveRuntimeCheckpoint
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.transition_state, OrganismTransitionState):
+            raise TypeError("transition_state must be OrganismTransitionState")
+        if not isinstance(self.cognitive_runtime, CognitiveRuntimeCheckpoint):
+            raise TypeError("cognitive_runtime must be CognitiveRuntimeCheckpoint")
+        if self.transition_state.identity != self.cognitive_runtime.state.identity:
+            raise ValueError("transition and cognitive runtime identities differ")
+        materialized_checkpoint = self.cognitive_runtime.to_organism_checkpoint()
+        if materialized_checkpoint.to_bytes() != self.transition_state.owner_checkpoint.to_bytes():
+            raise ValueError("cognitive runtime does not match transition checkpoint")
+
+
+@dataclass(frozen=True, slots=True)
 class _DecodedExplorationCheckpoint:
     restored: RestoredOrganismExplorationCheckpoint
     world_id: str
@@ -126,6 +154,43 @@ class OrganismCheckpointContract:
         CognitiveRuntimeCheckpoint.from_organism_checkpoint(
             state.owner_checkpoint,
             kernel_limits=self._kernel_limits,
+        )
+
+    def restore_transition_checkpoint(
+        self,
+        encoded: bytes,
+        owner_identity: str,
+        *,
+        generative_registry: GenerativeModelRegistry | None = None,
+        running_version: tuple[int, int, int] | None = None,
+    ) -> RestoredOrganismTransitionCheckpoint:
+        """Decode and validate the supported cognitive-transition profile before return.
+
+        Decoding and private-state restoration are staged in local values. The
+        immutable result is returned only after envelope identity and cognitive
+        payload validation both succeed; no partially restored state escapes.
+        The result is a validated materialized view; the serialized transition
+        remains canonical and is what the public transition path continues from.
+        """
+        if not isinstance(encoded, bytes):
+            raise TypeError("encoded checkpoint must be bytes")
+        if len(encoded) > self._kernel_limits.max_owner_checkpoint_bytes:
+            raise ValueError("Organism checkpoint exceeds byte limit")
+        if not isinstance(owner_identity, str) or not owner_identity.strip():
+            raise ValueError("owner_identity must be non-empty")
+
+        transition = OrganismTransitionState.from_bytes(encoded)
+        if str(transition.identity) != owner_identity:
+            raise ValueError("transition checkpoint does not match expected owner")
+        cognitive_runtime = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+            transition.owner_checkpoint,
+            kernel_limits=self._kernel_limits,
+            generative_registry=generative_registry,
+            running_version=running_version,
+        )
+        return RestoredOrganismTransitionCheckpoint(
+            transition_state=transition,
+            cognitive_runtime=cognitive_runtime,
         )
 
     def validate_checkpoint(self, encoded: bytes, owner_identity: str, schema_version: str) -> bool:
