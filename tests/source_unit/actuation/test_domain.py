@@ -256,7 +256,9 @@ def test_action_domain_restore_preserves_explicit_bounded_exploration_commitment
     assert restored.active_commitment.maximum_duration == 1
 
 
-@pytest.mark.parametrize("mutate", ("termination_reason", "duplicate_reference"))
+@pytest.mark.parametrize(
+    "mutate", ("termination_reason", "duplicate_reference", "ended_before_progress")
+)
 def test_action_domain_restore_rejects_conflicting_terminal_intent_joins(mutate):
     domain, intent, commitment, _ = _active_domain()
     domain.close(
@@ -268,11 +270,13 @@ def test_action_domain_restore_rejects_conflicting_terminal_intent_joins(mutate)
     checkpoint = domain.checkpoint()
     if mutate == "termination_reason":
         checkpoint["intents"][0]["termination_reason"] = "different_reason"
-    else:
+    elif mutate == "duplicate_reference":
         duplicate = dict(checkpoint["commitments"][0])
         duplicate["commitment_id"] = "commitment.duplicate"
         checkpoint["commitments"].append(duplicate)
         checkpoint["closed_commitment_ids"].append("commitment.duplicate")
+    else:
+        checkpoint["commitments"][0]["ended_tick"] = intent.last_progress_tick - 1
 
     with pytest.raises(ValueError):
         ActionDomain.restore(checkpoint)

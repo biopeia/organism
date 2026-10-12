@@ -166,6 +166,8 @@ class ActionDomain:
                 raise ValueError("commitment and intent lifecycle states do not match")
             if not commitment.active and intent.termination_reason != commitment.end_reason:
                 raise ValueError("commitment and intent termination reasons do not match")
+            if not commitment.active and commitment.ended_tick < intent.last_progress_tick:
+                raise ValueError("commitment ended before intent progress")
         active_intent_ids = {
             item.intent_id for item in commitments.values() if item.active and item.intent_id
         }
