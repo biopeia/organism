@@ -7,9 +7,11 @@ state, but makes no claim about purpose, effect, competence, outcome, or learnin
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 from ..transition import OrganismLifecycle, OrganismTransitionState
 from .action import ActionEvaluation, ActionJustification, ActionProposal, ActionSource, MotorCommand
@@ -42,6 +44,15 @@ def _identifier(kind: str, organism_id: str, world_id: str, tick: int) -> str:
     return f"{kind}.{sha256(material).hexdigest()[:24]}"
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate checkpoint field: {key}")
+        result[key] = value
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class ExplorationActionCandidate:
     """One staged exploration output; it is not adopted until World commits."""
@@ -51,10 +62,24 @@ class ExplorationActionCandidate:
     world_id: str
     source_causal_tick: int
     target_causal_tick: int
+    physical_step_id: str
+    commit_id: str
     base_generation: int
     proposal: ActionProposal | None
     motor_command: MotorCommand | None
     _owner: object
+
+
+@dataclass(frozen=True, slots=True)
+class RestoredOrganismExplorationCheckpoint:
+    """State carried by the bounded exploration checkpoint.
+
+    This is not a claim that every Organism-owned subsystem is included in
+    the payload or that the complete longitudinal continuation is closed.
+    """
+
+    transition_state: OrganismTransitionState
+    action_composer: OrganismExplorationComposer
 
 
 class OrganismExplorationComposer:
@@ -63,9 +88,9 @@ class OrganismExplorationComposer:
     The owner retains the engine and action-domain state. ``prepare`` works on
     restored copies, so rejection or retry does not mutate accepted state.
     The caller must invoke ``adopt_after_world_commit`` only after the exact
-    World cut for this candidate is committed. This class is not itself a
-    durable continuation envelope; the owner checkpoint-closure work remains
-    separately required.
+    World cut for this candidate is committed. ``checkpoint_for_candidate``
+    exports the staged owner state for the cut; restoration requires a matching
+    committed-cut receipt supplied by trusted World code.
     """
 
     def __init__(
@@ -106,6 +131,7 @@ class OrganismExplorationComposer:
         self._generation = 0
         self._staged_candidate_id: str | None = None
         self._staged_state: tuple[CompetenceDevelopmentEngine, ActionDomain] | None = None
+        self._staged_transition_digest: str | None = None
 
     def prepare(
         self,
@@ -114,6 +140,8 @@ class OrganismExplorationComposer:
         actuator_context: ActuatorEvidenceContext,
         surface: ActuatorSurface,
         target_causal_tick: int,
+        physical_step_id: str,
+        commit_id: str,
     ) -> ExplorationActionCandidate:
         if not isinstance(transition, OrganismTransitionState):
             raise TypeError("transition must be OrganismTransitionState")
@@ -154,6 +182,10 @@ class OrganismExplorationComposer:
             raise ValueError(
                 "target causal tick must immediately follow the accepted transition source tick"
             )
+        if not isinstance(physical_step_id, str) or not physical_step_id.strip():
+            raise ValueError("physical_step_id must be non-empty")
+        if not isinstance(commit_id, str) or not commit_id.strip():
+            raise ValueError("commit_id must be non-empty")
         engine = CompetenceDevelopmentEngine.restore(
             engine_checkpoint,
             # Sensorimotor checkpoint constitution has an internal stable
@@ -230,6 +262,8 @@ class OrganismExplorationComposer:
             world_id=transition.world_correlation.world_id,
             source_causal_tick=tick,
             target_causal_tick=target_causal_tick,
+            physical_step_id=physical_step_id,
+            commit_id=commit_id,
             base_generation=self._generation,
             proposal=proposal,
             motor_command=command,
@@ -239,7 +273,193 @@ class OrganismExplorationComposer:
         # previous staged state; only the latest candidate can be adopted.
         self._staged_candidate_id = candidate_id
         self._staged_state = (engine, domain)
+        self._staged_transition_digest = sha256(transition.to_bytes()).hexdigest()
         return candidate
+
+    def checkpoint_for_candidate(
+        self,
+        candidate: ExplorationActionCandidate,
+        *,
+        transition_state: OrganismTransitionState,
+    ) -> bytes:
+        """Serialize staged owner state, bound to the exact World commit request.
+
+        These bytes describe a candidate state, not a committed state. World
+        must only select this reference after verifying the matching cut.
+        """
+        if not self._owns_staged_candidate(candidate):
+            raise ValueError("candidate is not the currently staged owner state")
+        if not isinstance(transition_state, OrganismTransitionState):
+            raise TypeError("transition_state must be OrganismTransitionState")
+        if sha256(transition_state.to_bytes()).hexdigest() != self._staged_transition_digest:
+            raise ValueError("transition state differs from the staged action source")
+        correlation = transition_state.world_correlation
+        if (
+            str(transition_state.identity) != self._organism_id
+            or correlation is None
+            or correlation.world_id != candidate.world_id
+            or correlation.causal_tick != candidate.source_causal_tick
+        ):
+            raise ValueError("transition state does not match the staged World source cut")
+        assert self._staged_state is not None
+        engine, domain = self._staged_state
+        return self._serialize_checkpoint(
+            transition_state=transition_state,
+            generation=self._generation + 1,
+            engine=engine,
+            domain=domain,
+            physical_step_id=candidate.physical_step_id,
+            commit_id=candidate.commit_id,
+        )
+
+    def _serialize_checkpoint(
+        self,
+        *,
+        transition_state: OrganismTransitionState,
+        generation: int,
+        engine: CompetenceDevelopmentEngine,
+        domain: ActionDomain,
+        physical_step_id: str,
+        commit_id: str,
+    ) -> bytes:
+        correlation = transition_state.world_correlation
+        assert correlation is not None
+        payload = {
+            "schema": "biopeia-organism-exploration-checkpoint-v3",
+            "organism_id": self._organism_id,
+            "generation": generation,
+            "world_id": correlation.world_id,
+            "source_causal_tick": correlation.causal_tick,
+            "target_causal_tick": correlation.causal_tick + 1,
+            "physical_step_id": physical_step_id,
+            "commit_id": commit_id,
+            "transition_state_base64": base64.b64encode(transition_state.to_bytes()).decode("ascii"),
+            "engine": engine.checkpoint(),
+            "action_domain": domain.checkpoint(),
+        }
+        return json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+
+    @classmethod
+    def restore_from_committed_checkpoint(
+        cls,
+        encoded: bytes,
+        *,
+        committed_cut: CommittedWorldCutReference,
+        expected_organism_id: str,
+        expected_physical_step_id: str,
+        read_dependency: Callable[[str], bytes] | None = None,
+    ) -> RestoredOrganismExplorationCheckpoint:
+        """Restore the checkpoint's bounded state after World cut correlation.
+
+        World remains responsible for verifying that the selected checkpoint
+        reference belongs to its committed history. This method only checks
+        the owner payload/receipt correlation and refuses uncommitted state.
+        It does not claim complete Organism continuation. If the embedded
+        transition checkpoint declares external dependencies, this method
+        requires and verifies a resolver before returning restored state.
+        """
+        if not isinstance(encoded, bytes):
+            raise TypeError("encoded checkpoint must be bytes")
+        if not isinstance(committed_cut, CommittedWorldCutReference):
+            raise TypeError("restore requires a World committed-cut receipt")
+        if not isinstance(expected_organism_id, str) or not expected_organism_id.strip():
+            raise ValueError("expected_organism_id must be non-empty")
+        if not isinstance(expected_physical_step_id, str) or not expected_physical_step_id.strip():
+            raise ValueError("expected_physical_step_id must be non-empty")
+        try:
+            payload = json.loads(encoded, object_pairs_hook=_reject_duplicate_keys)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid exploration checkpoint encoding") from exc
+        expected = {
+            "schema", "organism_id", "generation", "world_id",
+            "source_causal_tick", "target_causal_tick",
+            "physical_step_id", "commit_id", "transition_state_base64", "engine", "action_domain",
+        }
+        if not isinstance(payload, dict) or set(payload) != expected:
+            raise ValueError("exploration checkpoint fields do not match schema")
+        if payload["schema"] != "biopeia-organism-exploration-checkpoint-v3":
+            raise ValueError("unsupported exploration checkpoint schema")
+        if (
+            payload["world_id"] != committed_cut.world_id
+            or payload["target_causal_tick"] != committed_cut.causal_tick
+            or payload["commit_id"] != committed_cut.commit_id
+        ):
+            raise ValueError("exploration checkpoint does not match committed World cut")
+        if (
+            payload["organism_id"] != expected_organism_id
+            or payload["physical_step_id"] != expected_physical_step_id
+        ):
+            raise ValueError("exploration checkpoint does not match expected owner or physical step")
+        if (
+            not isinstance(payload["organism_id"], str)
+            or not payload["organism_id"]
+            or type(payload["generation"]) is not int
+            or payload["generation"] < 1
+            or type(payload["source_causal_tick"]) is not int
+            or payload["source_causal_tick"] < 0
+            or type(payload["target_causal_tick"]) is not int
+            or payload["target_causal_tick"] != payload["source_causal_tick"] + 1
+            or not isinstance(payload["physical_step_id"], str)
+            or not payload["physical_step_id"]
+            or not isinstance(payload["commit_id"], str)
+            or not payload["commit_id"]
+            or not isinstance(payload["transition_state_base64"], str)
+            or not isinstance(payload["engine"], dict)
+            or not isinstance(payload["action_domain"], dict)
+        ):
+            raise ValueError("invalid exploration checkpoint values")
+        try:
+            transition_bytes = base64.b64decode(payload["transition_state_base64"], validate=True)
+            transition_state = OrganismTransitionState.from_bytes(transition_bytes)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("invalid embedded Organism transition checkpoint") from exc
+        if (
+            str(transition_state.identity) != payload["organism_id"]
+            or transition_state.world_correlation is None
+            or transition_state.world_correlation.world_id != payload["world_id"]
+            or transition_state.world_correlation.causal_tick != payload["source_causal_tick"]
+        ):
+            raise ValueError("embedded Organism transition does not match checkpoint context")
+        if transition_state.owner_checkpoint.dependencies:
+            if read_dependency is None:
+                raise ValueError(
+                    "owner checkpoint dependencies require a dependency reader"
+                )
+            transition_state.verify_dependency_closure(read_dependency)
+        engine_payload = payload["engine"]
+        actuator_ids = engine_payload.get("actuator_ids")
+        fingerprint = engine_payload.get("embodiment_fingerprint")
+        organism_id = payload["organism_id"]
+        if (
+            not isinstance(actuator_ids, list)
+            or not actuator_ids
+            or any(not isinstance(value, str) or not value for value in actuator_ids)
+            or not isinstance(fingerprint, str)
+            or not fingerprint
+        ):
+            raise ValueError("invalid exploration engine checkpoint constitution")
+        engine = CompetenceDevelopmentEngine.restore(
+            engine_payload,
+            actuator_ids=tuple(actuator_ids),
+            organism_id=organism_id,
+            embodiment_fingerprint=fingerprint,
+        )
+        domain = ActionDomain.restore(payload["action_domain"])
+        restored = cls(organism_id=organism_id, engine=engine, action_domain=domain)
+        restored._generation = payload["generation"]
+        return RestoredOrganismExplorationCheckpoint(transition_state, restored)
+
+    def _owns_staged_candidate(self, candidate: ExplorationActionCandidate) -> bool:
+        return (
+            isinstance(candidate, ExplorationActionCandidate)
+            and candidate._owner is self
+            and candidate.base_generation == self._generation
+            and candidate.candidate_id == self._staged_candidate_id
+            and self._staged_state is not None
+            and self._staged_transition_digest is not None
+        )
 
     def adopt_after_world_commit(
         self,
@@ -267,11 +487,13 @@ class OrganismExplorationComposer:
         if (
             candidate.world_id != committed_cut.world_id
             or candidate.target_causal_tick != committed_cut.causal_tick
+            or candidate.commit_id != committed_cut.commit_id
         ):
             raise ValueError("candidate does not match the committed World causal cut")
         self._engine, self._domain = self._staged_state
         self._staged_candidate_id = None
         self._staged_state = None
+        self._staged_transition_digest = None
         self._generation += 1
 
 

@@ -68,6 +68,20 @@ def test_portable_envelope_rejects_private_state_corruption() -> None:
         OrganismCheckpoint.from_bytes(envelope)
 
 
+def test_portable_envelope_rejects_duplicate_json_keys() -> None:
+    saved, _ = checkpoint()
+    encoded = saved.to_bytes().decode("utf-8")
+    duplicated = encoded.replace(
+        '"schema":"biopeia.organism-checkpoint",',
+        '"schema":"biopeia.organism-checkpoint","schema":"biopeia.organism-checkpoint",',
+        1,
+    )
+    assert duplicated != encoded
+
+    with pytest.raises(InvalidOrganismCheckpoint, match="malformed"):
+        OrganismCheckpoint.from_bytes(duplicated.encode("utf-8"))
+
+
 def test_portable_envelope_rejects_unknown_version_and_extra_fields() -> None:
     saved, _ = checkpoint()
     document = json.loads(saved.to_bytes())
