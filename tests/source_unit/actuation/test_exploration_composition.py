@@ -478,8 +478,13 @@ def test_restored_committed_checkpoint_can_continue_at_next_world_cut() -> None:
     )
 
 
-def test_committed_checkpoint_restores_and_continues_in_fresh_process(tmp_path: Path) -> None:
-    """Portable restoration must not depend on the writer's process state."""
+def test_candidate_checkpoint_restores_and_continues_in_fresh_process(tmp_path: Path) -> None:
+    """Restore candidate bytes in a fresh process using test-local cut context.
+
+    The cut-shaped value below is fabricated by this test; it is not a
+    World-issued receipt. This proves serialization/restore/continuation for
+    the configured profile, not durable World commit or recovery.
+    """
     surface = ActuatorSurface.from_effector_ids(ACTUATORS)
     context = _context(surface)
     composer = _composer(surface, context)
@@ -489,17 +494,19 @@ def test_committed_checkpoint_restores_and_continues_in_fresh_process(tmp_path: 
         candidate,
         transition_state=source_transition,
     )
-    receipt = _CommittedCut(
+    test_cut_context = _CommittedCut(
         candidate.world_id,
         candidate.target_causal_tick,
         candidate.commit_id,
     )
-    committed_payload = tmp_path / "committed-organism-checkpoint.bin"
-    committed_payload.write_bytes(encoded)
+    candidate_payload = tmp_path / "organism-candidate-checkpoint.bin"
+    candidate_payload.write_bytes(encoded)
 
     next_tick = candidate.target_causal_tick
     next_transition = _transition(tick=next_tick)
-    composer.adopt_after_world_commit(candidate, committed_cut=receipt)
+    # Simulate the cut correlation required by the API. This is not evidence
+    # that World issued or durably published the cut.
+    composer.adopt_after_world_commit(candidate, committed_cut=test_cut_context)
     uninterrupted_candidate = composer.prepare(
         next_transition,
         actuator_context=context,
@@ -531,14 +538,15 @@ from test_exploration_composition import (
 from organism.actuation import ActuatorSurface
 
 payload = Path(sys.argv[2]).read_bytes()
-world_id, committed_tick, commit_id, physical_step_id = sys.argv[3:7]
+world_id, asserted_tick, commit_id, physical_step_id = sys.argv[3:7]
+test_cut_context = _CommittedCut(world_id, int(asserted_tick), commit_id)
 restored = OrganismExplorationComposer.restore_from_committed_checkpoint(
     payload,
-    committed_cut=_CommittedCut(world_id, int(committed_tick), commit_id),
+    committed_cut=test_cut_context,
     expected_organism_id=str(IDENTITY),
     expected_physical_step_id=physical_step_id,
 )
-next_tick = int(committed_tick)
+next_tick = int(asserted_tick)
 transition = _transition(tick=next_tick)
 surface = ActuatorSurface.from_effector_ids(ACTUATORS)
 context = _context(surface)
@@ -575,10 +583,10 @@ print(json.dumps({
             "-c",
             child,
             str(Path(__file__).resolve().parent),
-            str(committed_payload),
-            receipt.world_id,
-            str(receipt.causal_tick),
-            receipt.commit_id,
+            str(candidate_payload),
+            test_cut_context.world_id,
+            str(test_cut_context.causal_tick),
+            test_cut_context.commit_id,
             candidate.physical_step_id,
         ],
         check=True,
