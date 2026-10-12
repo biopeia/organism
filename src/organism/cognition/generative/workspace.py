@@ -168,7 +168,7 @@ def _episode_payload(episode):
         "target_id": episode.target_id,
         "root_state_id": episode.root_state_id,
         "mode": episode.mode.value,
-        "started_symbiont_tick": episode.started_symbiont_tick,
+        "started_organism_step": episode.started_organism_step,
         "started_generative_tick": episode.started_generative_tick,
         "source_episode_ids": list(episode.source_episode_ids),
         "state_count": episode.state_count,

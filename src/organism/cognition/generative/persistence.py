@@ -20,7 +20,7 @@ from .types import (
 )
 from .workspace import GenerativeWorkspace
 
-GENERATIVE_COGNITION_SCHEMA_VERSION = 1
+GENERATIVE_COGNITION_SCHEMA_VERSION = 2
 
 
 def dumps(workspace: GenerativeWorkspace) -> str:
@@ -180,7 +180,7 @@ def _budget(value: Any) -> GenerativeBudget:
 
 def _episode(value: Any) -> GenerativeEpisode:
     raw = _object(value, "episode")
-    names = {"episode_id", "organism_id", "target_id", "root_state_id", "mode", "started_symbiont_tick", "started_generative_tick", "source_episode_ids", "state_count", "transition_count", "branch_count", "max_depth_reached", "termination_reason"}
+    names = {"episode_id", "organism_id", "target_id", "root_state_id", "mode", "started_organism_step", "started_generative_tick", "source_episode_ids", "state_count", "transition_count", "branch_count", "max_depth_reached", "termination_reason"}
     if set(raw) != names:
         raise ValueError("invalid generative episode fields")
     try:
@@ -194,7 +194,7 @@ def _episode(value: Any) -> GenerativeEpisode:
             target_id=raw["target_id"],
             root_state_id=raw["root_state_id"],
             mode=GenerativeMode(raw["mode"]),
-            started_symbiont_tick=raw["started_symbiont_tick"],
+            started_organism_step=raw["started_organism_step"],
             started_generative_tick=raw["started_generative_tick"],
             source_episode_ids=tuple(source_ids),
             state_count=_counter(raw["state_count"], "state_count"),

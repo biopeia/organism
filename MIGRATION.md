@@ -972,6 +972,15 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Validation: `tests/source_unit/cognition/test_portable_checkpoint.py` and `test_owner_transition.py` cover self-contained round-trip, undeclared runtime-capability rejection, injected registry rejection, malformed or missing owner closure, and rejection of unverified references without advancing the Organism step. Schema version 8 is strict; older payloads are not accepted. Exact-head CI and adversarial review are required before merge.
 - Limitations: this does not serialize or recover model objects, prove model artifact binding, verify any external owner-required blob, or establish the complete Organism private-state closure. A capability that needs such an external dependency is explicitly unsupported by this bounded codec. Issue #33 and parent #34 remain open for complete owner declaration and portable continuation; no claim of full continuation is made.
 
+## Incremental correction: bind generative recency to Organism progression (issue #60)
+
+- Finding: resident generative recency, episode-start metadata, and generative-use consolidation persisted the ambiguous `symbiont_tick`/`tick` value despite the ratified owner-owned `organism_step` contract.
+- Disposition: `REWRITE` the existing TARGET generative state to accept and persist explicitly named Organism progression. This supersedes the unresolved disposition recorded in the earlier time-name inventory for these three fields only; older entries remain historical records of the state at their recorded revisions.
+- Target paths: `src/organism/cognition/generative/{resident.py,episode.py,types.py,workspace.py,persistence.py,consolidation.py}` and their source-unit tests.
+- The resident now requires `last_organism_step`; generative episode metadata requires `started_organism_step`; recency accounting uses `last_use_organism_step`. The resident checkpoint is schema v6, the generative workspace wrapper is schema v2, and the generative-use tracker is schema v2. Prior schema versions and old field names are rejected; no decoder alias, implicit default, or historical import path is added.
+- `generative_tick` remains a separate generative-subsystem counter. World causal ticks, physical solver time, and host wall-clock time are not mapped to Organism progression.
+- Validation and exact-candidate review evidence are recorded in the associated pull request. This bounded correction does not complete the full #60 decoder inventory, establish complete Organism continuation, or close the issue. No `symbiont-lab` files are changed.
+
 
 ## Incremental correction: preserve explicit-null safety state (issue #60)
 

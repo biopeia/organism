@@ -196,7 +196,7 @@ class GenerativeEpisode:
     target_id: str | None
     root_state_id: str
     mode: GenerativeMode
-    started_symbiont_tick: int
+    started_organism_step: int
     started_generative_tick: int
     source_episode_ids: tuple[str, ...] = ()
     state_count: int = 0
@@ -218,7 +218,7 @@ class GenerativeEpisode:
             raise ValueError("mode must be a GenerativeMode")
         bounded_tuple(self.source_episode_ids, name="source_episode_ids")
         for name, value in (
-            ("started_symbiont_tick", self.started_symbiont_tick),
+            ("started_organism_step", self.started_organism_step),
             ("started_generative_tick", self.started_generative_tick),
             ("state_count", self.state_count),
             ("transition_count", self.transition_count),

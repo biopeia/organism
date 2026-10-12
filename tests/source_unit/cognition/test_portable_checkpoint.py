@@ -521,7 +521,7 @@ def test_owner_payload_rejects_unregistered_model_referenced_by_persisted_state(
         )
     )
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.1",),
         mode=GenerativeMode.ONLINE,
@@ -546,7 +546,7 @@ def test_owner_payload_rejects_unregistered_model_referenced_by_persisted_featur
         )
     )
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.1",),
         mode=GenerativeMode.ONLINE,
@@ -578,7 +578,7 @@ def test_restore_rejects_unregistered_model_referenced_by_persisted_feature() ->
         )
     )
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.1",),
         mode=GenerativeMode.ONLINE,

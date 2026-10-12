@@ -47,7 +47,7 @@ def workspace(*, budget: GenerativeBudget | None = None) -> GenerativeWorkspace:
         organism_id="organism-1",
         root_state_id="s0",
         mode=GenerativeMode.ONLINE,
-        symbiont_tick=4,
+        organism_step=4,
         generative_tick=0,
     )
     result = GenerativeWorkspace(episode=episode, budget=budget)

@@ -44,7 +44,7 @@ def test_branch_prunes_equivalent_generated_states():
         organism_id="o0",
         root_state_id="s0",
         mode=GenerativeMode.OFFLINE,
-        symbiont_tick=0,
+        organism_step=0,
         generative_tick=0,
     )
     workspace = GenerativeWorkspace(episode=episode)
@@ -71,7 +71,7 @@ def test_branch_creates_deterministic_siblings_within_bound():
         organism_id="o0",
         root_state_id="s0",
         mode=GenerativeMode.OFFLINE,
-        symbiont_tick=0,
+        organism_step=0,
         generative_tick=0,
     )
     workspace = GenerativeWorkspace(episode=episode)

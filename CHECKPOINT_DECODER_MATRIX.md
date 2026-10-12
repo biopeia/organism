@@ -2,7 +2,7 @@
 
 ## Scope and status
 
-This inventory describes the TARGET `CognitiveRuntimeCheckpoint` writer/decoder graph, originally inventoried at implementation base `2ab8775440b94675551bfbd6993afd56df63ba4d` (2026-10-10) and updated for the bounded owner-dependency-closure slice. It is a decoder-field inventory, not a claim that this bounded payload is the complete Organism continuation checkpoint. It does not authorize compatibility with historical Symbiont payloads and does not rename or map any time field.
+This inventory describes the TARGET `CognitiveRuntimeCheckpoint` writer/decoder graph, originally inventoried at implementation base `2ab8775440b94675551bfbd6993afd56df63ba4d` (2026-10-10) and updated for bounded owner-dependency-closure and generative-time slices. It is a decoder-field inventory, not a claim that this bounded payload is the complete Organism continuation checkpoint. It does not authorize compatibility with historical Symbiont payloads.
 
 “Required” means the key is required by the current decoder, including when its value is explicitly `null`. “Explicitly nullable” means the writer/decoder supports a present key whose value is `null`; it never means the key may be omitted. Empty collections are noted separately. Value constraints remain those enforced by each listed decoder and its domain types.
 
@@ -53,12 +53,12 @@ Each `experience_records` list entry requires exactly `record_id`, `organism_id`
 
 ### Generative resident
 
-When present, the resident requires exactly `schema_version`, `generative_tick`, `last_symbiont_tick`, `budget`, `agenda`, `scheduler`, `workspace`, `hypotheses`, `calibration`, `generative_use`, `reconciliation_count`, `contradicted_hypothesis_count`, and `factual_contamination_count`.
+When present, the resident checkpoint is schema version `6` and requires exactly `schema_version`, `generative_tick`, `last_organism_step`, `budget`, `agenda`, `scheduler`, `workspace`, `hypotheses`, `calibration`, `generative_use`, `reconciliation_count`, `contradicted_hypothesis_count`, `factual_contamination_count`, and `agenda_overflow_count`.
 
 - `workspace` is explicitly nullable. When non-null, it is a workspace payload.
 - `hypotheses` is a required list; empty is valid. Each entry requires `hypothesis`, `target_id`, `predicted_outcomes`, `representation_refs`, and `calibration`. The `calibration` entry is explicitly nullable. The two reference/outcome collections are required lists.
 - The remaining resident keys are required non-null and delegated to their component decoder below.
-- `last_symbiont_tick` is a required non-negative integer in the current TARGET schema. Its semantic migration/disposition remains unresolved; this matrix does not treat it as `organism_step`, World time, or any other clock.
+- `last_organism_step` is a required non-negative integer. It records the latest Organism-owned progression supplied to the resident and is distinct from `generative_tick`, which remains the generative subsystem's local counter.
 
 Generative subcomponents:
 
@@ -67,14 +67,14 @@ Generative subcomponents:
 | `budget` | `max_states`, `max_transitions`, `max_depth`, `max_branches`, `max_model_queries` | No nullable fields. |
 | `agenda` | `max_targets`, `max_reselection_without_progress`, `suppression_duration`, `agenda_contamination_count`, `targets` | `targets` must be a list; empty is valid. Each target has the exact fields `target_id`, `source`, `source_refs`, `created_tick`, `uncertainty`, `persistence`, `recurrence`, `estimated_resolvability`, `last_selected_tick`, `selection_count`, `last_progress_tick`, `status`, `no_progress_count`, `suppressed_until`; the three `*_tick`/suppression optionals and `estimated_resolvability` accept explicit `null`. |
 | `scheduler` | `quotas`, `used` | `used` is a list; empty is valid. Each entry requires `tick`, `mode`, `count`. Quota keys are exactly the current `GenerativeMode` values. |
-| `workspace` | wrapper `schema_version`, `workspace`; inner `episode`, `budget`, `states`, `transitions`, `model_queries`, `closed` | Resident-level workspace may be `null`; inside a workspace, collections may be empty. Episode `target_id` and `termination_reason` are explicitly nullable; state `parent_state_id` and generated-feature `value_class`/`source_model_id` are explicitly nullable. No other nullable fields are declared by the current writer/types. |
+| `workspace` | wrapper `schema_version`, `workspace`; wrapper schema version is `2`; inner `episode`, `budget`, `states`, `transitions`, `model_queries`, `closed` | Resident-level workspace may be `null`; inside a workspace, collections may be empty. Episode `target_id` and `termination_reason` are explicitly nullable; state `parent_state_id` and generated-feature `value_class`/`source_model_id` are explicitly nullable. No other nullable fields are declared by the current writer/types. |
 | `calibration` | `buckets` | List may be empty. Each bucket requires `model_id`, `operation`, `depth_bucket`, `uncertainty_bucket`, `prediction_count`, `comparable_count`, `uncertainty_sum`, `errors`; `errors` is a required list and its length is checked against `comparable_count`. |
-| `generative_use` | `schema_version`, `representations`, `eviction_order`, `capacity_pressure`, `sterile_reactivations` | Collections/maps may be empty. Each representation requires `representation_ref`, `activation_count`, `episode_ids`, `source_refs`, `hypothesis_count`, `disagreement_sum`, `disagreement_count`, `last_use_tick`; `last_use_tick` is explicitly nullable. `capacity_pressure` requires `schema_version`, `capacity`, `admissions`, `evictions`, `promotions`, `demotions`, `relearned_after_eviction`, `recently_evicted`. |
+| `generative_use` | schema version `2`; `schema_version`, `representations`, `eviction_order`, `capacity_pressure`, `sterile_reactivations` | Collections/maps may be empty. Each representation requires `representation_ref`, `activation_count`, `episode_ids`, `source_refs`, `hypothesis_count`, `disagreement_sum`, `disagreement_count`, `last_use_organism_step`; `last_use_organism_step` is explicitly nullable. `capacity_pressure` requires `schema_version`, `capacity`, `admissions`, `evictions`, `promotions`, `demotions`, `relearned_after_eviction`, `recently_evicted`. |
 | resident hypothesis | `hypothesis_id`, `source_episode_ids`, `source_model_ids`, `uncertainty`, `status`, `factual_support_refs`, `factual_conflict_refs`, `reconciliation_count` | Reference lists may be empty; no field is nullable. |
 
 The non-null `workspace` payload has these exact nested record fields:
 
-- Episode: `episode_id`, `organism_id`, `target_id`, `root_state_id`, `mode`, `started_symbiont_tick`, `started_generative_tick`, `source_episode_ids`, `state_count`, `transition_count`, `branch_count`, `max_depth_reached`, `termination_reason`.
+- Episode: `episode_id`, `organism_id`, `target_id`, `root_state_id`, `mode`, `started_organism_step`, `started_generative_tick`, `source_episode_ids`, `state_count`, `transition_count`, `branch_count`, `max_depth_reached`, `termination_reason`.
 - State: `state_id`, `episode_id`, `origin`, `parent_state_id`, `depth`, `features`, `active_concept_ids`, `relation_refs`, `source_episode_ids`, `source_model_ids`, `source_state_ids`, `uncertainty`, `coherence`, `generative_tick`.
 - Feature: `token`, `value_class`, `confidence`, `source_model_id`.
 - Transition: `transition_id`, `episode_id`, `source_state_id`, `target_state_id`, `operation`, `model_ids`, `uncertainty_before`, `uncertainty_after`, `predicted_outcomes`, `generative_tick`.
@@ -94,11 +94,11 @@ The registry of generative model owners and the factual evidence resolver are su
 
 The decoder requires explicit `kernel_limits`; genetic restore additionally requires `running_version` when the trio exists and accepts a `genome_schema`; generative restore may receive a model registry. A generic `OrganismCheckpoint` may reference dependencies, in which case restore requires a resolver and validates the declared dependency closure. These are restore prerequisites, not omitted serialized checkpoint fields. Current docs/code explicitly say the model registry and factual resolver are not captured; this matrix does not claim they can be reconstructed from this payload.
 
-## Confirmed gaps and unresolved dispositions
+## Confirmed gaps and bounded dispositions
 
-This inspection found no supported evidence for changing the current composed decoder's field requiredness in this slice. Existing writers and strict decoders agree on the exact root and listed nested shapes. Therefore this change records the matrix only; it does not add speculative runtime defaults, schema aliases, or compatibility paths.
+The resident, workspace-envelope, and generative-use nested schemas are versioned independently. The resident is schema v6, the workspace wrapper is schema v2, and the generative-use tracker is schema v2. These strict decoders reject their prior schema versions and reject the removed `last_symbiont_tick`, `started_symbiont_tick`, and `last_use_tick` keys; they do not map or default those fields.
 
-The required `last_symbiont_tick` and nested `started_symbiont_tick` fields remain a named unresolved TARGET time-semantics disposition. They are inventoried as current schema requirements, not endorsed as the final canonical Organism clock, and are not mapped here to `organism_step`, World time, or wall-clock time.
+The resident's `last_organism_step` and episode's `started_organism_step` record Organism-owned progression. They do not alias World causal time or solver time. `generative_tick` remains a separate subsystem-local counter. Agenda and scheduler timestamps remain component-local fields and are not alternate Organism progression authorities.
 
 The overall payload remains explicitly bounded, not a complete Organism continuation checkpoint. This inventory does not establish that every Organism-owned state component is composed into this checkpoint, that transient external dependencies survive restore, or that issue #60 is complete.
 

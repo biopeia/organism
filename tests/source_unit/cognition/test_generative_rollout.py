@@ -44,7 +44,7 @@ def test_rollout_composes_multiple_steps_and_preserves_uncertainty():
         organism_id="o0",
         root_state_id="s0",
         mode=GenerativeMode.ONLINE,
-        symbiont_tick=0,
+        organism_step=0,
         generative_tick=0,
     )
     workspace = GenerativeWorkspace(episode=episode)
@@ -70,7 +70,7 @@ def _workspace(*, budget=None):
         organism_id="o0",
         root_state_id="s0",
         mode=GenerativeMode.ONLINE,
-        symbiont_tick=0,
+        organism_step=0,
         generative_tick=0,
     )
     workspace = GenerativeWorkspace(episode=episode, budget=budget)

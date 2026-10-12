@@ -49,7 +49,7 @@ from .types import (
 )
 from .workspace import GenerativeWorkspace
 
-RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 5
+RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION = 6
 
 
 def _contains_model_reference(value: object) -> bool:
@@ -167,7 +167,7 @@ class ResidentGenerativeCognition:
             scheduler=self.scheduler,
         )
         self.generative_tick = 0
-        self.last_symbiont_tick = 0
+        self.last_organism_step = 0
         self.last_workspace: GenerativeWorkspace | None = None
         self.last_execution: GenerativeExecutionResult | None = None
         self.last_rollout: RolloutResult | None = None
@@ -222,7 +222,7 @@ class ResidentGenerativeCognition:
         return {
             "schema_version": RESIDENT_GENERATIVE_COGNITION_SCHEMA_VERSION,
             "generative_tick": self.generative_tick,
-            "last_symbiont_tick": self.last_symbiont_tick,
+            "last_organism_step": self.last_organism_step,
             "budget": {
                 "max_states": self.budget.max_states,
                 "max_transitions": self.budget.max_transitions,
@@ -289,7 +289,7 @@ class ResidentGenerativeCognition:
             != {
                 "schema_version",
                 "generative_tick",
-                "last_symbiont_tick",
+                "last_organism_step",
                 "budget",
                 "agenda",
                 "scheduler",
@@ -322,14 +322,14 @@ class ResidentGenerativeCognition:
                 registry=registry,
             )
             resident.generative_tick = tick
-            last_symbiont_tick = payload["last_symbiont_tick"]
+            last_organism_step = payload["last_organism_step"]
             if (
-                isinstance(last_symbiont_tick, bool)
-                or not isinstance(last_symbiont_tick, int)
-                or last_symbiont_tick < 0
+                isinstance(last_organism_step, bool)
+                or not isinstance(last_organism_step, int)
+                or last_organism_step < 0
             ):
-                raise ValueError("invalid last_symbiont_tick")
-            resident.last_symbiont_tick = last_symbiont_tick
+                raise ValueError("invalid last_organism_step")
+            resident.last_organism_step = last_organism_step
             raw_workspace = payload["workspace"]
             if raw_workspace is not None:
                 resident.last_workspace = restore_workspace(
@@ -414,15 +414,15 @@ class ResidentGenerativeCognition:
     def step(
         self,
         *,
-        tick: int,
+        organism_step: int,
         cognition: object | None,
         prospective_candidate_ids: tuple[str, ...] = (),
         mode: GenerativeMode = GenerativeMode.ONLINE,
         intent_outcomes: tuple[tuple[str, str, str, str | None], ...] = (),
         known_action_ids: tuple[str, ...] | None = None,
     ) -> GenerativeResidentSnapshot:
-        if isinstance(tick, bool) or not isinstance(tick, int) or tick < 0:
-            raise ValueError("tick must be a non-negative integer")
+        if isinstance(organism_step, bool) or not isinstance(organism_step, int) or organism_step < 0:
+            raise ValueError("organism_step must be a non-negative integer")
         if not isinstance(prospective_candidate_ids, tuple):
             raise ValueError("prospective_candidate_ids must be a tuple")
         if not isinstance(intent_outcomes, tuple):
@@ -430,23 +430,25 @@ class ResidentGenerativeCognition:
         if not isinstance(mode, GenerativeMode):
             raise ValueError("mode must be a GenerativeMode")
 
-        self.last_symbiont_tick = max(self.last_symbiont_tick, tick)
+        self.last_organism_step = max(self.last_organism_step, organism_step)
 
         if known_action_ids is not None:
             self._retire_absent_sources(known_action_ids)
-        self._ingest_prediction_errors(cognition, tick=tick)
-        self._ingest_prospective_candidates(prospective_candidate_ids, tick=tick)
-        self._ingest_intent_outcomes(intent_outcomes, tick=tick)
+        self._ingest_prediction_errors(cognition, organism_step=organism_step)
+        self._ingest_prospective_candidates(
+            prospective_candidate_ids, organism_step=organism_step
+        )
+        self._ingest_intent_outcomes(intent_outcomes, organism_step=organism_step)
 
         root_uncertainty = self._root_uncertainty(cognition)
-        episode_id = f"generative.{tick}.{self.generative_tick}"
+        episode_id = f"generative.{organism_step}.{self.generative_tick}"
         root_state_id = f"{episode_id}.root"
         episode = new_episode(
             episode_id=episode_id,
             organism_id=self.organism_id,
             root_state_id=root_state_id,
             mode=mode,
-            symbiont_tick=tick,
+            organism_step=organism_step,
             generative_tick=self.generative_tick,
         )
         workspace = GenerativeWorkspace(episode=episode, budget=self.budget)
@@ -580,7 +582,7 @@ class ResidentGenerativeCognition:
                                 if len({item.predicted_outcomes for item in result.transitions}) > 1
                                 else 0.0
                             ),
-                            tick=tick,
+                            organism_step=organism_step,
                         )
             hypothesis_changed = bool(hypotheses_by_state)
             return AgendaProgress(
@@ -599,7 +601,7 @@ class ResidentGenerativeCognition:
 
         self.last_execution = self.execution.run(
             mode=mode,
-            tick=tick,
+            tick=organism_step,
             workspace=workspace,
             run_target=run_target,
             eligible_sources=(
@@ -759,11 +761,11 @@ class ResidentGenerativeCognition:
         """Return durable, recency-weighted non-factual cognitive-use signals."""
         signals: dict[str, object] = {}
         for ref in self.consolidator.tracker.representation_refs[:64]:
-            last_use = self.consolidator.tracker.last_use_tick(ref)
+            last_use = self.consolidator.tracker.last_use_organism_step(ref)
             age = (
-                self.last_symbiont_tick
+                self.last_organism_step
                 if last_use is None
-                else max(0, self.last_symbiont_tick - last_use)
+                else max(0, self.last_organism_step - last_use)
             )
             signals[ref] = self.consolidator.signal(
                 representation_ref=ref,
@@ -774,7 +776,7 @@ class ResidentGenerativeCognition:
     def materialize_replay(
         self,
         *,
-        tick: int,
+        organism_step: int,
         source_episode_id: str,
         context_tokens: tuple[str, ...],
         action_tokens: tuple[str, ...] = (),
@@ -788,19 +790,19 @@ class ResidentGenerativeCognition:
         source episode id is retained so repeated replay cannot masquerade as
         independent factual evidence.
         """
-        if isinstance(tick, bool) or not isinstance(tick, int) or tick < 0:
-            raise ValueError("tick must be a non-negative integer")
+        if isinstance(organism_step, bool) or not isinstance(organism_step, int) or organism_step < 0:
+            raise ValueError("organism_step must be a non-negative integer")
         if not isinstance(context_tokens, tuple):
             raise ValueError("context_tokens must be a tuple")
-        self.last_symbiont_tick = max(self.last_symbiont_tick, tick)
-        episode_id = f"generative.replay.{tick}.{self.generative_tick}"
+        self.last_organism_step = max(self.last_organism_step, organism_step)
+        episode_id = f"generative.replay.{organism_step}.{self.generative_tick}"
         root_state_id = f"{episode_id}.root"
         episode = new_episode(
             episode_id=episode_id,
             organism_id=self.organism_id,
             root_state_id=root_state_id,
             mode=GenerativeMode.OFFLINE,
-            symbiont_tick=tick,
+            organism_step=organism_step,
             generative_tick=self.generative_tick,
         )
         workspace = GenerativeWorkspace(episode=episode, budget=self.budget)
@@ -839,7 +841,7 @@ class ResidentGenerativeCognition:
                 episode_id=episode_id,
                 state_id=state.state_id,
                 source_refs=(source_episode_id,),
-                tick=tick,
+                organism_step=organism_step,
             )
         self.generative_tick += 1
         return self.snapshot(mode=GenerativeMode.OFFLINE)
@@ -847,7 +849,7 @@ class ResidentGenerativeCognition:
     def materialize_recombination(
         self,
         *,
-        tick: int,
+        organism_step: int,
         left: RecombinationFragment,
         right: RecombinationFragment,
     ) -> GenerativeResidentSnapshot:
@@ -858,14 +860,14 @@ class ResidentGenerativeCognition:
         :class:`ExperienceRecombiner`, and the result remains ``IMAGINED``.
         No factual record, observation count, or action authority is touched.
         """
-        if isinstance(tick, bool) or not isinstance(tick, int) or tick < 0:
-            raise ValueError("tick must be a non-negative integer")
+        if isinstance(organism_step, bool) or not isinstance(organism_step, int) or organism_step < 0:
+            raise ValueError("organism_step must be a non-negative integer")
         if not isinstance(left, RecombinationFragment) or not isinstance(
             right, RecombinationFragment
         ):
             raise ValueError("recombination requires two RecombinationFragment values")
-        self.last_symbiont_tick = max(self.last_symbiont_tick, tick)
-        episode_id = f"generative.recombine.{tick}.{self.generative_tick}"
+        self.last_organism_step = max(self.last_organism_step, organism_step)
+        episode_id = f"generative.recombine.{organism_step}.{self.generative_tick}"
         root_state_id = f"{episode_id}.root"
         source_episode_ids = tuple(dict.fromkeys((left.source_episode_id, right.source_episode_id)))
         episode = new_episode(
@@ -873,7 +875,7 @@ class ResidentGenerativeCognition:
             organism_id=self.organism_id,
             root_state_id=root_state_id,
             mode=GenerativeMode.OFFLINE,
-            symbiont_tick=tick,
+            organism_step=organism_step,
             generative_tick=self.generative_tick,
             source_episode_ids=source_episode_ids,
         )
@@ -892,7 +894,7 @@ class ResidentGenerativeCognition:
                 representation_ref=feature.token,
                 episode_id=episode_id,
                 state_id=state.state_id,
-                tick=tick,
+                organism_step=organism_step,
             )
         self.generative_tick += 1
         return self.snapshot(mode=GenerativeMode.OFFLINE)
@@ -1025,7 +1027,7 @@ class ResidentGenerativeCognition:
             ),
         )
 
-    def _ingest_prediction_errors(self, cognition: object | None, *, tick: int) -> None:
+    def _ingest_prediction_errors(self, cognition: object | None, *, organism_step: int) -> None:
         errors = tuple(getattr(cognition, "prediction_errors", ()) or ())
         for error in errors:
             predictor_id = str(getattr(error, "predictor_id", ""))
@@ -1043,7 +1045,7 @@ class ResidentGenerativeCognition:
                     target_id=identifier,
                     source=AgendaSource.PREDICTION_ERROR,
                     source_refs=(predictor_id, target_id),
-                    created_tick=tick,
+                    created_tick=organism_step,
                     uncertainty=uncertainty,
                     persistence=0.5,
                     recurrence=1,
@@ -1055,7 +1057,7 @@ class ResidentGenerativeCognition:
         self,
         candidate_ids: tuple[str, ...],
         *,
-        tick: int,
+        organism_step: int,
     ) -> None:
         for candidate_id in candidate_ids:
             if not isinstance(candidate_id, str) or not candidate_id:
@@ -1066,7 +1068,7 @@ class ResidentGenerativeCognition:
                     target_id=identifier,
                     source=AgendaSource.PROSPECTIVE_DECISION,
                     source_refs=(candidate_id,),
-                    created_tick=tick,
+                    created_tick=organism_step,
                     uncertainty=0.5,
                     persistence=0.5,
                     recurrence=1,
@@ -1096,7 +1098,7 @@ class ResidentGenerativeCognition:
         self,
         outcomes: tuple[tuple[str, str, str, str | None], ...],
         *,
-        tick: int,
+        organism_step: int,
     ) -> None:
         """A failed or invalidated intent re-opens its competence as uncertain.
 
@@ -1111,7 +1113,7 @@ class ResidentGenerativeCognition:
                     target_id=f"gc.prospective.{competence_id}",
                     source=AgendaSource.PROSPECTIVE_DECISION,
                     source_refs=(competence_id,),
-                    created_tick=tick,
+                    created_tick=organism_step,
                     uncertainty=1.0,
                     persistence=0.5,
                     recurrence=1,

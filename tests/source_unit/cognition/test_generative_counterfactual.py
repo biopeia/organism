@@ -43,7 +43,7 @@ def test_counterfactual_is_generated_and_never_executes_an_intervention():
         organism_id="o0",
         root_state_id="s0",
         mode=GenerativeMode.IDLE,
-        symbiont_tick=0,
+        organism_step=0,
         generative_tick=0,
     )
     workspace = GenerativeWorkspace(episode=episode)

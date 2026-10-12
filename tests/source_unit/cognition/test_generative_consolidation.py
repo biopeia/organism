@@ -124,7 +124,7 @@ def test_generative_use_checkpoint_round_trip_preserves_bounded_source_diversity
 
 
 def test_generative_retention_demand_decays_with_age_without_erasing_history():
-    consolidator = GenerativeConsolidator(retention_decay_ticks=8)
+    consolidator = GenerativeConsolidator(retention_decay_steps=8)
     for tick, episode_id, evidence_ref in (
         (0, "e0", "evidence.0"),
         (1, "e1", "evidence.1"),
@@ -134,7 +134,7 @@ def test_generative_retention_demand_decays_with_age_without_erasing_history():
             episode_id=episode_id,
             state_id=f"{episode_id}.s0",
             model_ids=("m0",),
-            tick=tick,
+            organism_step=tick,
         )
         consolidator.tracker.note_factual_sources(
             representation_ref="r0",
@@ -156,7 +156,7 @@ def test_generative_retention_demand_decays_with_age_without_erasing_history():
     assert old.cross_episode_reuse == fresh.cross_episode_reuse == 1
 
 
-def test_last_generative_use_tick_survives_checkpoint():
+def test_last_generative_use_organism_step_survives_checkpoint():
     from organism.cognition.generative.consolidation import GenerativeUseTracker
 
     tracker = GenerativeUseTracker()
@@ -164,12 +164,40 @@ def test_last_generative_use_tick_survives_checkpoint():
         representation_ref="r0",
         episode_id="e0",
         state_id="s0",
-        tick=41,
+        organism_step=41,
     )
 
     restored = GenerativeUseTracker.from_checkpoint(tracker.checkpoint())
 
-    assert restored.last_use_tick("r0") == 41
+    assert restored.last_use_organism_step("r0") == 41
+
+
+def test_generative_use_checkpoint_rejects_previous_time_field_and_schema():
+    import copy
+
+    from organism.cognition.generative.consolidation import GenerativeUseTracker
+
+    tracker = GenerativeUseTracker()
+    tracker.record(
+        representation_ref="r0",
+        episode_id="e0",
+        state_id="s0",
+        organism_step=41,
+    )
+    checkpoint = tracker.checkpoint()
+
+    previous_schema = copy.deepcopy(checkpoint)
+    previous_schema["schema_version"] = 1
+    previous_row = previous_schema["representations"][0]
+    previous_row["last_use_tick"] = previous_row.pop("last_use_organism_step")
+    with pytest.raises(ValueError, match="fields are incomplete or unknown"):
+        GenerativeUseTracker.from_checkpoint(previous_schema)
+
+    current_schema_with_old_key = copy.deepcopy(checkpoint)
+    current_row = current_schema_with_old_key["representations"][0]
+    current_row["last_use_tick"] = current_row.pop("last_use_organism_step")
+    with pytest.raises(ValueError, match="fields are incomplete or unknown"):
+        GenerativeUseTracker.from_checkpoint(current_schema_with_old_key)
 
 
 def test_generative_use_checkpoint_preserves_representation_eviction_order():

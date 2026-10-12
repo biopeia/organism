@@ -19,7 +19,7 @@ def _workspace() -> GenerativeWorkspace:
             organism_id="o0",
             root_state_id="s0",
             mode=GenerativeMode.IDLE,
-            symbiont_tick=1,
+            organism_step=1,
             generative_tick=1,
         ),
         budget=GenerativeBudget(max_model_queries=1),

@@ -89,7 +89,7 @@ class GenerativeUseTracker:
         self._hypothesis_counts: dict[str, int] = {}
         self._disagreement_sum: dict[str, float] = {}
         self._disagreement_count: dict[str, int] = {}
-        self._last_use_tick: dict[str, int] = {}
+        self._last_use_organism_step: dict[str, int] = {}
         # Wave 0 measurement only (Cross-Domain Revision Coherence v1 §2.1):
         # eviction pressure, and reactivations that bring no new context
         # (episode) and no new source/branch ref. Never read by decisions.
@@ -106,7 +106,7 @@ class GenerativeUseTracker:
         source_refs: tuple[str, ...] = (),
         hypothesis_ref: str | None = None,
         model_disagreement: float = 0.0,
-        tick: int | None = None,
+        organism_step: int | None = None,
     ) -> None:
         bounded_identifier(representation_ref, name="representation_ref")
         bounded_identifier(episode_id, name="episode_id")
@@ -120,8 +120,8 @@ class GenerativeUseTracker:
         if hypothesis_ref is not None:
             bounded_identifier(hypothesis_ref, name="hypothesis_ref")
         unit_interval(model_disagreement, name="model_disagreement")
-        if tick is not None and (isinstance(tick, bool) or not isinstance(tick, int) or tick < 0):
-            raise ValueError("tick must be a non-negative integer or None")
+        if organism_step is not None and (isinstance(organism_step, bool) or not isinstance(organism_step, int) or organism_step < 0):
+            raise ValueError("organism_step must be a non-negative integer or None")
 
         if (
             representation_ref not in self._activation_counts
@@ -165,10 +165,10 @@ class GenerativeUseTracker:
             1_000_000,
             self._disagreement_count.get(representation_ref, 0) + 1,
         )
-        if tick is not None:
-            self._last_use_tick[representation_ref] = max(
-                tick,
-                self._last_use_tick.get(representation_ref, tick),
+        if organism_step is not None:
+            self._last_use_organism_step[representation_ref] = max(
+                organism_step,
+                self._last_use_organism_step.get(representation_ref, organism_step),
             )
 
     def note_factual_sources(
@@ -220,13 +220,13 @@ class GenerativeUseTracker:
         """Bounded durable representation ids with generative-use history."""
         return tuple(sorted(self._activation_counts))
 
-    def last_use_tick(self, representation_ref: str) -> int | None:
+    def last_use_organism_step(self, representation_ref: str) -> int | None:
         bounded_identifier(representation_ref, name="representation_ref")
-        return self._last_use_tick.get(representation_ref)
+        return self._last_use_organism_step.get(representation_ref)
 
     def checkpoint(self) -> dict[str, object]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "representations": [
                 {
                     "representation_ref": representation_ref,
@@ -236,7 +236,7 @@ class GenerativeUseTracker:
                     "hypothesis_count": self._hypothesis_counts.get(representation_ref, 0),
                     "disagreement_sum": self._disagreement_sum.get(representation_ref, 0.0),
                     "disagreement_count": self._disagreement_count.get(representation_ref, 0),
-                    "last_use_tick": self._last_use_tick.get(representation_ref),
+                    "last_use_organism_step": self._last_use_organism_step.get(representation_ref),
                 }
                 for representation_ref in sorted(self._activation_counts)
             ],
@@ -258,7 +258,7 @@ class GenerativeUseTracker:
             "eviction_order",
             "capacity_pressure",
             "sterile_reactivations",
-        } or type(payload["schema_version"]) is not int or payload["schema_version"] != 1:
+        } or type(payload["schema_version"]) is not int or payload["schema_version"] != 2:
             raise ValueError("generative-use checkpoint fields are incomplete or unknown")
         raw = payload["representations"]
         if not isinstance(raw, list) or len(raw) > cls.MAX_REPRESENTATIONS:
@@ -282,7 +282,7 @@ class GenerativeUseTracker:
                 "hypothesis_count",
                 "disagreement_sum",
                 "disagreement_count",
-                "last_use_tick",
+                "last_use_organism_step",
             }:
                 raise ValueError("generative-use representation fields are incomplete or unknown")
             representation_ref = bounded_identifier(
@@ -300,7 +300,7 @@ class GenerativeUseTracker:
             hypothesis_count = _checkpoint_int(item["hypothesis_count"], "hypothesis_count")
             disagreement_sum = _checkpoint_number(item["disagreement_sum"], "disagreement_sum")
             disagreement_count = _checkpoint_int(item["disagreement_count"], "disagreement_count")
-            last_use_tick = item.get("last_use_tick")
+            last_use_organism_step = item.get("last_use_organism_step")
             if not isinstance(item["episode_ids"], list) or not isinstance(item["source_refs"], list):
                 raise ValueError("generative-use episode_ids and source_refs must be lists")
             if any(not isinstance(value, str) for value in (*item["episode_ids"], *item["source_refs"])):
@@ -315,11 +315,11 @@ class GenerativeUseTracker:
                 or disagreement_sum < 0.0
                 or disagreement_count < 0
                 or (
-                    last_use_tick is not None
+                    last_use_organism_step is not None
                     and (
-                        isinstance(last_use_tick, bool)
-                        or not isinstance(last_use_tick, int)
-                        or last_use_tick < 0
+                        isinstance(last_use_organism_step, bool)
+                        or not isinstance(last_use_organism_step, int)
+                        or last_use_organism_step < 0
                     )
                 )
                 or len(episode_ids) > cls.MAX_EPISODES_PER_REPRESENTATION
@@ -336,8 +336,8 @@ class GenerativeUseTracker:
             tracker._hypothesis_counts[representation_ref] = hypothesis_count
             tracker._disagreement_sum[representation_ref] = disagreement_sum
             tracker._disagreement_count[representation_ref] = disagreement_count
-            if last_use_tick is not None:
-                tracker._last_use_tick[representation_ref] = last_use_tick
+            if last_use_organism_step is not None:
+                tracker._last_use_organism_step[representation_ref] = last_use_organism_step
         tracker.pressure = CapacityPressure.restore(
             payload["capacity_pressure"], capacity=cls.MAX_REPRESENTATIONS
         )
@@ -361,7 +361,7 @@ class GenerativeUseTracker:
         self._hypothesis_counts.pop(representation_ref, None)
         self._disagreement_sum.pop(representation_ref, None)
         self._disagreement_count.pop(representation_ref, None)
-        self._last_use_tick.pop(representation_ref, None)
+        self._last_use_organism_step.pop(representation_ref, None)
         self.sterile_reactivations.pop(representation_ref, None)
 
 
@@ -375,7 +375,7 @@ class GenerativeConsolidator:
         minimum_cross_episode_reuse: int = 1,
         minimum_source_diversity: int = 2,
         minimum_demand: float = 0.5,
-        retention_decay_ticks: int = 32,
+        retention_decay_steps: int = 32,
     ) -> None:
         self.tracker = tracker or GenerativeUseTracker()
         if (
@@ -392,15 +392,15 @@ class GenerativeConsolidator:
             raise ValueError("minimum_source_diversity must be a non-negative integer")
         unit_interval(minimum_demand, name="minimum_demand")
         if (
-            isinstance(retention_decay_ticks, bool)
-            or not isinstance(retention_decay_ticks, int)
-            or retention_decay_ticks <= 0
+            isinstance(retention_decay_steps, bool)
+            or not isinstance(retention_decay_steps, int)
+            or retention_decay_steps <= 0
         ):
-            raise ValueError("retention_decay_ticks must be a positive integer")
+            raise ValueError("retention_decay_steps must be a positive integer")
         self.minimum_cross_episode_reuse = minimum_cross_episode_reuse
         self.minimum_source_diversity = minimum_source_diversity
         self.minimum_demand = minimum_demand
-        self.retention_decay_ticks = retention_decay_ticks
+        self.retention_decay_steps = retention_decay_steps
 
     def signal(
         self, *, representation_ref: str, generative_demand: float
@@ -409,10 +409,10 @@ class GenerativeConsolidator:
             representation_ref=representation_ref, generative_demand=generative_demand
         )
 
-    def demand_for_age(self, age_ticks: int) -> float:
-        if isinstance(age_ticks, bool) or not isinstance(age_ticks, int) or age_ticks < 0:
-            raise ValueError("age_ticks must be a non-negative integer")
-        return 1.0 / (1.0 + (age_ticks / self.retention_decay_ticks))
+    def demand_for_age(self, age_steps: int) -> float:
+        if isinstance(age_steps, bool) or not isinstance(age_steps, int) or age_steps < 0:
+            raise ValueError("age_steps must be a non-negative integer")
+        return 1.0 / (1.0 + (age_steps / self.retention_decay_steps))
 
     def is_mature(self, signal: GenerativeConsolidationSignal) -> bool:
         return (
