@@ -470,6 +470,21 @@ def test_cognitive_checkpoint_rejects_duplicate_experience_record_identity() -> 
         )
 
 
+def test_cognitive_checkpoint_rejects_duplicate_json_fields() -> None:
+    payload = CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes()
+    for marker in (b'"schema_version":8', b'"weight_codec_version":4'):
+        assert payload.count(marker) == 1
+        key, value = marker.split(b":", maxsplit=1)
+        duplicate_field_payload = payload.replace(
+            marker, key + b":" + value + b"," + key + b":" + value, 1
+        )
+
+        with pytest.raises(CognitiveRuntimeCheckpointError, match="duplicate JSON field"):
+            CognitiveRuntimeCheckpoint.from_bytes(
+                duplicate_field_payload, kernel_limits=KernelLimits()
+            )
+
+
 def test_cognitive_checkpoint_requires_experience_records_in_current_schema() -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
     del document["experience_records"]

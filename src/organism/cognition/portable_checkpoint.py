@@ -48,6 +48,17 @@ class CognitiveRuntimeCheckpointError(ValueError):
     """Raised when a composed cognitive runtime checkpoint is invalid."""
 
 
+def _reject_duplicate_json_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CognitiveRuntimeCheckpointError(
+                f"duplicate JSON field in cognitive checkpoint: {key}"
+            )
+        result[key] = value
+    return result
+
+
 def _validate_genetic_state(
     genome: Genome | None,
     germline_state: GermlineState | None,
@@ -215,7 +226,7 @@ class CognitiveRuntimeCheckpoint:
         genome_schema: GenomeSchema = DEFAULT_GENOME_SCHEMA,
     ) -> CognitiveRuntimeCheckpoint:
         try:
-            document = json.loads(payload)
+            document = json.loads(payload, object_pairs_hook=_reject_duplicate_json_fields)
             if not isinstance(document, dict) or set(document) != {
                 "schema",
                 "schema_version",

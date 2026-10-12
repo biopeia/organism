@@ -990,3 +990,12 @@ No additional `symbiont_tick` symbols are assigned dispositions by this entry. T
 - Disposition: `REWRITE` of the existing TARGET decoder only. Explicit null remains valid and is now preserved; no absent key, default state, or legacy compatibility behavior is introduced.
 - Target paths: `src/organism/cognition/checkpoint.py::restore_safety_state`; `tests/source_unit/cognition/test_graph_checkpoint.py`.
 - Validation: direct null preservation and existing non-null round-trip/invalid-field tests. This addresses only the direct component decoder semantic mismatch; it does not close issue #60 or establish complete Organism checkpoint continuity. No historical `symbiont-lab` files are changed.
+
+## Incremental correction: reject duplicate cognitive checkpoint fields (issue #34)
+
+- Implementation base: `biopeia/organism@19dfc86611ac2b4e5469aed0ae4ce31039be20f6`.
+- Finding: the schema-v8 `CognitiveRuntimeCheckpoint` decoder used the default JSON object parser, which accepts duplicate member names and keeps the last value. This made the accepted interpretation of a persisted owner payload ambiguous.
+- Disposition: `REWRITE` the TARGET decoder boundary to reject duplicate JSON fields at every object depth before schema validation. No schema version, field alias, default, or historical compatibility behavior is added.
+- Target paths: `src/organism/cognition/portable_checkpoint.py`; `tests/source_unit/cognition/test_portable_checkpoint.py`.
+- Validation on the candidate: the regression reproduced acceptance of a payload with duplicate top-level `schema_version`; the strict decoder rejects duplicate top-level and nested graph fields. Full package tests, build, and `git diff --check` passed.
+- Limitations: this establishes only unambiguous JSON decoding for this bounded cognitive payload. It does not establish complete owner-private dependency closure, full Organism continuation, World durability, or scientific efficacy; issue #34 remains open. No `symbiont-lab` files were changed.
