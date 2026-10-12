@@ -134,6 +134,86 @@ def test_admitted_action_composes_to_registered_actuation_and_explicit_close():
         )
 
 
+def test_action_domain_checkpoint_restores_active_intent_commitment_and_outcomes():
+    domain, intent, commitment, _ = _active_domain()
+    checkpoint = domain.checkpoint()
+
+    restored = ActionDomain.restore(checkpoint)
+
+    assert restored.checkpoint() == checkpoint
+    assert restored.active_commitment is not None
+    assert restored.active_commitment.commitment_id == commitment.commitment_id
+    restored_intent = restored._intents[intent.intent_id]
+    assert restored_intent.status is IntentStatus.ACTIVE
+
+
+def test_restored_active_action_can_continue_and_record_owned_outcome():
+    domain, _, commitment, _ = _active_domain()
+    restored = ActionDomain.restore(domain.checkpoint())
+    sample = ExecutiveOutcomeSample(
+        tick=6,
+        outcome_class=OutcomeClass.POSITIVE,
+        reason="anticipated_effect_observed",
+        effect_similarity=1.0,
+        prediction_mismatch=0.0,
+        progress_before_failure=None,
+    )
+
+    restored.close(
+        commitment.commitment_id,
+        status=IntentStatus.SATISFIED,
+        tick=6,
+        reason="anticipated_effect_observed",
+        outcome=sample,
+    )
+
+    assert restored.active_commitment is None
+    assert restored._intents["intent.1"].status is IntentStatus.SATISFIED
+    assert (
+        restored._outcome_ledger.get(("competence.walk", "effect.displacement")).satisfactions
+        == 1
+    )
+    # Restoring creates an independent continuation; it does not mutate the source object.
+    assert domain.active_commitment is not None
+
+
+def test_action_domain_checkpoint_restores_terminal_lifecycle_and_closed_ids():
+    domain, intent, commitment, _ = _active_domain()
+    domain.close(
+        commitment.commitment_id,
+        status=IntentStatus.INVALIDATED,
+        tick=5,
+        reason="external_context_invalidated",
+    )
+
+    checkpoint = domain.checkpoint()
+    restored = ActionDomain.restore(checkpoint)
+
+    assert restored.checkpoint() == checkpoint
+    assert restored.active_commitment is None
+    assert restored._intents[intent.intent_id].status is IntentStatus.INVALIDATED
+    assert commitment.commitment_id in restored._closed_commitments
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda payload: payload.update(schema_version=2),
+        lambda payload: payload.update(active_commitment_id="missing"),
+        lambda payload: payload["commitments"].clear(),
+        lambda payload: payload["closed_commitment_ids"].append("missing"),
+        lambda payload: payload["commitments"][0].update(intent_id="missing"),
+    ),
+)
+def test_action_domain_restore_rejects_incomplete_or_inconsistent_state(mutate):
+    domain, *_ = _active_domain()
+    checkpoint = domain.checkpoint()
+    mutate(checkpoint)
+
+    with pytest.raises((TypeError, ValueError)):
+        ActionDomain.restore(checkpoint)
+
+
 def test_domain_rejects_fabricated_intent_and_mismatched_proposal():
     domain = ActionDomain()
     surface = derive_actuator_constitution(("effector.left",))
