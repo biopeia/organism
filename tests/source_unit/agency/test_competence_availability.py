@@ -77,6 +77,17 @@ def test_historical_knowledge_survives_a_non_current_surface():
     assert state.prediction_scope is PredictionScope.HISTORICAL
 
 
+def test_valid_binding_for_previous_embodiment_is_historical_not_current():
+    state = _derive(
+        _binding(),
+        applicability_fingerprint=_context("surface.other").fingerprint,
+    )
+
+    assert state.predictable_now
+    assert not state.executable_now
+    assert state.prediction_scope is PredictionScope.HISTORICAL
+
+
 def test_uncertain_current_scope_and_invalidated_bindings():
     controller = _binding(
         status=BindingStatus.STALE, status_reason=StalenessReason.CONTROLLER_UNAVAILABLE

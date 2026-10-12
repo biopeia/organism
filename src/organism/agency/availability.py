@@ -87,6 +87,11 @@ def derive_availability(
     )
     if not predictable:
         scope = None
+    elif status is BindingStatus.VALID and not applicability_match:
+        # A binding can remain valid for its original body while not applying
+        # to the current one. Preserve the learned knowledge as historical,
+        # but do not label it as a current-body prediction.
+        scope = PredictionScope.HISTORICAL
     elif status is BindingStatus.VALID:
         scope = PredictionScope.CURRENT
     elif binding is not None and binding.status_reason in _HISTORICAL:
