@@ -526,6 +526,8 @@ class OrganismExplorationComposer:
         committed_cut: CommittedWorldCutReference,
         expected_organism_id: str,
         expected_physical_step_id: str,
+        expected_actuator_context: ActuatorEvidenceContext | None = None,
+        expected_surface: ActuatorSurface | None = None,
         read_dependency: Callable[[str], bytes] | None = None,
         kernel_limits: KernelLimits | None = None,
         generative_registry: GenerativeModelRegistry | None = None,
@@ -539,6 +541,12 @@ class OrganismExplorationComposer:
         It does not claim complete Organism continuation. If the embedded
         transition checkpoint declares external dependencies, this method
         requires and verifies a resolver before returning restored state.
+
+        Supplying both ``expected_actuator_context`` and ``expected_surface``
+        additionally verifies that restored motor applicability matches the
+        current body episode, morphology revision, and stable actuator IDs
+        before the runtime is returned. Context-free checkpoint decoding does
+        not establish that a restored motor binding is currently executable.
         """
         if not isinstance(committed_cut, CommittedWorldCutReference):
             raise TypeError("restore requires a World committed-cut receipt")
@@ -546,10 +554,29 @@ class OrganismExplorationComposer:
             raise ValueError("expected_organism_id must be non-empty")
         if not isinstance(expected_physical_step_id, str) or not expected_physical_step_id.strip():
             raise ValueError("expected_physical_step_id must be non-empty")
+        if (expected_actuator_context is None) != (expected_surface is None):
+            raise ValueError(
+                "expected actuator context and surface must be supplied together"
+            )
+        if expected_actuator_context is not None and not isinstance(
+            expected_actuator_context, ActuatorEvidenceContext
+        ):
+            raise TypeError("expected_actuator_context must be ActuatorEvidenceContext")
+        if expected_surface is not None and not isinstance(expected_surface, ActuatorSurface):
+            raise TypeError("expected_surface must be ActuatorSurface")
+        if (
+            expected_actuator_context is not None
+            and expected_surface is not None
+            and expected_actuator_context.surface_fingerprint
+            != expected_surface.contract_fingerprint
+        ):
+            raise ValueError("expected actuator context does not identify the expected surface")
         decoded = cls._decode_checkpoint(
             encoded,
             expected_organism_id=expected_organism_id,
             expected_physical_step_id=expected_physical_step_id,
+            expected_actuator_context=expected_actuator_context,
+            expected_surface=expected_surface,
             read_dependency=read_dependency,
             kernel_limits=kernel_limits,
             generative_registry=generative_registry,
@@ -570,6 +597,8 @@ class OrganismExplorationComposer:
         *,
         expected_organism_id: str,
         expected_physical_step_id: str | None = None,
+        expected_actuator_context: ActuatorEvidenceContext | None = None,
+        expected_surface: ActuatorSurface | None = None,
         read_dependency: Callable[[str], bytes] | None = None,
         kernel_limits: KernelLimits | None = None,
         generative_registry: GenerativeModelRegistry | None = None,
@@ -667,6 +696,30 @@ class OrganismExplorationComposer:
             organism_id=organism_id,
             embodiment_fingerprint=fingerprint,
         )
+        if expected_actuator_context is not None and expected_surface is not None:
+            transition_embodiment = transition_state.embodiment
+            if transition_embodiment is None or (
+                transition_embodiment.body_id != expected_actuator_context.body_id
+                or transition_embodiment.embodiment_episode_id
+                != expected_actuator_context.embodiment_episode_id
+                or transition_embodiment.morphology_revision
+                != expected_actuator_context.morphology_revision
+            ):
+                raise ValueError(
+                    "restored Organism transition does not match current actuator applicability"
+                )
+            if engine.embodiment_fingerprint != expected_actuator_context.fingerprint:
+                raise ValueError(
+                    "restored motor state is not applicable to the current Embodiment"
+                )
+            engine_actuator_ids = engine.checkpoint().get("actuator_ids")
+            if (
+                not isinstance(engine_actuator_ids, list)
+                or set(engine_actuator_ids) != set(expected_surface.actuator_ids)
+            ):
+                raise ValueError(
+                    "restored motor actuator identities do not match the current surface"
+                )
         domain = ActionDomain.restore(payload["action_domain"])
         restored = cls(organism_id=organism_id, engine=engine, action_domain=domain)
         restored._generation = payload["generation"]

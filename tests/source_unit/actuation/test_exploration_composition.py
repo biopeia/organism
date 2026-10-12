@@ -249,10 +249,33 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
         committed_cut=_CommittedCut("world.1", first.target_causal_tick, first.commit_id),
         expected_organism_id=str(IDENTITY),
         expected_physical_step_id=first.physical_step_id,
+        expected_actuator_context=context,
+        expected_surface=surface,
     )
     assert restored.cognitive_runtime.to_bytes() == (
         restored.transition_state.owner_checkpoint.private_state
     )
+    changed_surface = ActuatorSurface.from_effector_ids(
+        ACTUATORS, fingerprint_material="changed surface contract"
+    )
+    stale_context = _context(changed_surface)
+    with pytest.raises(ValueError, match="not applicable to the current Embodiment"):
+        OrganismExplorationComposer.restore_from_committed_checkpoint(
+            encoded,
+            committed_cut=_CommittedCut("world.1", first.target_causal_tick, first.commit_id),
+            expected_organism_id=str(IDENTITY),
+            expected_physical_step_id=first.physical_step_id,
+            expected_actuator_context=stale_context,
+            expected_surface=changed_surface,
+        )
+    with pytest.raises(ValueError, match="must be supplied together"):
+        OrganismExplorationComposer.restore_from_committed_checkpoint(
+            encoded,
+            committed_cut=_CommittedCut("world.1", first.target_causal_tick, first.commit_id),
+            expected_organism_id=str(IDENTITY),
+            expected_physical_step_id=first.physical_step_id,
+            expected_actuator_context=context,
+        )
     with pytest.raises(ValueError, match="does not match committed World cut"):
         OrganismExplorationComposer.restore_from_committed_checkpoint(
             encoded,
