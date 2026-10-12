@@ -12,7 +12,12 @@ from organism.actuation.binding import (
     StalenessReason,
 )
 from organism.actuation.competence import CompetenceMaturity
+from organism.actuation.context import ActuatorEvidenceContext
 from organism.agency.availability import AvailabilityReason, PredictionScope, derive_availability
+
+
+def _context(surface: str) -> ActuatorEvidenceContext:
+    return ActuatorEvidenceContext("body.test", "episode.test", "morph.test", surface)
 
 
 class _Competence:
@@ -26,6 +31,7 @@ def _binding(**overrides):
     fields = dict(
         competence_id="competence.a",
         surface_fingerprint="surface.s",
+        applicability_fingerprint=_context("surface.s").fingerprint,
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.9,
@@ -36,12 +42,21 @@ def _binding(**overrides):
     return CompetenceExecutionBinding(**fields)
 
 
-def _derive(binding, *, controller=True, suppressed=False, surface="surface.s", **competence):
+def _derive(
+    binding,
+    *,
+    controller=True,
+    suppressed=False,
+    surface="surface.s",
+    applicability_fingerprint=_context("surface.s").fingerprint,
+    **competence,
+):
     return derive_availability(
         _Competence(**competence),
         binding=binding,
         effect_known=True,
         surface_fingerprint=surface,
+        applicability_fingerprint=applicability_fingerprint,
         controller_available=controller,
         suppressed=suppressed,
     )
@@ -105,6 +120,7 @@ def test_lifecycle_transitions_are_traced_and_evidence_revalidates():
     kwargs = dict(
         competence_id="competence.a",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.9,
@@ -137,6 +153,7 @@ def test_all_pending_lifecycle_transitions_survive_checkpoint_restore():
     registry.bind_from_evidence(
         competence_id="competence.pending",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.9,
@@ -153,6 +170,7 @@ def test_all_pending_lifecycle_transitions_survive_checkpoint_restore():
     registry.bind_from_evidence(
         competence_id="competence.pending",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.2",),
         reliability=0.9,
@@ -169,6 +187,7 @@ def test_all_pending_lifecycle_transitions_survive_checkpoint_restore():
     registry.bind_from_evidence(
         competence_id="competence.pending",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.3",),
         reliability=0.9,
@@ -210,6 +229,7 @@ def test_binding_restore_rejects_nonconsecutive_pending_transition_revision():
     registry.bind_from_evidence(
         competence_id="competence.pending",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.9,
@@ -249,6 +269,7 @@ def test_binding_restore_requires_exact_writer_schema_and_rejects_none():
     [
         ("competence_id", 7),
         ("surface_fingerprint", None),
+        ("applicability_fingerprint", None),
         ("effect_id", ""),
         ("evidence_refs", ["ev.1", 2]),
         ("reliability", "0.9"),
@@ -265,6 +286,7 @@ def test_binding_restore_rejects_coercions_and_unknown_binding_fields(field, val
     registry.bind_from_evidence(
         competence_id="competence.a",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.9,
@@ -283,6 +305,7 @@ def test_binding_restore_preserves_nullable_reason_and_historical_metadata():
     registry.bind_from_evidence(
         competence_id="competence.a",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.9,
@@ -322,6 +345,7 @@ def test_binding_restore_rejects_malformed_pending_transition_and_history():
     registry.bind_from_evidence(
         competence_id="competence.a",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.9,
@@ -341,6 +365,7 @@ def test_binding_restore_rejects_malformed_pending_transition_and_history():
     history_registry.bind_from_evidence(
         competence_id="competence.a",
         surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.9,
@@ -361,6 +386,7 @@ def test_bind_from_evidence_on_different_surface_advances_revision_and_records_t
     registry.bind_from_evidence(
         competence_id="competence.a",
         surface_fingerprint="surface.one",
+        applicability_context=_context("surface.one"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.8,
@@ -376,6 +402,7 @@ def test_bind_from_evidence_on_different_surface_advances_revision_and_records_t
     registry.bind_from_evidence(
         competence_id="competence.a",
         surface_fingerprint="surface.two",
+        applicability_context=_context("surface.two"),
         effect_id="effect.e",
         evidence_refs=("ev.2",),
         reliability=0.85,
@@ -387,13 +414,98 @@ def test_bind_from_evidence_on_different_surface_advances_revision_and_records_t
     assert binding2.surface_fingerprint == "surface.two"
     assert binding2.valid_from_tick == 25
     assert binding2.last_evidence_tick == 25
-    assert binding2.evidence_refs == ("ev.1", "ev.2")
+    assert binding2.evidence_refs == ("ev.2",)
 
     transitions = registry.drain_transitions()
     assert len(transitions) == 1
     assert transitions[0].previous_status == BindingStatus.VALID
     assert transitions[0].previous_revision == 0
+    assert transitions[0].previous_binding.evidence_refs == ("ev.1",)
     assert transitions[0].binding.revision == 1
+
+
+def test_same_surface_new_body_context_starts_fresh_binding_revision():
+    registry = CompetenceExecutionBindingRegistry()
+    body_a = ActuatorEvidenceContext("body.a", "episode.a", "morph.a", "surface.same")
+    body_b = ActuatorEvidenceContext("body.b", "episode.b", "morph.b", "surface.same")
+    registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint=body_a.surface_fingerprint,
+        applicability_context=body_a,
+        effect_id="effect.e",
+        evidence_refs=("ev.body-a",),
+        reliability=0.8,
+        controllability=0.7,
+        tick=10,
+    )
+
+    binding = registry.bind_from_evidence(
+        competence_id="competence.a",
+        surface_fingerprint=body_b.surface_fingerprint,
+        applicability_context=body_b,
+        effect_id="effect.e",
+        evidence_refs=("ev.body-b",),
+        reliability=0.85,
+        controllability=0.75,
+        tick=25,
+    )
+
+    assert binding.applicability_fingerprint == body_b.fingerprint
+    assert binding.evidence_refs == ("ev.body-b",)
+    assert binding.revision == 1
+    assert binding.valid_from_tick == 25
+    restored_pending = CompetenceExecutionBindingRegistry.restore(registry.checkpoint())
+    transition = restored_pending.drain_transitions()[0]
+    assert transition.binding == binding
+    assert transition.previous_binding.applicability_fingerprint == body_a.fingerprint
+    assert transition.previous_binding.evidence_refs == ("ev.body-a",)
+    assert not registry.is_executable(
+        _Competence(),
+        surface_fingerprint=body_b.surface_fingerprint,
+        applicability_fingerprint=body_a.fingerprint,
+    )
+    assert registry.is_executable(
+        _Competence(),
+        surface_fingerprint=body_b.surface_fingerprint,
+        applicability_fingerprint=body_b.fingerprint,
+    )
+    assert not registry.is_executable(
+        _Competence(),
+        surface_fingerprint=body_b.surface_fingerprint,
+    )
+    restored = CompetenceExecutionBindingRegistry.restore(registry.checkpoint())
+    assert restored.get("competence.a").applicability_fingerprint == body_b.fingerprint
+    with pytest.raises(TypeError, match="applicability_context"):
+        registry.bind_from_evidence(
+            competence_id="competence.a",
+            surface_fingerprint=body_b.surface_fingerprint,
+            effect_id="effect.e",
+            evidence_refs=("ev.unscoped",),
+            reliability=0.8,
+            controllability=0.7,
+            tick=26,
+        )
+    assert not _derive(
+        binding,
+        applicability_fingerprint=body_a.fingerprint,
+    ).executable_now
+
+
+def test_availability_rejects_binding_from_another_applicability_context():
+    body_a = ActuatorEvidenceContext("body.a", "episode.a", "morph.a", "surface.same")
+    body_b = ActuatorEvidenceContext("body.b", "episode.b", "morph.b", "surface.same")
+    state = _derive(
+        _binding(applicability_fingerprint=body_a.fingerprint),
+        applicability_fingerprint=body_b.fingerprint,
+    )
+    assert not state.executable_now
+    assert state.reason is AvailabilityReason.APPLICABILITY_MISMATCH
+
+    current = _derive(
+        _binding(applicability_fingerprint=body_a.fingerprint),
+        applicability_fingerprint=body_a.fingerprint,
+    )
+    assert current.executable_now
 
 
 def test_mark_stale_for_surface_transitions_only_non_current_surfaces():
@@ -401,6 +513,7 @@ def test_mark_stale_for_surface_transitions_only_non_current_surfaces():
     registry.bind_from_evidence(
         competence_id="competence.a",
         surface_fingerprint="surface.old",
+        applicability_context=_context("surface.old"),
         effect_id="effect.e",
         evidence_refs=("ev.1",),
         reliability=0.8,
@@ -410,6 +523,7 @@ def test_mark_stale_for_surface_transitions_only_non_current_surfaces():
     registry.bind_from_evidence(
         competence_id="competence.b",
         surface_fingerprint="surface.current",
+        applicability_context=_context("surface.current"),
         effect_id="effect.e",
         evidence_refs=("ev.2",),
         reliability=0.9,

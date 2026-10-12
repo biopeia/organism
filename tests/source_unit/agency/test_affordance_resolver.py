@@ -78,3 +78,39 @@ def test_affordance_resolver_filters_mismatched_surface_fingerprint():
 
     affordances = resolver.current(context_ref=None, embodiment_id="body.b")
     assert affordances == ()
+
+
+def test_affordance_resolver_requires_matching_typed_applicability_context():
+    effects = EffectSpace()
+    effect = effects.observe({"signal.x": 1.0})
+    assert effect is not None
+    competence = SimpleNamespace(competence_id="competence.c")
+    resolver = AffordanceResolver(
+        competences=SimpleNamespace(items=(competence,)),
+        predict=lambda **_: EffectPrediction(
+            prediction_id="prediction.p",
+            competence_id="competence.c",
+            context_id=None,
+            effect_id=effect.effect_id,
+            confidence=0.8,
+            support=1,
+        ),
+        controllability_model=SimpleNamespace(estimate=lambda **_: None),
+        execution_bindings=SimpleNamespace(
+            get=lambda _: SimpleNamespace(
+                surface_fingerprint="surface.same",
+                applicability_fingerprint="context.body-a",
+                controllability=0.9,
+                reliability=0.7,
+                evidence_refs=("evidence.binding",),
+            )
+        ),
+        executable=lambda _: True,
+        effect_space=effects,
+        effect_matcher=EffectMatcher(),
+        surface_fingerprint="surface.same",
+        applicability_fingerprint="context.body-b",
+        embodiment_id="body.b",
+    )
+
+    assert resolver.current(context_ref=None, embodiment_id="body.b") == ()

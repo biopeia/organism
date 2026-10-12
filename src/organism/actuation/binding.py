@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from ..capacity import CapacityPressure
 from .competence import CompetenceMaturity, MotorCompetence
+from .context import ActuatorEvidenceContext
 
 
 class BindingStatus(StrEnum):
@@ -48,6 +49,7 @@ class CompetenceExecutionBinding:
     # Binding/execution metric supplied by owner contract; not a causal estimate.
     controllability: float
     last_evidence_tick: int
+    applicability_fingerprint: str
     status: BindingStatus = BindingStatus.VALID
     status_reason: StalenessReason | InvalidationReason | None = None
     valid_from_tick: int = 0
@@ -55,7 +57,12 @@ class CompetenceExecutionBinding:
     revision: int = 0
 
     def __post_init__(self) -> None:
-        if not self.competence_id or not self.surface_fingerprint or not self.effect_id:
+        if (
+            not self.competence_id
+            or not self.surface_fingerprint
+            or not self.applicability_fingerprint
+            or not self.effect_id
+        ):
             raise ValueError("execution binding identifiers must be non-empty")
         if not self.evidence_refs:
             raise ValueError("execution binding requires current factual evidence")
@@ -81,11 +88,12 @@ class CompetenceExecutionBinding:
 
 @dataclass(frozen=True, slots=True)
 class BindingTransition:
-    """One lifecycle change, for the caller to trace (previous state lives here only)."""
+    """One lifecycle change, retaining both sides for provenance consumers."""
 
     competence_id: str
     previous_status: BindingStatus
     previous_revision: int
+    previous_binding: CompetenceExecutionBinding
     binding: CompetenceExecutionBinding
     cause_refs: tuple[str, ...] = ()
 
@@ -93,7 +101,7 @@ class BindingTransition:
 class CompetenceExecutionBindingRegistry:
     """Bounded current-embodiment authority, separate from competence knowledge."""
 
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, *, capacity: int = 512) -> None:
         if capacity < 1:
@@ -116,27 +124,47 @@ class CompetenceExecutionBindingRegistry:
         *,
         competence_id: str,
         surface_fingerprint: str,
+        applicability_context: ActuatorEvidenceContext,
         effect_id: str,
         evidence_refs: tuple[str, ...],
         reliability: float,
         controllability: float,
         tick: int,
     ) -> CompetenceExecutionBinding:
+        if not isinstance(applicability_context, ActuatorEvidenceContext):
+            raise TypeError("applicability_context must be an ActuatorEvidenceContext")
+        if applicability_context.surface_fingerprint != surface_fingerprint:
+            raise ValueError("surface_fingerprint must match applicability_context")
         existing = self._items.get(competence_id)
+        applicability_fingerprint = applicability_context.fingerprint
+        applicability_changed = (
+            existing is not None
+            and existing.applicability_fingerprint != applicability_fingerprint
+        )
+        context_is_current = (
+            existing is not None
+            and existing.applicability_fingerprint == applicability_fingerprint
+        )
         refs = tuple(
             dict.fromkeys(
-                (existing.evidence_refs if existing is not None else ()) + tuple(evidence_refs)
+                (
+                    existing.evidence_refs
+                    if context_is_current and existing is not None
+                    else ()
+                )
+                + tuple(evidence_refs)
             )
         )
         surface_changed = (
             existing is not None and existing.surface_fingerprint != surface_fingerprint
         )
         revalidated = existing is not None and (
-            existing.status is not BindingStatus.VALID or surface_changed
+            existing.status is not BindingStatus.VALID or surface_changed or applicability_changed
         )
         binding = CompetenceExecutionBinding(
             competence_id=competence_id,
             surface_fingerprint=surface_fingerprint,
+            applicability_fingerprint=applicability_fingerprint,
             effect_id=effect_id,
             evidence_refs=refs,
             reliability=max(0.0, min(1.0, float(reliability))),
@@ -144,7 +172,7 @@ class CompetenceExecutionBindingRegistry:
             last_evidence_tick=int(tick),
             valid_from_tick=(
                 int(tick)
-                if existing is None or surface_changed or revalidated
+                if existing is None or surface_changed or applicability_changed or revalidated
                 else existing.valid_from_tick
             ),
             status_changed_tick=(
@@ -156,7 +184,13 @@ class CompetenceExecutionBindingRegistry:
         self._unconfirmed.pop(competence_id, None)  # confirmed
         if revalidated:
             self._transitions.append(
-                BindingTransition(competence_id, existing.status, existing.revision, binding)
+                BindingTransition(
+                    competence_id,
+                    existing.status,
+                    existing.revision,
+                    existing,
+                    binding,
+                )
             )
         if existing is None:
             self.pressure.note_admitted(competence_id)
@@ -210,7 +244,12 @@ class CompetenceExecutionBindingRegistry:
         )
         self._items[competence_id] = changed
         transition = BindingTransition(
-            competence_id, binding.status, binding.revision, changed, tuple(cause_refs)
+            competence_id,
+            binding.status,
+            binding.revision,
+            binding,
+            changed,
+            tuple(cause_refs),
         )
         self._transitions.append(transition)
         return transition
@@ -278,6 +317,7 @@ class CompetenceExecutionBindingRegistry:
         competence: MotorCompetence,
         *,
         surface_fingerprint: str | None,
+        applicability_fingerprint: str | None = None,
     ) -> bool:
         if surface_fingerprint is None:
             return False
@@ -286,6 +326,7 @@ class CompetenceExecutionBindingRegistry:
             binding is not None
             and binding.status is BindingStatus.VALID
             and binding.surface_fingerprint == surface_fingerprint
+            and binding.applicability_fingerprint == applicability_fingerprint
             and bool(binding.evidence_refs)
             and competence.maturity in {CompetenceMaturity.ESTABLISHED, CompetenceMaturity.ROBUST}
         )
@@ -334,6 +375,7 @@ class CompetenceExecutionBindingRegistry:
             return {
                 "competence_id": item.competence_id,
                 "surface_fingerprint": item.surface_fingerprint,
+                "applicability_fingerprint": item.applicability_fingerprint,
                 "effect_id": item.effect_id,
                 "evidence_refs": list(item.evidence_refs),
                 "reliability": item.reliability,
@@ -357,6 +399,7 @@ class CompetenceExecutionBindingRegistry:
                     "competence_id": transition.competence_id,
                     "previous_status": transition.previous_status.value,
                     "previous_revision": transition.previous_revision,
+                    "previous_binding": binding_payload(transition.previous_binding),
                     "binding": binding_payload(transition.binding),
                     "cause_refs": list(transition.cause_refs),
                 }
@@ -425,12 +468,14 @@ class CompetenceExecutionBindingRegistry:
                 "competence_id",
                 "previous_status",
                 "previous_revision",
+                "previous_binding",
                 "binding",
                 "cause_refs",
             }:
                 raise ValueError("invalid pending competence execution binding transition")
             raw_binding = entry["binding"]
             binding = _restore_binding(raw_binding)
+            previous_binding = _restore_binding(entry["previous_binding"])
             cause_refs = entry["cause_refs"]
             if not isinstance(cause_refs, list) or not all(
                 isinstance(value, str) and value for value in cause_refs
@@ -443,10 +488,16 @@ class CompetenceExecutionBindingRegistry:
                 or previous_revision < 0
             ):
                 raise ValueError("invalid previous competence execution binding revision")
-            if entry["competence_id"] != binding.competence_id:
-                raise ValueError("pending competence execution binding identity mismatch")
             if binding.revision != previous_revision + 1:
                 raise ValueError("invalid pending competence execution binding revision")
+            if entry["competence_id"] != binding.competence_id:
+                raise ValueError("pending competence execution binding identity mismatch")
+            if (
+                entry["competence_id"] != previous_binding.competence_id
+                or previous_binding.revision != previous_revision
+                or previous_binding.status.value != entry["previous_status"]
+            ):
+                raise ValueError("pending competence execution previous binding mismatch")
             previous_status = entry["previous_status"]
             if not isinstance(previous_status, str):
                 raise ValueError("invalid previous competence execution binding status")
@@ -455,6 +506,7 @@ class CompetenceExecutionBindingRegistry:
                     competence_id=binding.competence_id,
                     previous_status=BindingStatus(previous_status),
                     previous_revision=previous_revision,
+                    previous_binding=previous_binding,
                     binding=binding,
                     cause_refs=tuple(cause_refs),
                 )
@@ -504,6 +556,7 @@ class CompetenceExecutionBindingRegistry:
 _BINDING_FIELDS = {
     "competence_id",
     "surface_fingerprint",
+    "applicability_fingerprint",
     "effect_id",
     "evidence_refs",
     "reliability",
@@ -523,6 +576,9 @@ def _restore_binding(raw: object) -> CompetenceExecutionBinding:
     for name in ("competence_id", "surface_fingerprint", "effect_id"):
         if not isinstance(raw[name], str) or not raw[name]:
             raise ValueError("invalid competence execution binding identity")
+    applicability_fingerprint = raw["applicability_fingerprint"]
+    if not isinstance(applicability_fingerprint, str) or not applicability_fingerprint:
+        raise ValueError("invalid competence execution binding applicability identity")
     refs = raw["evidence_refs"]
     if not _valid_string_list(refs):
         raise ValueError("invalid competence execution binding evidence references")
@@ -543,6 +599,7 @@ def _restore_binding(raw: object) -> CompetenceExecutionBinding:
     return CompetenceExecutionBinding(
         competence_id=raw["competence_id"],
         surface_fingerprint=raw["surface_fingerprint"],
+        applicability_fingerprint=applicability_fingerprint,
         effect_id=raw["effect_id"],
         evidence_refs=tuple(refs),
         reliability=raw["reliability"],

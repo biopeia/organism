@@ -161,6 +161,7 @@ def derive_motor_competence_from_evidence(
             binding = binding_registry.bind_from_evidence(
                 competence_id=competence_id,
                 surface_fingerprint=applicability_context.surface_fingerprint,
+                applicability_context=applicability_context,
                 effect_id=effect_id,
                 evidence_refs=tuple(evidence_ids),
                 reliability=reproducibility,

@@ -321,6 +321,7 @@ def test_evidence_refs_and_binding_are_scoped_to_current_context():
     assert record.binding is not None
     assert set(record.binding.evidence_refs) <= current_ids
     assert record.binding.surface_fingerprint == current.surface_fingerprint
+    assert record.binding.applicability_fingerprint == current.fingerprint
 
 
 def test_mismatched_context_ref_and_applicability_are_rejected():

@@ -34,6 +34,7 @@ class AvailabilityReason(StrEnum):
     NOT_MATURE = "not_mature"
     UNBOUND = "unbound"
     SURFACE_MISMATCH = "surface_mismatch"
+    APPLICABILITY_MISMATCH = "applicability_mismatch"
     BINDING_STALE = "binding_stale"
     BINDING_INVALIDATED = "binding_invalidated"
     CONTROLLER_UNAVAILABLE = "controller_unavailable"
@@ -64,6 +65,7 @@ def derive_availability(
     binding: CompetenceExecutionBinding | None,
     effect_known: bool,
     surface_fingerprint: str | None,
+    applicability_fingerprint: str | None = None,
     controller_available: bool,
     suppressed: bool,
 ) -> CompetenceAvailability:
@@ -72,6 +74,10 @@ def derive_availability(
         binding is not None
         and surface_fingerprint is not None
         and binding.surface_fingerprint == surface_fingerprint
+    )
+    applicability_match = (
+        binding is not None
+        and binding.applicability_fingerprint == applicability_fingerprint
     )
     mature = competence.maturity in _MATURE
     predictable = (
@@ -90,7 +96,7 @@ def derive_availability(
     usable = status is BindingStatus.VALID or (
         status is BindingStatus.STALE and binding is not None and binding.status_reason in _LIVE
     )
-    executable = usable and surface_match and mature and controller_available
+    executable = usable and surface_match and applicability_match and mature and controller_available
     admissible = executable and not suppressed
     testable = predictable and executable
     if not mature:
@@ -103,6 +109,8 @@ def derive_availability(
         reason = AvailabilityReason.BINDING_STALE
     elif not surface_match:
         reason = AvailabilityReason.SURFACE_MISMATCH
+    elif not applicability_match:
+        reason = AvailabilityReason.APPLICABILITY_MISMATCH
     elif not controller_available:
         reason = AvailabilityReason.CONTROLLER_UNAVAILABLE
     elif suppressed:
