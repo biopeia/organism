@@ -4,6 +4,8 @@
 
 **Purpose:** record what the current TARGET code demonstrably serializes for the bounded canonical Organism transition/action path, and what remains separate or unproven. This is an implementation inventory for MIG-002; it is not a new architecture decision, a claim of complete Organism continuity, or scientific validation.
 
+The bounded cognition-profile restore addition below is verified against implementation commit `92a1a0926a26abc5f43e4e9848db9a46817b6e8d` on the `organism#34` candidate branch. The evidence-base commit above remains the inventory baseline; it does not include this candidate addition.
+
 ## Scope and reading rules
 
 The repository has several independently checkpointable components. A component codec proves only that component's represented state can be encoded/restored under its own contract. It does not prove that a canonical Organism owner checkpoint discovers and composes every state needed by a supported continuation.
