@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 from .commitment import ActionCommitment
 from .types import MotorIntent
@@ -33,9 +34,75 @@ class ControllerFrame:
 
 @dataclass(slots=True)
 class SequenceController:
+    SCHEMA_VERSION = 1
+
     controller_id: str
     sequence: tuple[tuple[MotorIntent, ...], ...]
     step: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.controller_id, str) or not self.controller_id:
+            raise ValueError("controller_id must be a non-empty string")
+        if not isinstance(self.sequence, tuple) or any(
+            not isinstance(frame, tuple)
+            or any(not isinstance(intent, MotorIntent) for intent in frame)
+            for frame in self.sequence
+        ):
+            raise ValueError("sequence must be a tuple of MotorIntent tuples")
+        if isinstance(self.step, bool) or not isinstance(self.step, int) or self.step < 0:
+            raise ValueError("step must be a non-negative integer")
+
+    def checkpoint(self) -> dict[str, object]:
+        """Return the complete mutable controller continuation state."""
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "controller_id": self.controller_id,
+            "sequence": [
+                [
+                    {"actuator_id": intent.actuator_id, "activation": intent.activation}
+                    for intent in frame
+                ]
+                for frame in self.sequence
+            ],
+            "step": self.step,
+        }
+
+    @classmethod
+    def restore(cls, payload: object) -> "SequenceController":
+        """Restore only the exact supported schema; reject partial/unknown state."""
+        if not isinstance(payload, Mapping):
+            raise ValueError("controller checkpoint must be a mapping")
+        expected = {"schema_version", "controller_id", "sequence", "step"}
+        if set(payload) != expected:
+            raise ValueError("controller checkpoint fields do not match schema")
+        version = payload["schema_version"]
+        if isinstance(version, bool) or not isinstance(version, int) or version != cls.SCHEMA_VERSION:
+            raise ValueError("unsupported controller checkpoint schema_version")
+        controller_id = payload["controller_id"]
+        if not isinstance(controller_id, str) or not controller_id:
+            raise ValueError("controller checkpoint controller_id must be non-empty")
+        raw_sequence = payload["sequence"]
+        if not isinstance(raw_sequence, list):
+            raise ValueError("controller checkpoint sequence must be a list")
+        sequence: list[tuple[MotorIntent, ...]] = []
+        for raw_frame in raw_sequence:
+            if not isinstance(raw_frame, list):
+                raise ValueError("controller checkpoint frame must be a list")
+            frame: list[MotorIntent] = []
+            for raw_intent in raw_frame:
+                if not isinstance(raw_intent, Mapping) or set(raw_intent) != {
+                    "actuator_id", "activation"
+                }:
+                    raise ValueError("controller checkpoint intent fields do not match schema")
+                actuator_id = raw_intent["actuator_id"]
+                if not isinstance(actuator_id, str) or not actuator_id:
+                    raise ValueError("controller checkpoint actuator_id must be non-empty")
+                frame.append(MotorIntent(actuator_id, raw_intent["activation"]))
+            sequence.append(tuple(frame))
+        step = payload["step"]
+        if isinstance(step, bool) or not isinstance(step, int) or step < 0:
+            raise ValueError("controller checkpoint step must be a non-negative integer")
+        return cls(controller_id, tuple(sequence), step)
 
     def frame(
         self,
