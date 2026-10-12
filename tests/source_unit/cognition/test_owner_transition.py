@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 from uuid import UUID
 
 import pytest
@@ -51,6 +52,10 @@ def _graph() -> CognitiveGraph:
                 "sense.channel", "private.state", EdgeKind.EXCITATORY,
                 1.0, 0.0, 0,
             ),
+            PlasticEdge(
+                "private.state", "private.state", EdgeKind.EXCITATORY,
+                0.5, 0.0, 1,
+            ),
         ),
         kernel_limits=LIMITS,
     )
@@ -99,11 +104,16 @@ def _current() -> OrganismTransitionState:
     )
 
 
-def _advance(current: OrganismTransitionState, provenance: SenseProvenance):
+def _advance(
+    current: OrganismTransitionState,
+    provenance: SenseProvenance,
+    *,
+    signal_value: float = 0.75,
+):
     return advance_organism_from_sense_signals(
         current,
         (SenseChannelBinding("channel-1", "receptor-1", "sense.channel"),),
-        (_signal(provenance),),
+        (_signal(provenance, signal_value),),
         expected_provenance=provenance,
         kernel_limits=LIMITS,
     )
@@ -136,6 +146,32 @@ def test_accepted_cognition_state_round_trips_with_transition_counter() -> None:
     activations = dict(runtime.state.previous_activations)
     assert activations["private.state"] == pytest.approx(0.6351489523872873)
     assert activations["sense.channel"] == pytest.approx(0.75)
+
+
+def test_restored_cognition_profile_matches_uninterrupted_next_transition() -> None:
+    """Restore preserves recurrent activation used by the next cognition step."""
+    first_provenance = _provenance()
+    first = _advance(_current(), first_provenance, signal_value=0.2)
+
+    restored = OrganismTransitionState.from_bytes(first.state.to_bytes())
+    next_provenance = _provenance(
+        causal_tick=11,
+        physical_step_id="physical-step-11",
+    )
+
+    uninterrupted = _advance(first.state, next_provenance, signal_value=0.8)
+    resumed = _advance(restored, next_provenance, signal_value=0.8)
+
+    assert resumed.state.to_bytes() == uninterrupted.state.to_bytes()
+    assert resumed.composition.frame == uninterrupted.composition.frame
+    recurrent_value = first.composition.frame.activations["private.state"]
+    expected_private_state = math.tanh(0.8 + 0.5 * recurrent_value)
+    assert resumed.composition.frame.activations["private.state"] == pytest.approx(
+        expected_private_state
+    )
+    assert resumed.composition.frame.activations["private.state"] != pytest.approx(
+        math.tanh(0.8)
+    )
 
 
 def test_accepted_transition_declares_no_external_owner_dependencies() -> None:
