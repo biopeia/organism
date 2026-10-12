@@ -16,6 +16,7 @@ from organism.actuation.action import (
     ActionProposal,
     ActionSource,
 )
+from organism.actuation.commitment import ActionCommitment
 from organism.actuation.domain import ActionDomain
 from organism.actuation.surface import derive_actuator_constitution
 from organism.actuation.types import MotorIntent
@@ -212,6 +213,47 @@ def test_action_domain_restore_rejects_incomplete_or_inconsistent_state(mutate):
 
     with pytest.raises((TypeError, ValueError)):
         ActionDomain.restore(checkpoint)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda payload: payload["commitments"][0].update(started_tick=99),
+        lambda payload: payload["commitments"][0].update(intent_id=None),
+    ),
+)
+def test_action_domain_restore_rejects_missing_or_mismatched_intent_provenance(mutate):
+    domain, *_ = _active_domain()
+    checkpoint = domain.checkpoint()
+    mutate(checkpoint)
+
+    with pytest.raises(ValueError):
+        ActionDomain.restore(checkpoint)
+
+
+def test_action_domain_restore_preserves_explicit_bounded_exploration_commitment():
+    domain = ActionDomain()
+    checkpoint = domain.checkpoint()
+    commitment = ActionCommitment(
+        commitment_id="commitment.exploration",
+        proposal_id="proposal.exploration",
+        effect_target_id=None,
+        competence_id=None,
+        started_tick=2,
+        controller_id="controller.exploration",
+        surface_fingerprint="surface.sha256:exploration",
+        proposal_source=ActionSource.EXPLORATION,
+        maximum_duration=1,
+    )
+    checkpoint["commitments"] = [commitment.checkpoint()]
+    checkpoint["active_commitment_id"] = commitment.commitment_id
+
+    restored = ActionDomain.restore(checkpoint)
+
+    assert restored.active_commitment is not None
+    assert restored.active_commitment.proposal_source is ActionSource.EXPLORATION
+    assert restored.active_commitment.intent_id is None
+    assert restored.active_commitment.maximum_duration == 1
 
 
 def test_domain_rejects_fabricated_intent_and_mismatched_proposal():

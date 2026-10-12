@@ -19,7 +19,7 @@ from ..agency.executive_outcome import (
 from ..agency.affordance import ActionAffordance
 from ..agency.intention import ActionIntent, IntentStatus
 from ..agency.prospective import ProspectiveDecision
-from .action import ActionProposal, MotorCommand
+from .action import ActionProposal, ActionSource, MotorCommand
 from .arbitration import ActionArbitrator, ArbitrationDecision
 from .commitment import ActionCommitment, CommitmentStatus
 from .command import motor_command_from_frame
@@ -129,7 +129,17 @@ class ActionDomain:
 
         for commitment in commitments.values():
             if commitment.intent_id is None:
+                if (
+                    commitment.proposal_source is not ActionSource.EXPLORATION
+                    or commitment.competence_id is not None
+                    or commitment.effect_target_id is not None
+                    or commitment.maximum_duration is None
+                    or commitment.maximum_duration <= 0
+                ):
+                    raise ValueError("intent-free commitment is not a bounded exploration commitment")
                 continue
+            if commitment.proposal_source is ActionSource.EXPLORATION:
+                raise ValueError("exploration commitment cannot reference an intent")
             intent = intents.get(commitment.intent_id)
             if intent is None:
                 raise ValueError("commitment references a missing intent")
@@ -138,6 +148,8 @@ class ActionDomain:
                 or intent.anticipated_effect_id != commitment.effect_target_id
             ):
                 raise ValueError("commitment and intent provenance do not match")
+            if intent.activated_tick != commitment.started_tick:
+                raise ValueError("commitment start tick does not match intent activation tick")
             expected_status = {
                 CommitmentStatus.ACTIVE: IntentStatus.ACTIVE,
                 CommitmentStatus.COMPLETED: IntentStatus.SATISFIED,
@@ -278,6 +290,7 @@ class ActionDomain:
             started_tick=tick,
             controller_id=controller_id,
             surface_fingerprint=surface.contract_fingerprint,
+            proposal_source=proposal.source,
             embodiment_id=embodiment_id,
             intent_id=intent.intent_id,
             interruptibility=interruptibility,

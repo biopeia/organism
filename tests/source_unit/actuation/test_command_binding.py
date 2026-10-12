@@ -4,6 +4,7 @@ import pytest
 
 from organism.actuation import (
     ActionCommitment,
+    ActionSource,
     CommitmentStatus,
     ControllerFrame,
     MotorIntent,
@@ -21,6 +22,7 @@ def _commitment(**overrides):
         "started_tick": 12,
         "controller_id": "controller.walk",
         "surface_fingerprint": "surface.sha256:abc",
+        "proposal_source": ActionSource.COMPETENCE,
         "embodiment_id": "embodiment.3",
         "intent_id": "intent.walk",
     }
@@ -217,7 +219,8 @@ def test_action_commitment_restore_preserves_explicit_nullable_fields():
         competence_id=None,
         embodiment_id=None,
         intent_id=None,
-        maximum_duration=None,
+        proposal_source=ActionSource.EXPLORATION,
+        maximum_duration=1,
         ended_tick=None,
         end_reason=None,
     )
