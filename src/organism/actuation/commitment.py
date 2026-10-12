@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Mapping
 
+from .action import ActionSource
+
 
 class CommitmentStatus(StrEnum):
     ACTIVE = "active"
@@ -26,6 +28,7 @@ class ActionCommitment:
     started_tick: int
     controller_id: str
     surface_fingerprint: str
+    proposal_source: ActionSource
     embodiment_id: str | None = None
     intent_id: str | None = None
     interruptibility: float = 1.0
@@ -40,6 +43,18 @@ class ActionCommitment:
             raise ValueError("commitment identifiers must not be empty")
         if not self.surface_fingerprint:
             raise ValueError("commitment requires a surface fingerprint")
+        self.proposal_source = ActionSource(self.proposal_source)
+        if self.proposal_source is ActionSource.EXPLORATION:
+            if self.intent_id is not None or self.competence_id is not None or self.effect_target_id is not None:
+                raise ValueError("intent-free exploration commitment cannot claim intent, competence, or effect")
+            if (
+                isinstance(self.maximum_duration, bool)
+                or not isinstance(self.maximum_duration, int)
+                or self.maximum_duration <= 0
+            ):
+                raise ValueError("intent-free exploration commitment requires positive maximum_duration")
+        elif self.intent_id is None:
+            raise ValueError("non-exploration commitment requires an admitted intent")
         if self.started_tick < 0 or self.minimum_duration < 0:
             raise ValueError("commitment ticks must be non-negative")
         if self.maximum_duration is not None and self.maximum_duration < self.minimum_duration:
@@ -88,6 +103,7 @@ class ActionCommitment:
             "started_tick": self.started_tick,
             "controller_id": self.controller_id,
             "surface_fingerprint": self.surface_fingerprint,
+            "proposal_source": self.proposal_source.value,
             "embodiment_id": self.embodiment_id,
             "intent_id": self.intent_id,
             "interruptibility": self.interruptibility,
@@ -112,6 +128,7 @@ class ActionCommitment:
             "started_tick",
             "controller_id",
             "surface_fingerprint",
+            "proposal_source",
             "embodiment_id",
             "intent_id",
             "interruptibility",
@@ -142,6 +159,10 @@ class ActionCommitment:
         ):
             if payload[field] is not None and not isinstance(payload[field], str):
                 raise ValueError(f"action commitment {field} must be a string or null")
+        try:
+            proposal_source = ActionSource(payload["proposal_source"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("action commitment proposal_source is invalid") from exc
         for field in ("started_tick", "minimum_duration"):
             if isinstance(payload[field], bool) or not isinstance(payload[field], int):
                 raise ValueError(f"action commitment {field} must be an integer")
@@ -176,6 +197,7 @@ class ActionCommitment:
             started_tick=payload["started_tick"],
             controller_id=payload["controller_id"],
             surface_fingerprint=payload["surface_fingerprint"],
+            proposal_source=proposal_source,
             embodiment_id=payload["embodiment_id"],
             intent_id=payload["intent_id"],
             interruptibility=float(payload["interruptibility"]),

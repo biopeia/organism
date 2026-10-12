@@ -4,6 +4,7 @@ import pytest
 
 from organism.actuation import (
     ActionCommitment,
+    ActionSource,
     CommitmentStatus,
     ControllerFrame,
     MotorIntent,
@@ -21,6 +22,7 @@ def _commitment(**overrides):
         "started_tick": 12,
         "controller_id": "controller.walk",
         "surface_fingerprint": "surface.sha256:abc",
+        "proposal_source": ActionSource.COMPETENCE,
         "embodiment_id": "embodiment.3",
         "intent_id": "intent.walk",
     }
@@ -152,6 +154,54 @@ def test_action_commitment_restore_round_trips_active_and_terminal_state():
     assert ActionCommitment.restore(terminal.checkpoint()).checkpoint() == terminal.checkpoint()
 
 
+def test_sequence_controller_checkpoint_preserves_next_frame_after_restore():
+    controller = SequenceController(
+        "controller.walk",
+        (
+            (MotorIntent("actuator.left", 0.25),),
+            (MotorIntent("actuator.right", 0.75),),
+        ),
+    )
+    commitment = _commitment()
+    assert controller.frame(commitment, tick=12).channels == (("actuator.left", 0.25),)
+
+    payload = controller.checkpoint()
+    restored = SequenceController.restore(payload)
+
+    assert restored.checkpoint() == payload
+    assert restored.frame(commitment, tick=13).channels == (("actuator.right", 0.75),)
+    assert restored.step == 2
+    assert controller.step == 1
+
+
+def test_sequence_controller_rejects_unrestorable_empty_actuator_identity():
+    with pytest.raises(ValueError, match="actuator_id must be a non-empty string"):
+        SequenceController("controller.walk", ((MotorIntent("", 0.5),),))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload.pop("step"),
+        lambda payload: payload.update(unexpected=True),
+        lambda payload: payload.update(schema_version=True),
+        lambda payload: payload.update(step=True),
+        lambda payload: payload.update(step=-1),
+        lambda payload: payload["sequence"][0][0].update(activation=float("nan")),
+        lambda payload: payload["sequence"][0][0].update(unknown="field"),
+    ],
+)
+def test_sequence_controller_restore_rejects_malformed_or_unknown_state(mutation):
+    controller = SequenceController(
+        "controller.walk", ((MotorIntent("actuator.left", 0.5),),)
+    )
+    payload = controller.checkpoint()
+    mutation(payload)
+
+    with pytest.raises(ValueError):
+        SequenceController.restore(payload)
+
+
 _ACTION_COMMITMENT_SCHEMA_KEYS = (
     "schema_version",
     "commitment_id",
@@ -217,7 +267,8 @@ def test_action_commitment_restore_preserves_explicit_nullable_fields():
         competence_id=None,
         embodiment_id=None,
         intent_id=None,
-        maximum_duration=None,
+        proposal_source=ActionSource.EXPLORATION,
+        maximum_duration=1,
         ended_tick=None,
         end_reason=None,
     )
