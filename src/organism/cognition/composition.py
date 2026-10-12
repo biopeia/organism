@@ -124,7 +124,7 @@ def _copy_graph(graph: CognitiveGraph) -> CognitiveGraph:
             )
             for edge in graph.edges
         ),
-        kernel_limits=graph._kernel_limits,
+        kernel_limits=graph.kernel_limits,
     )
 
 
