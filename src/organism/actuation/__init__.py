@@ -14,6 +14,7 @@ from .command import motor_command_from_frame
 from .context import ActuatorEvidenceContext
 from .controller import ControllerFrame, SequenceController
 from .domain import ActionDomain, ActionSelection
+from .bounded_action import ExplorationActionCandidate, OrganismExplorationComposer
 from .derivation import (
     DerivedCompetenceRecord,
     derive_motor_competence_from_evidence,
@@ -101,11 +102,13 @@ __all__ = [
     "EffectRepresentation",
     "EffectSpace",
     "EffectTarget",
+    "ExplorationActionCandidate",
     "ExplorationPolicy",
     "ExplorationSignals",
     "MotorCommand",
     "MotorCompetence",
     "MotorIntent",
+    "OrganismExplorationComposer",
     "PredictionError",
     "SensorimotorSnapshot",
     "SensorimotorTransition",
