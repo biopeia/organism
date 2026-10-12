@@ -19,9 +19,11 @@ from .derivation import (
     derive_motor_competence_from_evidence,
 )
 from .pipeline import (
+    AcceptedActionTransition,
     AdmittedActionPlan,
     ExecutedActionPipelineResult,
     compose_action_from_admitted_decision,
+    execute_canonical_action_transition,
 )
 from .competence import (
     CompetenceCandidate,
@@ -59,6 +61,7 @@ from .surface import (
 from .types import Actuation, MotorIntent
 
 __all__ = [
+    "AcceptedActionTransition",
     "AdmittedActionPlan",
     "CompetenceExecutionBinding",
     "CompetenceExecutionBindingRegistry",
@@ -112,5 +115,6 @@ __all__ = [
     "compose_action_from_admitted_decision",
     "derive_actuator_constitution",
     "derive_motor_competence_from_evidence",
+    "execute_canonical_action_transition",
     "motor_command_from_frame",
 ]

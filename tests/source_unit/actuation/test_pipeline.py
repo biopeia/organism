@@ -5,12 +5,14 @@ from uuid import UUID
 import pytest
 
 from organism.actuation import (
+    AcceptedActionTransition,
     ActionDomain,
     AdmittedActionPlan,
     ExecutedActionPipelineResult,
     SequenceController,
     compose_action_from_admitted_decision,
     derive_actuator_constitution,
+    execute_canonical_action_transition,
 )
 from organism.actuation.action import ActionSource
 from organism.actuation.types import MotorIntent
@@ -48,12 +50,15 @@ EMBODIMENT = EmbodimentContextRef(
 LIMITS = KernelLimits()
 
 
+_SENTINEL = object()
+
+
 def _transition_state(
     step: int = 5,
     tick: int = 10,
     lifecycle: OrganismLifecycle = OrganismLifecycle.ACTIVE,
     embodiment: EmbodimentContextRef | None = EMBODIMENT,
-    world_correlation: WorldCausalCorrelation | None = None,
+    world_correlation: object = _SENTINEL,
 ) -> OrganismTransitionState:
     graph = CognitiveGraph(
         nodes=(PlasticNode("node.1", NodeKind.STATE),),
@@ -68,9 +73,9 @@ def _transition_state(
         organism_step=step,
         embodiment=embodiment,
         world_correlation=(
-            world_correlation
-            if world_correlation is not None
-            else WorldCausalCorrelation("world.test", tick)
+            WorldCausalCorrelation("world.test", tick)
+            if world_correlation is _SENTINEL
+            else world_correlation  # type: ignore[arg-type]
         ),
         lifecycle=lifecycle,
     )
@@ -277,3 +282,89 @@ def test_compose_action_fails_closed_when_decision_contradicts_affordance() -> N
         )
 
     assert domain.active_commitment is None
+
+
+def test_execute_canonical_action_transition_succeeds_and_preserves_state() -> None:
+    active_state = _transition_state(step=5, tick=12)
+    domain = ActionDomain()
+    surface = derive_actuator_constitution(("effector.joint.1",))
+    controller = SequenceController(
+        controller_id="controller.action-30.1",
+        sequence=((MotorIntent("effector.joint.1", 0.65),),),
+    )
+    plan = _plan()
+
+    accepted_action = execute_canonical_action_transition(
+        active_state,
+        domain,
+        plan,
+        controller=controller,
+        surface=surface,
+    )
+
+    assert isinstance(accepted_action, AcceptedActionTransition)
+    assert accepted_action.transition_state is active_state
+    assert accepted_action.pipeline_result.motor_command.command_id == "command.action-30.1"
+    assert accepted_action.pipeline_result.motor_command.surface_fingerprint == surface.contract_fingerprint
+    assert accepted_action.pipeline_result.motor_command.issued_at_tick == 12
+    assert accepted_action.pipeline_result.attempt.started_tick == 12
+    assert domain.active_commitment is accepted_action.pipeline_result.commitment
+
+
+def test_execute_canonical_action_transition_fails_closed_on_invalid_preconditions() -> None:
+    active_state = _transition_state(step=5, tick=12)
+    domain = ActionDomain()
+    surface = derive_actuator_constitution(("effector.joint.1",))
+    controller = SequenceController(
+        controller_id="controller.action-30.1",
+        sequence=((MotorIntent("effector.joint.1", 0.5),),),
+    )
+    plan = _plan()
+
+    # 1. Non-OrganismTransitionState type
+    with pytest.raises(TypeError, match="must be an OrganismTransitionState"):
+        execute_canonical_action_transition(
+            "not-a-state",  # type: ignore[arg-type]
+            domain,
+            plan,
+            controller=controller,
+            surface=surface,
+        )
+
+    # 2. Inactive lifecycle
+    dormant_state = transition_organism_lifecycle(
+        active_state,
+        OrganismLifecycle.DORMANT,
+        transition_id="trans-dormant-1",
+        request_ref="pause",
+    )
+    with pytest.raises(ValueError, match="requires an ACTIVE OrganismTransitionState"):
+        execute_canonical_action_transition(
+            dormant_state,
+            domain,
+            plan,
+            controller=controller,
+            surface=surface,
+        )
+
+    # 3. Missing Embodiment context
+    no_body_state = _transition_state(step=5, tick=12, embodiment=None)
+    with pytest.raises(ValueError, match="requires an explicit Embodiment context"):
+        execute_canonical_action_transition(
+            no_body_state,
+            domain,
+            plan,
+            controller=controller,
+            surface=surface,
+        )
+
+    # 4. Missing World causal correlation
+    no_world_state = _transition_state(step=5, tick=12, world_correlation=None)
+    with pytest.raises(ValueError, match="requires an explicit World causal correlation"):
+        execute_canonical_action_transition(
+            no_world_state,
+            domain,
+            plan,
+            controller=controller,
+            surface=surface,
+        )
