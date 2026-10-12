@@ -1,6 +1,6 @@
 # Organism Owner-State Inventory v1
 
-**Organism evidence base:** `biopeia/organism` commit `5d0a68db10b0ffee474cee7b30e63bd2820761fe` (2026-10-12)
+**Organism evidence base:** `biopeia/organism` `origin/main@0173622fbbbd3b18de54871b41a2003b5375c9cb` (2026-10-12). This revision includes the inventory/caller trace from PR #145 and the fresh-process restore/continue test refinements from PRs #146 and #147.
 
 **Cross-repository source-audit snapshot:** World `4be4deee6da1574f06b7153fea5f6e19710a1419`, Embodiment `a925c2f2f2694048e4ced4c00874dcfd2331bebe`, Environment `b71d5566c3a73774a088a41a7b99a03954e43a53`, Modality `79b779152d4bff2ab4191dc6601c8f1640e4cae3`, Observation `ef6321d2bab43b883238cdcf0ce33c08321d595c`, and Lab `03317d5cee12e64a1df97eb9417a40d09acbee19` (each repository's `origin/main` when the caller audit was performed). This is a source-audit snapshot, not a claim that the integrated acceptance run below executed every repository at these exact revisions.
 
@@ -50,6 +50,14 @@ For that **specific configured migration-acceptance scenario**, the Organism-own
 
 This trace supports a bounded conclusion: the integrated World causal-cycle profile persists/restores the state it actually exercises and continues from the committed cut. It does **not** establish that all optional cognitive v9 families are used or complete, that every future Organism application profile is covered, that prospective agency/action is composed into this profile, or that canonical continuation authority is exclusive across processes/stores. The prospective action pipeline and `ProspectiveAgency` remain a separate profile; do not add them to this checkpoint absent a TARGET caller that requires them. See #41 and #45 for their separate acceptance scopes.
 
+## Fresh-process Organism-only continuation evidence
+
+At Organism `origin/main@0173622fbbbd3b18de54871b41a2003b5375c9cb`, `tests/source_unit/actuation/test_exploration_composition.py::test_candidate_checkpoint_restores_and_continues_in_fresh_process` serializes a bounded exploration checkpoint, starts a distinct Python process, restores it through `OrganismExplorationComposer.restore_from_committed_checkpoint`, advances the restored cognitive state through the public `advance_organism_from_sense_signals` boundary, and compares the next serialized transition, candidate, proposal, motor command, and checkpoint against an uninterrupted control.
+
+The test explicitly fabricates its cut-shaped context locally. It is **not** a World-issued committed-cut receipt, does not restore a durable World store, and does not establish process-crash recovery. The bounded claim was independently reviewed as CONFIRMED for this configured test profile in PRs [#146](https://github.com/biopeia/organism/pull/146) and [#147](https://github.com/biopeia/organism/pull/147). This test is complementary to, not a substitute for, the World-owned committed-cut restoration path.
+
+At the cross-repository snapshot recorded above, World PR [#116](https://github.com/biopeia/world/pull/116) is the pending candidate that adds the production World-owned fresh-process composition and actual World-issued receipt selection. Its exact head is `8ed37abbeb7edce68c083ab8c629d7bafe37cc5f`; it is not yet part of World `origin/main@4be4deee6da1574f06b7153fea5f6e19710a1419`. Therefore the current mainline inventory does not yet claim that the World-issued receipt path has been integrated and verified on main.
+
 ## State inventory
 
 | State family | Current encoding evidence | Restore inputs / constraints | Current composition status and closure gap |
@@ -82,7 +90,7 @@ This trace supports a bounded conclusion: the integrated World causal-cycle prof
 
 This inventory does **not** close `organism#34`, `#41`, or `#45`. The following evidence is still needed:
 
-1. Confirm whether the integrated World causal-cycle profile above is the only TARGET continuation profile claimed for migration acceptance, or identify any additional production caller/profile that must be covered. The bounded profile itself is now traced to its producer, World commit boundary, owner restore boundary and next-step caller.
+1. The migration acceptance scope is the bounded causal-cycle profile required by `.github-private#42`, not every possible Organism application. At the cross-repository snapshot above, a source search of production files for `run_scalar_sensorimotor_cycle_and_publish`, `advance_organism_from_sense_signals`, `restore_from_committed_checkpoint`, and `restore_transition_checkpoint` found the World causal-cycle composition as the only production cross-repository caller of the Organism transition/restore path; no additional domain production caller/profile was identified. This is evidence bounded to the seven pinned repository revisions, not proof that no external consumer exists. The profile itself is traced from World caller through commit, owner restore and continuation. World PR #116 remains unmerged, so its receipt-bound fresh-process path is a candidate, not current-main evidence.
 2. For every additional profile identified, inventory its required state and dependencies. The inventory above must not treat optional schema fields or repository modules as required without a production caller/contract, nor infer that they are unnecessary for a profile that uses them.
 3. Reconcile the separate prospective agency/actuation codecs in #41 against an actual supported caller. They are not part of the World #86 bounded exploration path; if no TARGET caller is authorized for migration acceptance, record them as outside that bounded profile rather than composing them speculatively.
 4. Re-run the inventory and its cross-repository caller trace against the exact candidate/main revisions used for the closure claim. Keep claims bounded: no World atomicity beyond the cited committed-cut contract, cross-process continuation-registry authority, scientific efficacy, or full runtime completeness absent separate evidence.
