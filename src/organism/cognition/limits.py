@@ -5,10 +5,11 @@ from dataclasses import dataclass, fields
 
 @dataclass(slots=True, frozen=True)
 class KernelLimits:
-    """Hard, owner-configured resource ceilings for the cognitive graph
-    (master doc §7.4). Never part of a genome and never learnable (§4.1,
-    §13 invariant 1) -- a genome's soft budgets are validated against
-    these but can never exceed them."""
+    """Hard, owner-configured runtime resource ceilings.
+
+    These are never part of a genome and never learnable (§4.1, §13 invariant
+    1); a genome's soft budgets are validated against the relevant ceilings.
+    """
 
     # Safety ceilings only. Developmental budgets start much lower in the
     # genome and may expand endogenously when sustained evidence justifies it.
@@ -19,6 +20,8 @@ class KernelLimits:
     max_structural_mutations_per_consolidation: int = 16
     consolidation_interval_ticks: int = 32
     max_plastic_checkpoint_bytes: int = 8 * 1024 * 1024
+    # Bounds the complete encoded owner checkpoint before JSON parsing.
+    max_owner_checkpoint_bytes: int = 16 * 1024 * 1024
     max_consolidation_candidates: int = 1024
     max_salient_event_traces: int = 64
     consolidation_epoch_ticks: int = 8

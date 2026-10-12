@@ -130,9 +130,12 @@ class OrganismCheckpointContract:
 
     def validate_checkpoint(self, encoded: bytes, owner_identity: str, schema_version: str) -> bool:
         try:
+            if (
+                not isinstance(encoded, bytes)
+                or len(encoded) > self._kernel_limits.max_owner_checkpoint_bytes
+            ):
+                return False
             if schema_version == ORGANISM_TRANSITION_CHECKPOINT_SCHEMA:
-                if not isinstance(encoded, bytes):
-                    return False
                 state = OrganismTransitionState.from_bytes(encoded)
                 if str(state.identity) != owner_identity:
                     return False
@@ -147,6 +150,7 @@ class OrganismCheckpointContract:
                     encoded,
                     expected_organism_id=owner_identity,
                     read_dependency=self._read_dependency,
+                    kernel_limits=self._kernel_limits,
                 )
                 self._validate_transition_owner_payload(decoded.restored.transition_state)
                 return True
@@ -166,7 +170,10 @@ class OrganismCheckpointContract:
         ):
             return False
         try:
-            encoded = Path(reference.locator).read_bytes()
+            checkpoint_path = Path(reference.locator)
+            if checkpoint_path.stat().st_size > self._kernel_limits.max_owner_checkpoint_bytes:
+                return False
+            encoded = checkpoint_path.read_bytes()
         except OSError:
             return False
         if sha256(encoded).hexdigest() != reference.sha256:
@@ -444,6 +451,7 @@ class OrganismExplorationComposer:
         expected_organism_id: str,
         expected_physical_step_id: str,
         read_dependency: Callable[[str], bytes] | None = None,
+        kernel_limits: KernelLimits | None = None,
     ) -> RestoredOrganismExplorationCheckpoint:
         """Restore the checkpoint's bounded state after World cut correlation.
 
@@ -465,6 +473,7 @@ class OrganismExplorationComposer:
             expected_organism_id=expected_organism_id,
             expected_physical_step_id=expected_physical_step_id,
             read_dependency=read_dependency,
+            kernel_limits=kernel_limits,
         )
         if (
             decoded.world_id != committed_cut.world_id
@@ -482,9 +491,13 @@ class OrganismExplorationComposer:
         expected_organism_id: str,
         expected_physical_step_id: str | None = None,
         read_dependency: Callable[[str], bytes] | None = None,
+        kernel_limits: KernelLimits | None = None,
     ) -> _DecodedExplorationCheckpoint:
         if not isinstance(encoded, bytes):
             raise TypeError("encoded checkpoint must be bytes")
+        limits = kernel_limits or KernelLimits()
+        if len(encoded) > limits.max_owner_checkpoint_bytes:
+            raise ValueError("exploration checkpoint exceeds byte limit")
         if not isinstance(expected_organism_id, str) or not expected_organism_id.strip():
             raise ValueError("expected_organism_id must be non-empty")
         if expected_physical_step_id is not None and (

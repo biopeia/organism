@@ -107,6 +107,19 @@ def test_cognitive_graph_and_recurrent_state_round_trip_through_organism_envelop
     assert restored_edge.eligibility == original_edge.eligibility
 
 
+def test_cognitive_checkpoint_rejects_payload_over_configured_byte_limit() -> None:
+    payload = CognitiveRuntimeCheckpoint(
+        state=_state(), graph=_graph()
+    ).to_bytes()
+    limits = KernelLimits(max_owner_checkpoint_bytes=len(payload))
+
+    assert CognitiveRuntimeCheckpoint.from_bytes(
+        payload, kernel_limits=limits
+    ).state == _state()
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="exceeds byte limit"):
+        CognitiveRuntimeCheckpoint.from_bytes(payload + b" ", kernel_limits=limits)
+
+
 def test_portable_checkpoint_composes_safety_and_normalizer_state() -> None:
     safety = SafetyState()
     for _ in range(3):

@@ -529,6 +529,21 @@ def test_owner_checkpoint_contract_validates_private_cognitive_payload() -> None
     ) is False
 
 
+def test_owner_checkpoint_contract_rejects_oversized_bytes_before_decoding() -> None:
+    encoded = _transition().to_bytes()
+    contract = OrganismCheckpointContract()
+    oversized = encoded + b" " * (
+        KernelLimits().max_owner_checkpoint_bytes - len(encoded) + 1
+    )
+
+    assert contract.validate_checkpoint(
+        encoded, str(IDENTITY), ORGANISM_TRANSITION_CHECKPOINT_SCHEMA
+    ) is True
+    assert contract.validate_checkpoint(
+        oversized, str(IDENTITY), ORGANISM_TRANSITION_CHECKPOINT_SCHEMA
+    ) is False
+
+
 def test_owner_checkpoint_contract_rejects_private_identity_mismatch() -> None:
     contract = OrganismCheckpointContract()
     transition = _transition()
