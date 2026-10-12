@@ -172,6 +172,11 @@ def test_sequence_controller_checkpoint_preserves_next_frame_after_restore():
     assert controller.step == 1
 
 
+def test_sequence_controller_rejects_unrestorable_empty_actuator_identity():
+    with pytest.raises(ValueError, match="actuator_id must be a non-empty string"):
+        SequenceController("controller.walk", ((MotorIntent("", 0.5),),))
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

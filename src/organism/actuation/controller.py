@@ -49,6 +49,12 @@ class SequenceController:
             for frame in self.sequence
         ):
             raise ValueError("sequence must be a tuple of MotorIntent tuples")
+        if any(
+            not isinstance(intent.actuator_id, str) or not intent.actuator_id
+            for frame in self.sequence
+            for intent in frame
+        ):
+            raise ValueError("sequence actuator_id must be a non-empty string")
         if isinstance(self.step, bool) or not isinstance(self.step, int) or self.step < 0:
             raise ValueError("step must be a non-negative integer")
 
