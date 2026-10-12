@@ -2,18 +2,18 @@
 
 ## Scope and status
 
-This inventory describes the TARGET `CognitiveRuntimeCheckpoint` writer/decoder graph, originally inventoried at implementation base `2ab8775440b94675551bfbd6993afd56df63ba4d` (2026-10-10) and updated for bounded owner-dependency-closure and generative-time slices. It is a decoder-field inventory, not a claim that this bounded payload is the complete Organism continuation checkpoint. It does not authorize compatibility with historical Symbiont payloads.
+This inventory describes the TARGET `CognitiveRuntimeCheckpoint` writer/decoder graph at `biopeia/organism@6281f772b7d104a74c1c2d0d0f2419ef9c0a1c98` (2026-10-12). It is a decoder-field inventory, not a claim that this bounded payload is the complete Organism continuation checkpoint. It does not authorize compatibility with historical Symbiont payloads.
 
 “Required” means the key is required by the current decoder, including when its value is explicitly `null`. “Explicitly nullable” means the writer/decoder supports a present key whose value is `null`; it never means the key may be omitted. Empty collections are noted separately. Value constraints remain those enforced by each listed decoder and its domain types.
 
-## Root payload: `biopeia.organism.cognitive-runtime`, version 8
+## Root payload: `biopeia.organism.cognitive-runtime`, version 9
 
-All thirteen keys below are required, with no unknown keys accepted.
+All fourteen keys below are required, with no unknown keys accepted.
 
 | Key | Required value / supported absence representation |
 |---|---|
 | `schema` | Exact string `biopeia.organism.cognitive-runtime`; required, non-null. |
-| `schema_version` | Exact integer `8` (booleans rejected); required, non-null. |
+| `schema_version` | Exact integer `9` (booleans rejected); required, non-null. |
 | `dependency_closure` | Required empty list. This bounded owner payload supports no external runtime dependencies; registered generative models and factual-evidence resolvers are rejected rather than represented by caller-supplied envelope references. |
 | `identity` | Required parseable `OrganismIdentity`; non-null. |
 | `transition` | Required `CognitiveTransitionState` payload; non-null. |
@@ -25,6 +25,7 @@ All thirteen keys below are required, with no unknown keys accepted.
 | `genome` | Required key; explicit `null` only when `germline_state` and `expression_state` are also `null`. |
 | `germline_state` | Required key; explicit `null` only with the other two genetic keys `null`. |
 | `expression_state` | Required key; explicit `null` only with the other two genetic keys `null`. |
+| `kernel_limits` | Required serialized configuration for the exact `KernelLimits` used by the cognitive graph. Direct `CognitiveRuntimeCheckpoint.from_bytes` restoration requires a matching `KernelLimits`; the owner adapter may omit its argument and then selects canonical defaults, so non-default checkpoints require the matching explicit configuration. |
 
 The genetic trio is one conditional all-or-none group. If non-null, each must be an object and restore requires an explicit `running_version`. These keys are not individually optional and a partial group is invalid.
 
