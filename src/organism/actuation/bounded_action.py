@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
 
 from ..transition import OrganismLifecycle, OrganismTransitionState
+from ..cognition.limits import KernelLimits
+from ..cognition.portable_checkpoint import CognitiveRuntimeCheckpoint
 from .action import ActionEvaluation, ActionJustification, ActionProposal, ActionSource, MotorCommand
 from .context import ActuatorEvidenceContext
 from .controller import SequenceController
@@ -108,8 +110,23 @@ class OrganismCheckpointContract:
 
     owner = "organism"
 
-    def __init__(self, *, read_dependency: Callable[[str], bytes] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        read_dependency: Callable[[str], bytes] | None = None,
+        kernel_limits: KernelLimits | None = None,
+    ) -> None:
         self._read_dependency = read_dependency
+        # Validation must use the same owner-configured resource ceilings as
+        # restoration. The default is the canonical kernel safety profile.
+        self._kernel_limits = kernel_limits or KernelLimits()
+
+    def _validate_transition_owner_payload(self, state: OrganismTransitionState) -> None:
+        """Validate private owner bytes, not just the generic envelope shape."""
+        CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+            state.owner_checkpoint,
+            kernel_limits=self._kernel_limits,
+        )
 
     def validate_checkpoint(self, encoded: bytes, owner_identity: str, schema_version: str) -> bool:
         try:
@@ -119,17 +136,19 @@ class OrganismCheckpointContract:
                 state = OrganismTransitionState.from_bytes(encoded)
                 if str(state.identity) != owner_identity:
                     return False
+                self._validate_transition_owner_payload(state)
                 if state.owner_checkpoint.dependencies:
                     if self._read_dependency is None:
                         return False
                     state.verify_dependency_closure(self._read_dependency)
                 return True
             if schema_version == ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA:
-                OrganismExplorationComposer._decode_checkpoint(
+                decoded = OrganismExplorationComposer._decode_checkpoint(
                     encoded,
                     expected_organism_id=owner_identity,
                     read_dependency=self._read_dependency,
                 )
+                self._validate_transition_owner_payload(decoded.restored.transition_state)
                 return True
         except (TypeError, ValueError):
             return False
