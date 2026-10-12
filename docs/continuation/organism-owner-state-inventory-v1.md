@@ -1,10 +1,12 @@
 # Organism Owner-State Inventory v1
 
-**Evidence base:** `biopeia/organism` commit `833cdb5f14c9cbbef564a54a2f9245278b1bedbd` (2026-10-12)
+**Organism evidence base:** `biopeia/organism` commit `5d0a68db10b0ffee474cee7b30e63bd2820761fe` (2026-10-12)
+
+**Cross-repository source-audit snapshot:** World `4be4deee6da1574f06b7153fea5f6e19710a1419`, Embodiment `a925c2f2f2694048e4ced4c00874dcfd2331bebe`, Environment `b71d5566c3a73774a088a41a7b99a03954e43a53`, Modality `79b779152d4bff2ab4191dc6601c8f1640e4cae3`, Observation `ef6321d2bab43b883238cdcf0ce33c08321d595c`, and Lab `03317d5cee12e64a1df97eb9417a40d09acbee19` (each repository's `origin/main` when the caller audit was performed). This is a source-audit snapshot, not a claim that the integrated acceptance run below executed every repository at these exact revisions.
 
 **Purpose:** record what the current TARGET code demonstrably serializes for the bounded canonical Organism transition/action path, and what remains separate or unproven. This is an implementation inventory for MIG-002; it is not a new architecture decision, a claim of complete Organism continuity, or scientific validation.
 
-The bounded cognition-profile restore addition below is verified against implementation commit `92a1a0926a26abc5f43e4e9848db9a46817b6e8d` on the `organism#34` candidate branch. The evidence-base commit above remains the inventory baseline; it does not include this candidate addition.
+The bounded cognition-profile restore and exploration restore additions below are included in the Organism evidence base. They do not, by themselves, establish completeness beyond their named profiles.
 
 ## Scope and reading rules
 
@@ -29,6 +31,24 @@ This document does not infer that every subsystem in the repository must be in e
 | Bounded exploration checkpoint v4 (`src/organism/actuation/bounded_action.py`) | Bound transition-state bytes, generation, World source/target ticks, physical step/commit IDs, `CompetenceDevelopmentEngine` checkpoint and `ActionDomain` checkpoint. | This is explicitly a bounded staged exploration/action form. It does not claim complete Organism continuation and is not shown as the general canonical transition aggregate. |
 | `OrganismContinuation` schema v1 (`src/organism/continuation.py`) | `continuation_id`, serialized `OrganismTransitionState`, and optional branch ancestry (parent Organism/continuation IDs, parent step and source checkpoint digest). | Portable continuation metadata does not itself confer canonical authority. A branch must use a new Organism identity; ancestry consistency is not source authenticity. |
 | `CanonicalContinuationRegistry` schema v2 (`src/organism/continuation.py`) | `authority_id` and canonical records containing Organism identity, continuation ID, step and state digest. | The registry's live lease and identity exclusion guarantees are process-local. Cross-process compare-and-commit must be provided by durable owner storage; copied stores are not authenticated. |
+
+## Integrated World causal-cycle profile and caller trace
+
+The source-audited World causal-cycle caller is `world/src/world/causal_cycle.py::run_scalar_sensorimotor_cycle_and_publish`. Its integration test is `world/tests/integration/test_end_to_end_causal_cycle_acceptance.py`. In that test, World invokes the public Organism transition, then stages the resulting bounded exploration/action state through `OrganismExplorationComposer`. On the committed cut, World selects the Organism owner checkpoint; the test restores it through `OrganismExplorationComposer.restore_from_committed_checkpoint` and resumes the next physical step at causal tick 2. The same declared initial state/configuration is run twice and relevant causal results are compared.
+
+The merged migration end-to-end report records the actual acceptance-run revisions separately: World `4be4deee6da1574f06b7153fea5f6e19710a1419`, Organism `85802019d08fb6a7a4ed6f0e4d3f4b3bb97a933b` (the integrated tree of reviewed head `b2e00f06a0862613a8ce29c844606eb37407f751`), and Embodiment `a925c2f2f2694048e4ced4c00874dcfd2331bebe`; see the Migration End-to-End Acceptance Report. Later Organism checkpoint-restore changes in the evidence base above are not represented as having been exercised by that historical E2E run. This inventory audits their current source and tests separately.
+
+For that **specific configured migration-acceptance scenario**, the Organism-owned continuation state exercised and restored is:
+
+| Required state | Encoding/authority | Evidence and limits |
+|---|---|---|
+| Organism identity, step/lifecycle, Embodiment reference and World correlation | `OrganismTransitionState` inside the exploration checkpoint | The restore path validates identity and correlation; World owns committed-cut selection. Somatic/body state remains Embodiment-owned. |
+| Cognitive transition and graph state used by the run | `CognitiveRuntimeCheckpoint` bytes embedded by the transition's owner checkpoint | Restore parses the payload and requires matching identity and byte-exact re-encoding. The fixture uses an initial transition and a SENSE graph; it does not exercise optional experience, safety, normalizer, generative or genetics payloads. |
+| Exploration engine state and its Organism/actuator constitution | `CompetenceDevelopmentEngine` component checkpoint in exploration schema v4 | The restore decoder validates and materializes the engine under its declared Organism and actuator identity. Applicability remains bound to the supplied Embodiment/surface context. |
+| Action-domain state used by the exploration step | `ActionDomain` component checkpoint in exploration schema v4 | Restore materializes it before returning the restored composition. The test resumes with the restored composer. |
+| Committed World cut correlation | World-issued `CommittedWorldCutReference` supplied to the Organism restore boundary | Organism checks the checkpoint's World ID, target causal tick and commit ID against this receipt; World remains authoritative for the committed history and selected reference. |
+
+This trace supports a bounded conclusion: the integrated World causal-cycle profile persists/restores the state it actually exercises and continues from the committed cut. It does **not** establish that all optional cognitive v9 families are used or complete, that every future Organism application profile is covered, that prospective agency/action is composed into this profile, or that canonical continuation authority is exclusive across processes/stores. The prospective action pipeline and `ProspectiveAgency` remain a separate profile; do not add them to this checkpoint absent a TARGET caller that requires them. See #41 and #45 for their separate acceptance scopes.
 
 ## State inventory
 
@@ -62,12 +82,10 @@ This document does not infer that every subsystem in the repository must be in e
 
 This inventory does **not** close `organism#34`, `#41`, or `#45`. The following evidence is still needed:
 
-1. Name the supported continuation profile(s) exercised by production callers, and trace each to the owner boundary that creates and restores it.
-2. For each required state in that profile, record whether it is embedded, referenced with a verified immutable identity, or intentionally external configuration. Explain why omitted state cannot alter the promised next transition.
-3. Reconcile all separate agency/actuation codecs against the bounded causal-action path; include only state required for that declared profile, but fail closed when any required element is absent.
-4. Extend the bounded aggregate validation/restore path to every required state element in the declared production profile; component-by-component partial restoration must not escape on failure. The current exploration restore slice covers its represented cognitive payload, action domain and competence-development engine, but does not establish that these are all required production state.
-5. Test valid restore→next-transition/action continuation and rejection of missing, malformed, inconsistent, unavailable or wrong-identity required state. Preserve exact state where the contract requires it; do not silently initialize defaults.
-6. Re-run the inventory against the candidate commit and link each row to source and tests. Keep claims bounded: no World atomicity, cross-process recovery, scientific efficacy, or full runtime completeness absent separate evidence.
+1. Confirm whether the integrated World causal-cycle profile above is the only TARGET continuation profile claimed for migration acceptance, or identify any additional production caller/profile that must be covered. The bounded profile itself is now traced to its producer, World commit boundary, owner restore boundary and next-step caller.
+2. For every additional profile identified, inventory its required state and dependencies. The inventory above must not treat optional schema fields or repository modules as required without a production caller/contract, nor infer that they are unnecessary for a profile that uses them.
+3. Reconcile the separate prospective agency/actuation codecs in #41 against an actual supported caller. They are not part of the World #86 bounded exploration path; if no TARGET caller is authorized for migration acceptance, record them as outside that bounded profile rather than composing them speculatively.
+4. Re-run the inventory and its cross-repository caller trace against the exact candidate/main revisions used for the closure claim. Keep claims bounded: no World atomicity beyond the cited committed-cut contract, cross-process continuation-registry authority, scientific efficacy, or full runtime completeness absent separate evidence.
 
 ## Source index
 
@@ -80,3 +98,4 @@ This inventory does **not** close `organism#34`, `#41`, or `#45`. The following 
 - `src/organism/actuation/bounded_action.py` — bounded exploration/action aggregate, owner checkpoint contract, and bounded cognition plus exploration-profile restore result; this is not complete owner continuation.
 - `src/organism/actuation/domain.py`, `sensorimotor.py`, `competence.py`, `binding.py`, and related modules — independently checkpointable action/competence components; not by themselves the general owner aggregate.
 - Tests: `tests/source_unit/cognition/test_portable_checkpoint.py`, `tests/source_unit/cognition/test_owner_transition.py`, `tests/source_unit/actuation/test_exploration_composition.py` (including the bounded cognitive restore profile), `tests/test_continuation.py`, and component checkpoint tests under `tests/source_unit/actuation/`.
+- Cross-repository integration: `world/src/world/causal_cycle.py`, `world/tests/integration/test_end_to_end_causal_cycle_acceptance.py` (World causal-cycle restore and continuation after a committed cut).
