@@ -40,7 +40,7 @@ The merged migration end-to-end report records the actual acceptance-run revisio
 
 For that **specific configured migration-acceptance scenario**, the Organism-owned continuation state exercised and restored is:
 
-| Required state | Encoding/authority | Evidence and limits |
+| State exercised and restored | Encoding/authority | Evidence and limits |
 |---|---|---|
 | Organism identity, step/lifecycle, Embodiment reference and World correlation | `OrganismTransitionState` inside the exploration checkpoint | The restore path validates identity and correlation; World owns committed-cut selection. Somatic/body state remains Embodiment-owned. |
 | Cognitive transition and graph state used by the run | `CognitiveRuntimeCheckpoint` bytes embedded by the transition's owner checkpoint | Restore parses the payload and requires matching identity and byte-exact re-encoding. The fixture uses an initial transition and a SENSE graph; it does not exercise optional experience, safety, normalizer, generative or genetics payloads. |
