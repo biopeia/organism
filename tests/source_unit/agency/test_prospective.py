@@ -245,6 +245,103 @@ def test_checkpoint_roundtrip_preserves_ledger():
     assert abs(original_est.mean_value - restored_est.mean_value) < 1e-9
 
 
+def test_checkpoint_roundtrip_preserves_query_budget():
+    ledger = OutcomeValueLedger()
+    ledger.observe("outcome.any", 0.5, tick=0)
+    agency = _make_agency(ledger=ledger, query_budget=2)
+    policy = ProspectivePolicy(
+        organism_id="test-org",
+        min_model_confidence=0.1,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    restored = ProspectiveAgency.restore(
+        agency.checkpoint(), organism_id="test-org", policy=policy
+    )
+    queried: list[str] = []
+
+    def predictor(action_id, context):
+        queried.append(action_id)
+        return CounterfactualPrediction(
+            action_id=action_id,
+            predicted_outcome="outcome.any",
+            confidence_class=5,
+        )
+
+    restored.deliberate(
+        tick=1,
+        candidates=[_candidate(f"primitive.{index}") for index in range(10)],
+        context_tokens=("context.one",),
+        homeostatic_deviation=0.5,
+        predictor=predictor,
+    )
+    assert len(queried) == 2
+
+
+def test_agency_rejects_policy_with_different_organism_identity():
+    policy = ProspectivePolicy(
+        organism_id="policy-org",
+        min_model_confidence=0.1,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    with pytest.raises(ValueError, match="must match agency organism_id"):
+        ProspectiveAgency(
+            organism_id="agency-org",
+            outcome_value_ledger=OutcomeValueLedger(),
+            policy=policy,
+        )
+
+
+def test_restore_rejects_checkpoint_with_different_organism_identity():
+    agency = _make_agency(organism_id="source-org")
+    checkpoint = agency.checkpoint()
+    checkpoint["organism_id"] = "other-org"
+    policy = ProspectivePolicy(
+        organism_id="source-org",
+        min_model_confidence=0.1,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    with pytest.raises(ValueError, match="organism_id conflicts with checkpoint"):
+        ProspectiveAgency.restore(
+            checkpoint,
+            organism_id="source-org",
+            policy=policy,
+        )
+
+
+def test_restore_rejects_different_policy_configuration():
+    agency = _make_agency()
+    incompatible_policy = ProspectivePolicy(
+        organism_id="test-org",
+        min_model_confidence=0.2,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    with pytest.raises(ValueError, match="policy configuration"):
+        ProspectiveAgency.restore(
+            agency.checkpoint(), organism_id="test-org", policy=incompatible_policy
+        )
+
+
+def test_restore_rejects_query_budget_override_conflict():
+    agency = _make_agency(query_budget=3)
+    policy = ProspectivePolicy(
+        organism_id="test-org",
+        min_model_confidence=0.1,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    with pytest.raises(ValueError, match="query_budget conflicts"):
+        ProspectiveAgency.restore(
+            agency.checkpoint(),
+            organism_id="test-org",
+            policy=policy,
+            query_budget=4,
+        )
+
+
 def test_restore_fails_closed_on_wrong_schema():
     with pytest.raises(ValueError, match="schema"):
         policy = ProspectivePolicy(
@@ -255,6 +352,21 @@ def test_restore_fails_closed_on_wrong_schema():
         )
         ProspectiveAgency.restore(
             {"schema_version": 99},
+            organism_id="test-org",
+            policy=policy,
+        )
+
+
+def test_restore_rejects_previous_schema_without_configuration():
+    policy = ProspectivePolicy(
+        organism_id="test-org",
+        min_model_confidence=0.1,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    with pytest.raises(ValueError, match="schema"):
+        ProspectiveAgency.restore(
+            {"schema_version": 1, "outcome_value_ledger": {}},
             organism_id="test-org",
             policy=policy,
         )
