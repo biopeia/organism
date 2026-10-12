@@ -17,6 +17,7 @@ from organism.actuation.action import (
     ActionSource,
 )
 from organism.actuation.domain import ActionDomain
+from organism.actuation.commitment import CommitmentStatus
 from organism.actuation.surface import derive_actuator_constitution
 from organism.actuation.types import MotorIntent
 from organism.actuation.controller import SequenceController
@@ -155,7 +156,7 @@ def test_exploration_proposal_without_intent_can_commit_and_issue_command():
         embodiment_id="embodiment.1",
         interruptibility=1.0,
         minimum_duration=0,
-        maximum_duration=None,
+        maximum_duration=2,
     )
     commitment = selected.commitment
     assert commitment is not None
@@ -171,6 +172,81 @@ def test_exploration_proposal_without_intent_can_commit_and_issue_command():
     assert command.competence_id is None
     assert command.channels == (("effector.left", 0.25),)
     assert domain.execute(command, surface)[0].delivered == 0.25
+    assert domain.issue_command(controller, tick=8, command_id="command.exploration.2")
+    with pytest.raises(RuntimeError, match="has expired"):
+        domain.issue_command(controller, tick=9, command_id="command.exploration.3")
+    domain.close_exploration(
+        commitment.commitment_id,
+        tick=9,
+        reason="exploration_window_elapsed",
+    )
+    assert not commitment.active
+    assert commitment.status is CommitmentStatus.INVALIDATED
+
+
+@pytest.mark.parametrize(
+    "maximum_duration",
+    (None, 0),
+)
+def test_intent_free_exploration_requires_positive_duration(maximum_duration):
+    surface = derive_actuator_constitution(("effector.left",))
+    domain = ActionDomain()
+    proposal = ActionProposal(
+        proposal_id="exploration.unbounded",
+        source=ActionSource.EXPLORATION,
+        effect_target_id=None,
+        competence_id=None,
+        justification=ActionJustification(),
+        evaluation=ActionEvaluation(),
+    )
+
+    with pytest.raises(ValueError, match="positive maximum duration"):
+        domain.select_and_commit(
+            (proposal,),
+            tick=7,
+            commitment_id="commitment.exploration.unbounded",
+            controller_id="controller.exploration.unbounded",
+            surface=surface,
+            embodiment_id="embodiment.1",
+            interruptibility=1.0,
+            minimum_duration=0,
+            maximum_duration=maximum_duration,
+        )
+
+
+@pytest.mark.parametrize(
+    "justification,evaluation",
+    (
+        (ActionJustification(prediction_id="prediction.1"), ActionEvaluation()),
+        (ActionJustification(evidence_refs=("evidence.1",)), ActionEvaluation()),
+        (ActionJustification(), ActionEvaluation(effect_confidence=0.1)),
+        (ActionJustification(), ActionEvaluation(controllability=0.1)),
+    ),
+)
+def test_intent_free_exploration_rejects_causal_evidence_claims(justification, evaluation):
+    surface = derive_actuator_constitution(("effector.left",))
+    domain = ActionDomain()
+    proposal = ActionProposal(
+        proposal_id="exploration.unsupported-evidence",
+        source=ActionSource.EXPLORATION,
+        effect_target_id=None,
+        competence_id=None,
+        justification=justification,
+        evaluation=evaluation,
+    )
+
+    with pytest.raises(ValueError, match="cannot claim causal evidence"):
+        domain.select_and_commit(
+            (proposal,),
+            tick=7,
+            commitment_id="commitment.exploration.unsupported-evidence",
+            controller_id="controller.exploration.unsupported-evidence",
+            surface=surface,
+            embodiment_id="embodiment.1",
+            interruptibility=1.0,
+            minimum_duration=0,
+            maximum_duration=2,
+        )
 
 
 @pytest.mark.parametrize(

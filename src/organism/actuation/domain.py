@@ -149,6 +149,18 @@ class ActionDomain:
                 raise ValueError("only exploration proposals may omit an intent")
             if proposal.competence_id is not None or proposal.effect_target_id is not None:
                 raise ValueError("intent-free exploration cannot claim competence or effect")
+            if (
+                proposal.justification.originating_need_id is not None
+                or proposal.justification.effect_target_id is not None
+                or proposal.justification.competence_id is not None
+                or proposal.justification.prediction_id is not None
+                or proposal.justification.evidence_refs
+                or proposal.evaluation.effect_confidence != 0.0
+                or proposal.evaluation.controllability is not None
+            ):
+                raise ValueError("intent-free exploration cannot claim causal evidence")
+            if maximum_duration is None or maximum_duration <= 0:
+                raise ValueError("intent-free exploration requires a positive maximum duration")
         else:
             intent = self._intents.get(proposal.intent_id)
             if intent is None or intent.status is not IntentStatus.PENDING:
@@ -209,6 +221,12 @@ class ActionDomain:
         if commitment is None or self._commitments.get(commitment.commitment_id) is not commitment:
             raise RuntimeError("no registered active action commitment")
         _validate_causal_tick(tick, minimum=commitment.started_tick, field="tick")
+        if (
+            commitment.intent_id is None
+            and commitment.maximum_duration is not None
+            and tick - commitment.started_tick >= commitment.maximum_duration
+        ):
+            raise RuntimeError("intent-free exploration commitment has expired")
         frame = controller.frame(commitment, tick=tick)
         return motor_command_from_frame(
             commitment,
@@ -307,6 +325,32 @@ class ActionDomain:
             )
         commitment.terminate(tick=tick, status=commitment_status, reason=reason)
         intent.transition(status, tick=tick, reason=reason)
+        self._active_commitment_id = None
+        self._closed_commitments.add(commitment_id)
+
+    def close_exploration(
+        self,
+        commitment_id: str,
+        *,
+        tick: int,
+        reason: str,
+    ) -> None:
+        """End an intent-free exploration commitment without claiming an outcome."""
+        if not reason:
+            raise ValueError("exploration close reason must not be empty")
+        if commitment_id in self._closed_commitments:
+            raise ValueError("action commitment has already been closed")
+        commitment = self._commitments.get(commitment_id)
+        if commitment is None or commitment is not self.active_commitment:
+            raise ValueError("cannot close an unregistered or inactive commitment")
+        if commitment.intent_id is not None:
+            raise ValueError("close_exploration only accepts intent-free commitments")
+        _validate_causal_tick(tick, minimum=commitment.started_tick, field="tick")
+        commitment.terminate(
+            tick=tick,
+            status=CommitmentStatus.INVALIDATED,
+            reason=reason,
+        )
         self._active_commitment_id = None
         self._closed_commitments.add(commitment_id)
 
