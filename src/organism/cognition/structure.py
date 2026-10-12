@@ -168,14 +168,7 @@ class StructuralPlasticity:
         base_keys = {"coactivation_counts", "motor_association_counts", "cooldown_until"}
         config_keys = {"min_candidate_support", "tentative_lifetime_ticks", "cooldown_ticks"}
 
-        if payload_keys == base_keys:
-            # Legacy payload format: requires all config values explicitly supplied
-            if min_candidate_support is None or tentative_lifetime_ticks is None or cooldown_ticks is None:
-                raise ValueError("configuration parameters required when restoring legacy structural plasticity checkpoint")
-            eff_min_candidate_support = min_candidate_support
-            eff_tentative_lifetime_ticks = tentative_lifetime_ticks
-            eff_cooldown_ticks = cooldown_ticks
-        elif payload_keys == base_keys | config_keys:
+        if payload_keys == base_keys | config_keys:
             raw_min = payload["min_candidate_support"]
             raw_tent = payload["tentative_lifetime_ticks"]
             raw_cool = payload["cooldown_ticks"]
