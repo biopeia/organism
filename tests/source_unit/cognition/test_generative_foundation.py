@@ -101,3 +101,49 @@ def test_checkpoint_round_trip_is_deterministic_and_fail_closed():
     assert dumps(restored) == encoded
     with pytest.raises(ValueError, match="schema"):
         loads('{"schema_version": 99}')
+
+
+def test_budget_checkpoint_round_trip_and_fail_closed():
+    budget = GenerativeBudget(
+        max_states=42,
+        max_transitions=21,
+        max_depth=7,
+        max_branches=3,
+        max_model_queries=15,
+    )
+    checkpoint = budget.checkpoint()
+    assert checkpoint == {
+        "max_states": 42,
+        "max_transitions": 21,
+        "max_depth": 7,
+        "max_branches": 3,
+        "max_model_queries": 15,
+    }
+    restored = GenerativeBudget.restore(checkpoint)
+    assert restored == budget
+    assert restored.checkpoint() == checkpoint
+
+    # Rejects invalid type
+    with pytest.raises(ValueError, match="Mapping"):
+        GenerativeBudget.restore([("max_states", 1)])  # type: ignore[arg-type]
+
+    # Rejects missing or extra fields
+    with pytest.raises(ValueError, match="schema"):
+        GenerativeBudget.restore({"max_states": 10})
+
+    extra_payload = dict(checkpoint)
+    extra_payload["unrecognized_field"] = 99
+    with pytest.raises(ValueError, match="schema"):
+        GenerativeBudget.restore(extra_payload)
+
+    # Rejects negative values or invalid types
+    for key in checkpoint:
+        bad_negative = dict(checkpoint)
+        bad_negative[key] = -1
+        with pytest.raises(ValueError, match="non-negative integer"):
+            GenerativeBudget.restore(bad_negative)
+
+        bad_type = dict(checkpoint)
+        bad_type[key] = True  # bool is subclass of int but disallowed
+        with pytest.raises(ValueError, match="non-negative integer"):
+            GenerativeBudget.restore(bad_type)
