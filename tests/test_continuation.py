@@ -55,6 +55,42 @@ def test_continuation_checkpoint_round_trips_without_claiming_canonical_authorit
     assert "is_canonical" not in json.loads(saved.to_bytes())
 
 
+def test_continuation_checkpoint_rejects_duplicate_json_fields():
+    encoded = continuation().to_bytes()
+    duplicated = encoded.replace(
+        b'"schema":"biopeia.organism-continuation"',
+        b'"schema":"unexpected","schema":"biopeia.organism-continuation"',
+        1,
+    )
+
+    with pytest.raises(InvalidContinuationCheckpoint, match="malformed"):
+        OrganismContinuation.from_bytes(duplicated)
+
+
+def test_continuation_checkpoint_rejects_duplicate_nested_ancestry_fields():
+    source = continuation(step=4)
+    branch_state = OrganismTransitionState(
+        OrganismCheckpoint(BRANCH_IDENTITY, b"branch state"),
+        organism_step=4,
+        lifecycle=OrganismLifecycle.ACTIVE,
+    )
+    branch = branch_continuation(
+        source,
+        new_identity=BRANCH_IDENTITY,
+        new_continuation_id=BRANCH_CONTINUATION,
+        branched_state=branch_state,
+    )
+    encoded = branch.to_bytes()
+    duplicated = encoded.replace(
+        b'"parent_organism_step":4',
+        b'"parent_organism_step":3,"parent_organism_step":4',
+        1,
+    )
+
+    with pytest.raises(InvalidContinuationCheckpoint, match="malformed"):
+        OrganismContinuation.from_bytes(duplicated)
+
+
 def test_registry_rejects_duplicate_live_restore_and_stale_checkpoint():
     initial = continuation()
     latest = continuation(step=1, state=b"next")
@@ -407,6 +443,32 @@ def test_registry_checkpoint_decoder_rejects_unknown_fields():
 
     with pytest.raises(InvalidContinuationCheckpoint, match="invalid shape"):
         CanonicalContinuationRegistry.from_bytes(json.dumps(saved).encode())
+
+
+def test_registry_checkpoint_decoder_rejects_duplicate_json_fields():
+    encoded = CanonicalContinuationRegistry().to_bytes()
+    duplicated = encoded.replace(
+        b'"schema":"biopeia.organism-canonical-continuations"',
+        b'"schema":"unexpected","schema":"biopeia.organism-canonical-continuations"',
+        1,
+    )
+
+    with pytest.raises(InvalidContinuationCheckpoint, match="malformed"):
+        CanonicalContinuationRegistry.from_bytes(duplicated)
+
+
+def test_registry_checkpoint_decoder_rejects_duplicate_nested_record_fields():
+    registry = CanonicalContinuationRegistry()
+    registry.register_genesis(continuation())
+    encoded = registry.to_bytes()
+    duplicated = encoded.replace(
+        b'"organism_step":0',
+        b'"organism_step":1,"organism_step":0',
+        1,
+    )
+
+    with pytest.raises(InvalidContinuationCheckpoint, match="malformed"):
+        CanonicalContinuationRegistry.from_bytes(duplicated)
 
 
 def test_registry_checkpoint_decoder_rejects_previous_schema_without_compatibility():
