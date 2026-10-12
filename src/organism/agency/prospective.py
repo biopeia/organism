@@ -62,6 +62,9 @@ class ProspectiveAgency:
             raise ValueError("outcome_value_ledger must be an OutcomeValueLedger")
         if not isinstance(policy, ProspectivePolicy):
             raise ValueError("policy must be a ProspectivePolicy")
+        policy_organism_id = policy.checkpoint_configuration()["organism_id"]
+        if policy_organism_id != organism_id:
+            raise ValueError("policy organism_id must match agency organism_id")
         if isinstance(query_budget, bool) or not isinstance(query_budget, int) or query_budget < 1:
             raise ValueError("query_budget must be a positive integer")
 
@@ -202,6 +205,7 @@ class ProspectiveAgency:
     def checkpoint(self) -> dict[str, object]:
         return {
             "schema_version": PROSPECTIVE_AGENCY_SCHEMA_VERSION,
+            "organism_id": self._organism_id,
             "query_budget": self._query_budget,
             "policy_configuration": self._policy.checkpoint_configuration(),
             "outcome_value_ledger": self._ledger.checkpoint(),
@@ -225,11 +229,17 @@ class ProspectiveAgency:
             )
         if set(payload) != {
             "schema_version",
+            "organism_id",
             "query_budget",
             "policy_configuration",
             "outcome_value_ledger",
         }:
             raise ValueError("invalid prospective agency checkpoint shape")
+        stored_organism_id = payload["organism_id"]
+        if not isinstance(stored_organism_id, str) or not stored_organism_id:
+            raise ValueError("invalid prospective agency organism_id")
+        if stored_organism_id != organism_id:
+            raise ValueError("organism_id conflicts with checkpoint")
         stored_query_budget = payload["query_budget"]
         if (
             isinstance(stored_query_budget, bool)

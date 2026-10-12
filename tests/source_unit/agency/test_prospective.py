@@ -278,6 +278,39 @@ def test_checkpoint_roundtrip_preserves_query_budget():
     assert len(queried) == 2
 
 
+def test_agency_rejects_policy_with_different_organism_identity():
+    policy = ProspectivePolicy(
+        organism_id="policy-org",
+        min_model_confidence=0.1,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    with pytest.raises(ValueError, match="must match agency organism_id"):
+        ProspectiveAgency(
+            organism_id="agency-org",
+            outcome_value_ledger=OutcomeValueLedger(),
+            policy=policy,
+        )
+
+
+def test_restore_rejects_checkpoint_with_different_organism_identity():
+    agency = _make_agency(organism_id="source-org")
+    checkpoint = agency.checkpoint()
+    checkpoint["organism_id"] = "other-org"
+    policy = ProspectivePolicy(
+        organism_id="source-org",
+        min_model_confidence=0.1,
+        min_value_samples=1,
+        decision_margin=0.0,
+    )
+    with pytest.raises(ValueError, match="organism_id conflicts with checkpoint"):
+        ProspectiveAgency.restore(
+            checkpoint,
+            organism_id="source-org",
+            policy=policy,
+        )
+
+
 def test_restore_rejects_different_policy_configuration():
     agency = _make_agency()
     incompatible_policy = ProspectivePolicy(
