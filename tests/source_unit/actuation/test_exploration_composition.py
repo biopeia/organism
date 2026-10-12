@@ -4,7 +4,10 @@ import base64
 from dataclasses import dataclass, replace
 import json
 from hashlib import sha256
+import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -473,6 +476,123 @@ def test_restored_committed_checkpoint_can_continue_at_next_world_cut() -> None:
         uninterrupted_candidate,
         transition_state=uninterrupted_transition,
     )
+
+
+def test_committed_checkpoint_restores_and_continues_in_fresh_process(tmp_path: Path) -> None:
+    """Portable restoration must not depend on the writer's process state."""
+    surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+    context = _context(surface)
+    composer = _composer(surface, context)
+    candidate = _candidate_with_command(composer, surface, context)
+    source_transition = _transition(tick=candidate.source_causal_tick)
+    encoded = composer.checkpoint_for_candidate(
+        candidate,
+        transition_state=source_transition,
+    )
+    receipt = _CommittedCut(
+        candidate.world_id,
+        candidate.target_causal_tick,
+        candidate.commit_id,
+    )
+    committed_payload = tmp_path / "committed-organism-checkpoint.bin"
+    committed_payload.write_bytes(encoded)
+
+    next_tick = candidate.target_causal_tick
+    next_transition = _transition(tick=next_tick)
+    composer.adopt_after_world_commit(candidate, committed_cut=receipt)
+    uninterrupted_candidate = composer.prepare(
+        next_transition,
+        actuator_context=context,
+        surface=surface,
+        target_causal_tick=next_tick + 1,
+        physical_step_id=f"physical-step.{next_tick}",
+        commit_id=f"commit.{next_tick}",
+    )
+    expected_checkpoint = composer.checkpoint_for_candidate(
+        uninterrupted_candidate,
+        transition_state=next_transition,
+    )
+
+    child = r"""
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from test_exploration_composition import (
+    ACTUATORS,
+    IDENTITY,
+    OrganismExplorationComposer,
+    _CommittedCut,
+    _context,
+    _transition,
+)
+from organism.actuation import ActuatorSurface
+
+payload = Path(sys.argv[2]).read_bytes()
+world_id, committed_tick, commit_id, physical_step_id = sys.argv[3:7]
+restored = OrganismExplorationComposer.restore_from_committed_checkpoint(
+    payload,
+    committed_cut=_CommittedCut(world_id, int(committed_tick), commit_id),
+    expected_organism_id=str(IDENTITY),
+    expected_physical_step_id=physical_step_id,
+)
+next_tick = int(committed_tick)
+transition = _transition(tick=next_tick)
+surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+context = _context(surface)
+candidate = restored.action_composer.prepare(
+    transition,
+    actuator_context=context,
+    surface=surface,
+    target_causal_tick=next_tick + 1,
+    physical_step_id=f"physical-step.{next_tick}",
+    commit_id=f"commit.{next_tick}",
+)
+checkpoint = restored.action_composer.checkpoint_for_candidate(
+    candidate,
+    transition_state=transition,
+)
+print(json.dumps({
+    "pid": os.getpid(),
+    "candidate_id": candidate.candidate_id,
+    "motor_command": repr(candidate.motor_command),
+    "proposal": repr(candidate.proposal),
+    "checkpoint_hex": checkpoint.hex(),
+}, sort_keys=True))
+"""
+    environment = os.environ.copy()
+    source_root = str(Path(__file__).resolve().parents[3] / "src")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value
+        for value in (source_root, environment.get("PYTHONPATH"))
+        if value
+    )
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            child,
+            str(Path(__file__).resolve().parent),
+            str(committed_payload),
+            receipt.world_id,
+            str(receipt.causal_tick),
+            receipt.commit_id,
+            candidate.physical_step_id,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=15,
+    )
+    observed = json.loads(process.stdout)
+    assert observed["pid"] != os.getpid()
+    assert observed["candidate_id"] == uninterrupted_candidate.candidate_id
+    assert observed["motor_command"] == repr(uninterrupted_candidate.motor_command)
+    assert observed["proposal"] == repr(uninterrupted_candidate.proposal)
+    assert bytes.fromhex(observed["checkpoint_hex"]) == expected_checkpoint
 
 
 def test_restore_verifies_embedded_checkpoint_dependency_closure() -> None:
