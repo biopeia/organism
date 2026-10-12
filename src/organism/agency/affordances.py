@@ -39,6 +39,7 @@ class AffordanceResolver:
         effect_space: EffectSpace,
         effect_matcher: EffectMatcher,
         surface_fingerprint: str | None,
+        applicability_fingerprint: str | None = None,
         embodiment_id: str | None,
     ) -> None:
         self._competences = competences
@@ -49,6 +50,7 @@ class AffordanceResolver:
         self._effect_space = effect_space
         self._matcher = effect_matcher
         self._surface_fingerprint = surface_fingerprint
+        self._applicability_fingerprint = applicability_fingerprint
         self._embodiment_id = embodiment_id
 
     def _affordance(
@@ -68,6 +70,12 @@ class AffordanceResolver:
         if (
             self._surface_fingerprint is not None
             and binding.surface_fingerprint != self._surface_fingerprint
+        ):
+            return None
+        binding_applicability = getattr(binding, "applicability_fingerprint", None)
+        if (
+            binding_applicability is not None
+            and binding_applicability != self._applicability_fingerprint
         ):
             return None
         prediction = self._predict(

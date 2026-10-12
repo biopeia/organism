@@ -7,6 +7,7 @@ infer physical outcomes, or own the Embodiment's actuator semantics.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from ..agency.executive_outcome import (
     CausalRevisionState,
@@ -37,6 +38,8 @@ class ActionSelection:
 class ActionDomain:
     """A single explicitly scoped action execution context for one Organism."""
 
+    SCHEMA_VERSION = 1
+
     def __init__(
         self,
         *,
@@ -50,6 +53,140 @@ class ActionDomain:
         self._commitments: dict[str, ActionCommitment] = {}
         self._active_commitment_id: str | None = None
         self._closed_commitments: set[str] = set()
+
+    def checkpoint(self) -> dict[str, object]:
+        """Export the domain-owned action lifecycle state for exact continuation.
+
+        Controllers and actuator surfaces have separate owners and are not
+        serialized here; their identities remain referenced by commitments.
+        """
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "intents": [item.checkpoint() for item in self._intents.values()],
+            "commitments": [item.checkpoint() for item in self._commitments.values()],
+            "active_commitment_id": self._active_commitment_id,
+            "closed_commitment_ids": sorted(self._closed_commitments),
+            "outcome_ledger": (
+                self._outcome_ledger.checkpoint() if self._outcome_ledger is not None else None
+            ),
+        }
+
+    @classmethod
+    def restore(cls, payload: Mapping[str, Any]) -> "ActionDomain":
+        """Restore strict ActionDomain-owned state; reject incomplete joins."""
+        expected = {
+            "schema_version",
+            "intents",
+            "commitments",
+            "active_commitment_id",
+            "closed_commitment_ids",
+            "outcome_ledger",
+        }
+        if not isinstance(payload, Mapping) or set(payload) != expected:
+            raise ValueError("action domain checkpoint fields do not match the current schema")
+        version = payload["schema_version"]
+        if isinstance(version, bool) or not isinstance(version, int) or version != cls.SCHEMA_VERSION:
+            raise ValueError("unsupported action domain checkpoint schema")
+
+        raw_intents = payload["intents"]
+        raw_commitments = payload["commitments"]
+        raw_closed = payload["closed_commitment_ids"]
+        if not isinstance(raw_intents, list) or not isinstance(raw_commitments, list):
+            raise ValueError("action domain intents and commitments must be lists")
+        if not isinstance(raw_closed, list) or any(type(value) is not str for value in raw_closed):
+            raise ValueError("closed commitment ids must be a list of strings")
+        if len(raw_closed) != len(set(raw_closed)):
+            raise ValueError("duplicate closed commitment id")
+
+        intents: dict[str, ActionIntent] = {}
+        for raw in raw_intents:
+            item = ActionIntent.restore(raw)
+            if item.intent_id in intents:
+                raise ValueError("duplicate action intent id")
+            intents[item.intent_id] = item
+
+        commitments: dict[str, ActionCommitment] = {}
+        for raw in raw_commitments:
+            item = ActionCommitment.restore(raw)
+            if item.commitment_id in commitments:
+                raise ValueError("duplicate action commitment id")
+            commitments[item.commitment_id] = item
+
+        active_id = payload["active_commitment_id"]
+        if active_id is not None and type(active_id) is not str:
+            raise ValueError("active commitment id must be a string or null")
+        active = [item for item in commitments.values() if item.active]
+        if len(active) > 1 or (active_id is None) != (not active):
+            raise ValueError("active commitment reference does not match commitment state")
+        if active_id is not None and (active_id not in commitments or not commitments[active_id].active):
+            raise ValueError("active commitment reference is missing or terminal")
+
+        closed_ids = set(raw_closed)
+        if not closed_ids <= commitments.keys():
+            raise ValueError("closed commitment reference is missing")
+        if any(commitments[key].active for key in closed_ids):
+            raise ValueError("active commitment cannot be listed as closed")
+
+        committed_intent_ids: set[str] = set()
+        for commitment in commitments.values():
+            if commitment.intent_id is None:
+                if (
+                    commitment.proposal_source is not ActionSource.EXPLORATION
+                    or commitment.competence_id is not None
+                    or commitment.effect_target_id is not None
+                    or commitment.maximum_duration is None
+                    or commitment.maximum_duration <= 0
+                ):
+                    raise ValueError("intent-free commitment is not a bounded exploration commitment")
+                continue
+            if commitment.proposal_source is ActionSource.EXPLORATION:
+                raise ValueError("exploration commitment cannot reference an intent")
+            if commitment.intent_id in committed_intent_ids:
+                raise ValueError("intent is referenced by more than one commitment")
+            committed_intent_ids.add(commitment.intent_id)
+            intent = intents.get(commitment.intent_id)
+            if intent is None:
+                raise ValueError("commitment references a missing intent")
+            if (
+                intent.competence_id != commitment.competence_id
+                or intent.anticipated_effect_id != commitment.effect_target_id
+            ):
+                raise ValueError("commitment and intent provenance do not match")
+            if intent.activated_tick != commitment.started_tick:
+                raise ValueError("commitment start tick does not match intent activation tick")
+            expected_status = {
+                CommitmentStatus.ACTIVE: IntentStatus.ACTIVE,
+                CommitmentStatus.COMPLETED: IntentStatus.SATISFIED,
+                CommitmentStatus.FAILED: IntentStatus.FAILED,
+                CommitmentStatus.INVALIDATED: IntentStatus.INVALIDATED,
+                CommitmentStatus.INTERRUPTED: IntentStatus.INTERRUPTED,
+                CommitmentStatus.INCOMPATIBLE: IntentStatus.INVALIDATED,
+            }[commitment.status]
+            if intent.status is not expected_status:
+                raise ValueError("commitment and intent lifecycle states do not match")
+            if not commitment.active and intent.termination_reason != commitment.end_reason:
+                raise ValueError("commitment and intent termination reasons do not match")
+            if not commitment.active and commitment.ended_tick < intent.last_progress_tick:
+                raise ValueError("commitment ended before intent progress")
+        active_intent_ids = {
+            item.intent_id for item in commitments.values() if item.active and item.intent_id
+        }
+        if any(
+            intent.status is IntentStatus.ACTIVE and intent.intent_id not in active_intent_ids
+            for intent in intents.values()
+        ):
+            raise ValueError("active intent has no active commitment")
+
+        raw_ledger = payload["outcome_ledger"]
+        if raw_ledger is not None and not isinstance(raw_ledger, Mapping):
+            raise ValueError("outcome ledger checkpoint must be a mapping or null")
+        ledger = ExecutiveOutcomeLedger.restore(raw_ledger) if raw_ledger is not None else None
+        domain = cls(outcome_ledger=ledger)
+        domain._intents = intents
+        domain._commitments = commitments
+        domain._active_commitment_id = active_id
+        domain._closed_commitments = closed_ids
+        return domain
 
     @property
     def active_commitment(self) -> ActionCommitment | None:
@@ -186,6 +323,7 @@ class ActionDomain:
             started_tick=tick,
             controller_id=controller_id,
             surface_fingerprint=surface.contract_fingerprint,
+            proposal_source=proposal.source,
             embodiment_id=embodiment_id,
             intent_id=intent.intent_id if intent is not None else None,
             interruptibility=interruptibility,
