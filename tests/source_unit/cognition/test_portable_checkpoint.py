@@ -9,6 +9,10 @@ import pytest
 
 from organism.checkpoint import CheckpointDependency
 from organism.cognition.activation import SensoryNormalizer
+from organism.cognition.composition import (
+    EdgeLearningInstruction,
+    compose_cognition_transition,
+)
 from organism.cognition.generative import (
     AgendaSource,
     GenerativeTarget,
@@ -105,6 +109,56 @@ def test_cognitive_graph_and_recurrent_state_round_trip_through_organism_envelop
     assert restored_edge.support == original_edge.support
     assert restored_edge.age_ticks == original_edge.age_ticks
     assert restored_edge.eligibility == original_edge.eligibility
+
+
+def test_portable_graph_checkpoint_continues_learning_identically_after_restore() -> None:
+    learning = (
+        EdgeLearningInstruction(
+            source_id="sense",
+            target_id="memory",
+            kind=EdgeKind.EXCITATORY,
+            learning_rate=0.025,
+            modulation=0.8,
+            eligibility_decay=0.7,
+            eligible=True,
+        ),
+    )
+    first = compose_cognition_transition(
+        _state(), _graph(), {"sense": 0.8}, causal_tick=12, learning=learning
+    )
+    assert first.graph != _graph()
+    checkpoint = CognitiveRuntimeCheckpoint(
+        state=first.state,
+        graph=first.graph,
+    ).to_organism_checkpoint()
+    restored = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+        type(checkpoint).from_bytes(checkpoint.to_bytes()), kernel_limits=KernelLimits()
+    )
+    assert restored.state == first.state
+    assert restored.graph.nodes == first.graph.nodes
+    assert restored.graph.edges == first.graph.edges
+
+    uninterrupted_next = compose_cognition_transition(
+        first.state,
+        first.graph,
+        {"sense": 0.35},
+        causal_tick=13,
+        learning=learning,
+    )
+    restored_next = compose_cognition_transition(
+        restored.state,
+        restored.graph,
+        {"sense": 0.35},
+        causal_tick=13,
+        learning=learning,
+    )
+
+    assert restored_next.state == uninterrupted_next.state
+    assert CognitiveRuntimeCheckpoint(
+        state=restored_next.state, graph=restored_next.graph
+    ).to_bytes() == CognitiveRuntimeCheckpoint(
+        state=uninterrupted_next.state, graph=uninterrupted_next.graph
+    ).to_bytes()
 
 
 def test_cognitive_checkpoint_rejects_payload_over_configured_byte_limit() -> None:
