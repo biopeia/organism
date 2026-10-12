@@ -43,7 +43,7 @@ from organism.identity import OrganismIdentity
 from organism.memory import EpistemicStatus, ExperienceRecord, SourceKind
 
 
-def _graph() -> CognitiveGraph:
+def _graph(limits: KernelLimits | None = None) -> CognitiveGraph:
     edge = PlasticEdge(
         source_id="sense",
         target_id="memory",
@@ -60,7 +60,7 @@ def _graph() -> CognitiveGraph:
     return CognitiveGraph(
         nodes=(PlasticNode("sense", NodeKind.SENSE), PlasticNode("memory", NodeKind.STATE)),
         edges=(edge,),
-        kernel_limits=KernelLimits(),
+        kernel_limits=limits or KernelLimits(),
     )
 
 
@@ -173,6 +173,41 @@ def test_cognitive_checkpoint_rejects_payload_over_configured_byte_limit() -> No
     with pytest.raises(CognitiveRuntimeCheckpointError, match="exceeds byte limit"):
         CognitiveRuntimeCheckpoint.from_bytes(payload + b" ", kernel_limits=limits)
 
+    stricter_decoder_limit = KernelLimits(max_owner_checkpoint_bytes=len(payload) - 1)
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="exceeds byte limit"):
+        CognitiveRuntimeCheckpoint.from_bytes(payload, kernel_limits=stricter_decoder_limit)
+
+
+def test_cognitive_checkpoint_persists_behavioral_kernel_limits() -> None:
+    limits = KernelLimits(max_nodes=64, max_edges=128)
+    payload = CognitiveRuntimeCheckpoint(state=_state(), graph=_graph(limits)).to_bytes()
+
+    restored = CognitiveRuntimeCheckpoint.from_bytes(payload, kernel_limits=limits)
+    assert restored.state == _state()
+    assert restored.to_bytes() == payload
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="limits do not match"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            payload, kernel_limits=KernelLimits(max_nodes=65, max_edges=128)
+        )
+
+
+def test_cognitive_checkpoint_rejects_open_or_mistyped_kernel_limit_record() -> None:
+    payload = CognitiveRuntimeCheckpoint(state=_state(), graph=_graph()).to_bytes()
+    document = json.loads(payload)
+    document["kernel_limits"]["unknown_limit"] = 1
+
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="limits do not match"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
+    document["kernel_limits"].pop("unknown_limit")
+    document["kernel_limits"]["max_nodes"] = True
+    with pytest.raises(CognitiveRuntimeCheckpointError, match="limits do not match"):
+        CognitiveRuntimeCheckpoint.from_bytes(
+            json.dumps(document).encode(), kernel_limits=KernelLimits()
+        )
+
 
 def test_portable_checkpoint_composes_safety_and_normalizer_state() -> None:
     safety = SafetyState()
@@ -262,7 +297,7 @@ def test_portable_checkpoint_preserves_unestablished_normalizer_continuation() -
         )
 
 
-@pytest.mark.parametrize("prior_version", [6, 7])
+@pytest.mark.parametrize("prior_version", [6, 7, 8])
 def test_prior_portable_checkpoint_schemas_are_not_accepted(prior_version: int) -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
     document["schema_version"] = prior_version
@@ -272,7 +307,7 @@ def test_prior_portable_checkpoint_schemas_are_not_accepted(prior_version: int) 
         )
 
 
-@pytest.mark.parametrize("invalid_version", [8.0, True])
+@pytest.mark.parametrize("invalid_version", [9.0, True])
 def test_portable_checkpoint_rejects_non_integer_schema_version(invalid_version: object) -> None:
     document = json.loads(CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes())
     document["schema_version"] = invalid_version
@@ -539,7 +574,7 @@ def test_cognitive_checkpoint_rejects_duplicate_experience_record_identity() -> 
 
 def test_cognitive_checkpoint_rejects_duplicate_json_fields() -> None:
     payload = CognitiveRuntimeCheckpoint(_state(), _graph()).to_bytes()
-    for marker in (b'"schema_version":8', b'"weight_codec_version":4'):
+    for marker in (b'"schema_version":9', b'"weight_codec_version":4'):
         assert payload.count(marker) == 1
         key, value = marker.split(b":", maxsplit=1)
         duplicate_field_payload = payload.replace(

@@ -186,10 +186,11 @@ class CognitiveRuntimeCheckpoint:
             )
         payload = {
             "schema": "biopeia.organism.cognitive-runtime",
-            "schema_version": 8,
+            "schema_version": 9,
             # This owner payload supports only the self-contained subset.
             # External model objects and factual resolvers are rejected above.
             "dependency_closure": [],
+            "kernel_limits": self.graph.kernel_limits.checkpoint_configuration(),
             "identity": str(self.state.identity),
             "transition": self.state.checkpoint_payload(),
             "graph": export_graph_checkpoint(self.graph),
@@ -225,6 +226,8 @@ class CognitiveRuntimeCheckpoint:
         running_version: tuple[int, int, int] | None = None,
         genome_schema: GenomeSchema = DEFAULT_GENOME_SCHEMA,
     ) -> CognitiveRuntimeCheckpoint:
+        if not isinstance(kernel_limits, KernelLimits):
+            raise CognitiveRuntimeCheckpointError("kernel_limits must be explicit KernelLimits")
         if not isinstance(payload, bytes):
             raise CognitiveRuntimeCheckpointError("cognitive checkpoint payload must be bytes")
         if len(payload) > kernel_limits.max_owner_checkpoint_bytes:
@@ -245,14 +248,19 @@ class CognitiveRuntimeCheckpoint:
                 "germline_state",
                 "expression_state",
                 "dependency_closure",
+                "kernel_limits",
             }:
                 raise CognitiveRuntimeCheckpointError("invalid cognitive runtime checkpoint shape")
             if (
                 document["schema"] != "biopeia.organism.cognitive-runtime"
                 or type(document["schema_version"]) is not int
-                or document["schema_version"] != 8
+                or document["schema_version"] != 9
             ):
                 raise CognitiveRuntimeCheckpointError("unsupported cognitive runtime checkpoint")
+            if not kernel_limits.matches_checkpoint_configuration(document["kernel_limits"]):
+                raise CognitiveRuntimeCheckpointError(
+                    "kernel limits do not match the checkpoint configuration"
+                )
             if document["dependency_closure"] != []:
                 raise CognitiveRuntimeCheckpointError(
                     "unsupported external dependency closure in cognitive checkpoint"

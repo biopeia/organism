@@ -207,6 +207,11 @@ class CognitiveGraph:
     def edges(self) -> tuple[PlasticEdge, ...]:
         return self._edges
 
+    @property
+    def kernel_limits(self) -> KernelLimits:
+        """Return the immutable runtime ceilings this graph was built under."""
+        return self._kernel_limits
+
     def activate(
         self,
         inputs: Mapping[str, float],

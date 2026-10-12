@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+from typing import Mapping
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,3 +55,26 @@ class KernelLimits:
             raise ValueError(
                 "max_episodic_replay_items must be <= max_episodic_retrieval_candidates"
             )
+
+    def checkpoint_configuration(self) -> dict[str, int | float]:
+        """Return behavioral/resource ceilings that shape continuation.
+
+        The whole-owner byte limit is a decoder safety cap, not a runtime
+        behavior setting. A restore may apply a stricter cap without changing
+        the restored continuation semantics.
+        """
+        return {
+            field.name: getattr(self, field.name)
+            for field in fields(self)
+            if field.name != "max_owner_checkpoint_bytes"
+        }
+
+    def matches_checkpoint_configuration(self, payload: object) -> bool:
+        """Check a closed configuration record without coercing its values."""
+        expected = self.checkpoint_configuration()
+        if not isinstance(payload, Mapping) or set(payload) != set(expected):
+            return False
+        return all(
+            type(value) is type(expected[name]) and value == expected[name]
+            for name, value in payload.items()
+        )
