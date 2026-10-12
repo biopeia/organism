@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import fields, replace
 from hashlib import sha256
 from uuid import UUID
 
@@ -189,6 +189,15 @@ def test_cognitive_checkpoint_persists_behavioral_kernel_limits() -> None:
         CognitiveRuntimeCheckpoint.from_bytes(
             payload, kernel_limits=KernelLimits(max_nodes=65, max_edges=128)
         )
+
+
+def test_kernel_limits_reject_values_with_wrong_runtime_types() -> None:
+    defaults = KernelLimits()
+    for field in fields(defaults):
+        value = getattr(defaults, field.name)
+        malformed = not value if type(value) is int else int(value)
+        with pytest.raises(TypeError, match=field.name):
+            KernelLimits(**{field.name: malformed})
 
 
 def test_cognitive_checkpoint_rejects_open_or_mistyped_kernel_limit_record() -> None:

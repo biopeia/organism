@@ -47,10 +47,13 @@ def test_defaults_match_the_design_doc_table():
     ],
 )
 def test_every_field_rejects_non_positive_values(field):
+    default = getattr(KernelLimits(), field)
+    zero = 0.0 if type(default) is float else 0
+    negative = -1.0 if type(default) is float else -1
     with pytest.raises(ValueError):
-        KernelLimits(**{field: 0})
+        KernelLimits(**{field: zero})
     with pytest.raises(ValueError):
-        KernelLimits(**{field: -1})
+        KernelLimits(**{field: negative})
 
 
 def test_kernel_limits_is_frozen():

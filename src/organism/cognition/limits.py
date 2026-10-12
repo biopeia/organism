@@ -47,6 +47,12 @@ class KernelLimits:
     def __post_init__(self) -> None:
         for field in fields(self):
             value = getattr(self, field.name)
+            if type(value) is not type(field.default):
+                expected_type = type(field.default).__name__
+                raise TypeError(
+                    f"{field.name} must be {expected_type}, "
+                    f"not {type(value).__name__}"
+                )
             if value <= 0:
                 raise ValueError(f"{field.name} must be positive")
         if self.max_episodic_episode_records > 256:
