@@ -28,7 +28,7 @@ def test_recombination_requires_organism_owned_compatibility_and_preserves_sourc
         organism_id="o0",
         root_state_id="root",
         mode=GenerativeMode.IDLE,
-        symbiont_tick=0,
+        organism_step=0,
         generative_tick=3,
     )
     workspace = GenerativeWorkspace(episode=episode)

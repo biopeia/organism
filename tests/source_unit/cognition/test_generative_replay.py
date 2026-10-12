@@ -15,7 +15,7 @@ def test_replay_materializes_source_identity_without_new_factual_support():
         organism_id="o0",
         root_state_id="root",
         mode=GenerativeMode.OFFLINE,
-        symbiont_tick=4,
+        organism_step=4,
         generative_tick=9,
         source_episode_ids=("factual-e1",),
     )

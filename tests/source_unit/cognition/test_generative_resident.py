@@ -95,7 +95,7 @@ def test_prediction_error_enters_endogenous_agenda_but_waits_for_compatible_mode
     resident.register_model(_Model())
 
     snapshot = resident.step(
-        tick=1,
+        organism_step=1,
         cognition=_Cognition(),
         mode=GenerativeMode.ONLINE,
     )
@@ -159,11 +159,32 @@ def test_resident_checkpoint_preserves_agenda_overflow_count_exactly() -> None:
     resident.agenda_overflow_count = 7
 
     checkpoint = resident.checkpoint()
-    assert checkpoint["schema_version"] == 5
+    assert checkpoint["schema_version"] == 6
     assert checkpoint["agenda_overflow_count"] == 7
 
     restored = ResidentGenerativeCognition.from_checkpoint(checkpoint, organism_id="organism.restore")
     assert restored.agenda_overflow_count == 7
+
+
+def test_resident_checkpoint_rejects_previous_time_field_and_schema() -> None:
+    checkpoint = ResidentGenerativeCognition(organism_id="organism.restore").checkpoint()
+    previous_schema = copy.deepcopy(checkpoint)
+    previous_schema["schema_version"] = 5
+    previous_schema["last_symbiont_tick"] = previous_schema.pop("last_organism_step")
+
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(
+            previous_schema, organism_id="organism.restore"
+        )
+
+    current_schema_with_old_key = copy.deepcopy(checkpoint)
+    current_schema_with_old_key["last_symbiont_tick"] = current_schema_with_old_key.pop(
+        "last_organism_step"
+    )
+    with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
+        ResidentGenerativeCognition.from_checkpoint(
+            current_schema_with_old_key, organism_id="organism.restore"
+        )
 
 
 def test_resident_checkpoint_preserves_effective_budget_and_rejects_conflicting_override() -> None:
@@ -183,7 +204,7 @@ def test_resident_checkpoint_preserves_effective_budget_and_rejects_conflicting_
     )
 
     assert restored.budget == budget
-    restored.step(tick=1, cognition=None, mode=GenerativeMode.IDLE)
+    restored.step(organism_step=1, cognition=None, mode=GenerativeMode.IDLE)
     assert restored.last_workspace is not None
     assert restored.last_workspace.budget == budget
     with pytest.raises(ValueError, match="invalid resident generative cognition checkpoint"):
@@ -239,7 +260,7 @@ def test_resident_checkpoint_preserves_hypothesis_reconciliation_history_exactly
     resident.set_factual_evidence_resolver(lambda ref: ref == "evidence.observed")
     resident.register_model(_Model())
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -268,7 +289,7 @@ def test_resident_checkpoint_rejects_malformed_nested_hypothesis_codec(malformat
     resident = ResidentGenerativeCognition(organism_id="organism.restore")
     resident.register_model(_Model())
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -302,7 +323,7 @@ def test_recurring_conflict_routes_to_counterfactual_without_factual_authority()
         )
     )
 
-    snapshot = resident.step(tick=1, cognition=None, mode=GenerativeMode.IDLE)
+    snapshot = resident.step(organism_step=1, cognition=None, mode=GenerativeMode.IDLE)
 
     assert snapshot.target_id == "target.recurring-conflict"
     assert snapshot.transition_count == 2
@@ -327,7 +348,7 @@ def test_counterfactual_runtime_checkpoint_preserves_operation_and_origin() -> N
             estimated_resolvability=0.7,
         )
     )
-    before = resident.step(tick=1, cognition=None, mode=GenerativeMode.IDLE)
+    before = resident.step(organism_step=1, cognition=None, mode=GenerativeMode.IDLE)
 
     restored = ResidentGenerativeCognition.from_checkpoint(
         resident.checkpoint(),
@@ -347,7 +368,7 @@ def test_idle_mode_routes_prediction_error_to_a_compatible_model() -> None:
     resident.register_model(_Model())
 
     snapshot = resident.step(
-        tick=1,
+        organism_step=1,
         cognition=_Cognition(),
         mode=GenerativeMode.IDLE,
     )
@@ -362,7 +383,7 @@ def test_resident_loop_abstains_when_no_model_can_answer_prospective_target() ->
     resident = ResidentGenerativeCognition(organism_id="organism.test")
 
     snapshot = resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -394,7 +415,7 @@ def test_resident_loop_uses_learned_competence_effect_adapter() -> None:
     )
 
     snapshot = resident.step(
-        tick=3,
+        organism_step=3,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -413,7 +434,7 @@ def test_resident_checkpoint_round_trip_preserves_agenda_scheduler_and_workspace
     resident = ResidentGenerativeCognition(organism_id="organism.test")
     resident.register_model(_Model())
     before = resident.step(
-        tick=4,
+        organism_step=4,
         cognition=_Cognition(),
         mode=GenerativeMode.IDLE,
     )
@@ -439,7 +460,7 @@ def test_resident_reconciles_hypothesis_only_with_matching_factual_model_domain(
     resident.set_factual_evidence_resolver(lambda ref: ref == "evidence.observed")
     resident.register_model(_Model())
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -497,7 +518,7 @@ def test_resident_marks_matching_action_hypothesis_contradicted_by_factual_outco
     resident.set_factual_evidence_resolver(lambda ref: ref == "evidence.observed")
     resident.register_model(_Model())
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -524,7 +545,7 @@ def test_resident_rejects_unresolved_factual_evidence_without_mutation(evidence_
     resident.set_factual_evidence_resolver(lambda ref: ref == "evidence.observed")
     resident.register_model(_Model())
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -556,7 +577,7 @@ def test_resident_contradicts_hypothesis_only_with_resolved_observed_fact() -> N
     resident.set_factual_evidence_resolver(lambda ref: ref == "evidence.observed")
     resident.register_model(_Model())
     resident.step(
-        tick=1,
+        organism_step=1,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -608,7 +629,7 @@ def test_resident_preserves_model_disagreement_as_separate_branches_and_hypothes
     resident.register_model(_BranchingModel("model.b", "outcome.b"))
 
     snapshot = resident.step(
-        tick=2,
+        organism_step=2,
         cognition=None,
         prospective_candidate_ids=("competence.a",),
         mode=GenerativeMode.ONLINE,
@@ -629,7 +650,7 @@ def test_materialized_replay_preserves_factual_source_without_creating_observati
     resident = ResidentGenerativeCognition(organism_id="organism.test")
 
     snapshot = resident.materialize_replay(
-        tick=8,
+        organism_step=8,
         source_episode_id="episode.source",
         context_tokens=("sense.a", "concept.a"),
         action_tokens=("action.a",),
@@ -660,7 +681,7 @@ def test_replaying_same_factual_episode_does_not_manufacture_source_diversity() 
 
     for tick in (8, 9, 10):
         resident.materialize_replay(
-            tick=tick,
+            organism_step=tick,
             source_episode_id="episode.same",
             context_tokens=("sense.a",),
         )
@@ -694,7 +715,7 @@ def test_recombination_materializes_two_compatible_sources_as_imagined() -> None
         coherence=0.7,
     )
 
-    snapshot = resident.materialize_recombination(tick=11, left=left, right=right)
+    snapshot = resident.materialize_recombination(organism_step=11, left=left, right=right)
 
     assert snapshot.mode is GenerativeMode.OFFLINE
     assert snapshot.state_count == 1
@@ -737,7 +758,7 @@ def test_recombination_rejects_incompatible_fragments_without_workspace() -> Non
     )
 
     with pytest.raises(ValueError, match="no organism-owned compatibility relation"):
-        resident.materialize_recombination(tick=11, left=left, right=right)
+        resident.materialize_recombination(organism_step=11, left=left, right=right)
 
     assert resident.last_workspace is None
 
@@ -761,7 +782,7 @@ def test_recombination_checkpoint_preserves_multi_episode_provenance() -> None:
         coherence=0.7,
     )
 
-    resident.materialize_recombination(tick=11, left=fragment, right=other)
+    resident.materialize_recombination(organism_step=11, left=fragment, right=other)
     restored = ResidentGenerativeCognition.from_checkpoint(
         resident.checkpoint(), organism_id="organism.test"
     )

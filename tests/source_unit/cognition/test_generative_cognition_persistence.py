@@ -27,7 +27,7 @@ def test_cognition_checkpoint_round_trips_workspace_agenda_and_scheduler():
             organism_id="o0",
             root_state_id="s0",
             mode=GenerativeMode.OFFLINE,
-            symbiont_tick=4,
+            organism_step=4,
             generative_tick=2,
         )
     )
@@ -52,7 +52,7 @@ def test_cognition_checkpoint_round_trips_workspace_agenda_and_scheduler():
 
 def test_cognition_checkpoint_requires_all_domains():
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "workspace": {},
         "agenda": {},
     }
@@ -66,7 +66,7 @@ def test_workspace_restore_rejects_missing_or_unknown_emitted_fields():
     workspace = GenerativeWorkspace(
         episode=new_episode(
             episode_id="e1", organism_id="o1", root_state_id="s1",
-            mode=GenerativeMode.ONLINE, symbiont_tick=1, generative_tick=0,
+            mode=GenerativeMode.ONLINE, organism_step=1, generative_tick=0,
         )
     )
     checkpoint = json.loads(dumps_cognition(
@@ -87,11 +87,48 @@ def test_workspace_restore_rejects_missing_or_unknown_emitted_fields():
         loads_cognition(json.dumps(extra))
 
 
+def test_workspace_restore_rejects_previous_episode_time_field_and_schema():
+    workspace = GenerativeWorkspace(
+        episode=new_episode(
+            episode_id="e1",
+            organism_id="o1",
+            root_state_id="s1",
+            mode=GenerativeMode.ONLINE,
+            organism_step=1,
+            generative_tick=0,
+        )
+    )
+    checkpoint = json.loads(
+        dumps_cognition(
+            workspace=workspace,
+            agenda=GenerativeAgenda(),
+            scheduler=GenerativeScheduler(),
+        )
+    )
+
+    previous_schema = copy.deepcopy(checkpoint)
+    previous_schema["schema_version"] = 1
+    previous_episode = previous_schema["workspace"]["episode"]
+    previous_episode["started_symbiont_tick"] = previous_episode.pop(
+        "started_organism_step"
+    )
+    with pytest.raises(ValueError):
+        loads_cognition(json.dumps(previous_schema))
+
+    current_schema_with_old_key = copy.deepcopy(checkpoint)
+    current_episode = current_schema_with_old_key["workspace"]["episode"]
+    current_episode["started_symbiont_tick"] = current_episode.pop(
+        "started_organism_step"
+    )
+    with pytest.raises(ValueError, match="invalid generative cognition checkpoint"):
+        loads_cognition(json.dumps(current_schema_with_old_key))
+
+
 def test_workspace_restore_rejects_episode_counter_mismatch():
     workspace = GenerativeWorkspace(
         episode=new_episode(
             episode_id="e2", organism_id="o2", root_state_id="s2",
-            mode=GenerativeMode.ONLINE, symbiont_tick=1, generative_tick=0,
+            mode=GenerativeMode.ONLINE, organism_step=1, generative_tick=0,
         )
     )
     payload = json.loads(dumps_cognition(
@@ -115,7 +152,7 @@ def test_branch_transition_counter_round_trips_without_double_counting():
     workspace = GenerativeWorkspace(
         episode=new_episode(
             episode_id="branch-episode", organism_id="o", root_state_id="root",
-            mode=GenerativeMode.OFFLINE, symbiont_tick=1, generative_tick=0,
+            mode=GenerativeMode.OFFLINE, organism_step=1, generative_tick=0,
         )
     )
     workspace.add_state(GenerativeState(
