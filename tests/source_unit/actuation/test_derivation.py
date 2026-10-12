@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from organism.actuation import (
+    ActuatorEvidenceContext,
     CompetenceExecutionBindingRegistry,
     CompetenceLibrary,
     CompetenceMaturity,
@@ -60,8 +61,10 @@ def test_derivation_from_contrasted_evidence_creates_established_competence_and_
     primitive = _primitive(samples=8)
     competence_id = f"competence.{primitive.primitive_id}"
     effect_id = "effect.test.1"
-    context_ref = "context.test.1"
-    surface_fp = "surface.fp.1"
+    applicability = ActuatorEvidenceContext(
+        "body.test.1", "episode.test.1", "morphology.test.1", "surface.fp.1"
+    )
+    context_ref = applicability.fingerprint
 
     ledger = CausalEvidenceLedger()
     controllability_model = ControllabilityModel()
@@ -96,8 +99,8 @@ def test_derivation_from_contrasted_evidence_creates_established_competence_and_
         effect_id=effect_id,
         ledger=ledger,
         controllability_model=controllability_model,
-        surface_fingerprint=surface_fp,
         context_ref=context_ref,
+        applicability_context=applicability,
         tick=40,
         competence_library=library,
         binding_registry=binding_registry,
@@ -121,7 +124,7 @@ def test_derivation_from_contrasted_evidence_creates_established_competence_and_
     assert record.binding is not None
     assert record.binding.competence_id == competence_id
     assert record.binding.status is BindingStatus.VALID
-    assert record.binding.surface_fingerprint == surface_fp
+    assert record.binding.surface_fingerprint == applicability.surface_fingerprint
     assert record.binding.controllability == record.controllability_estimate.confidence
     assert binding_registry.get(competence_id) is record.binding
 
@@ -131,7 +134,6 @@ def test_derivation_without_passive_control_yields_zero_controllability_and_no_v
     competence_id = f"competence.{primitive.primitive_id}"
     effect_id = "effect.test.1"
     context_ref = "context.test.1"
-    surface_fp = "surface.fp.1"
 
     ledger = CausalEvidenceLedger()
     controllability_model = ControllabilityModel()
@@ -154,7 +156,6 @@ def test_derivation_without_passive_control_yields_zero_controllability_and_no_v
         effect_id=effect_id,
         ledger=ledger,
         controllability_model=controllability_model,
-        surface_fingerprint=surface_fp,
         context_ref=context_ref,
         tick=20,
         binding_registry=binding_registry,
@@ -177,7 +178,6 @@ def test_derivation_with_zero_action_hits_yields_zero_controllability():
     competence_id = f"competence.{primitive.primitive_id}"
     effect_id = "effect.test.1"
     context_ref = "context.test.1"
-    surface_fp = "surface.fp.1"
 
     ledger = CausalEvidenceLedger()
     controllability_model = ControllabilityModel()
@@ -199,7 +199,6 @@ def test_derivation_with_zero_action_hits_yields_zero_controllability():
         effect_id=effect_id,
         ledger=ledger,
         controllability_model=controllability_model,
-        surface_fingerprint=surface_fp,
         context_ref=context_ref,
         tick=20,
     )
@@ -209,3 +208,133 @@ def test_derivation_with_zero_action_hits_yields_zero_controllability():
     assert record.competence.evidence.support == 0
     assert record.competence.maturity is CompetenceMaturity.CANDIDATE
     assert record.binding is None
+
+
+def test_binding_requires_explicit_current_applicability_context():
+    primitive = _primitive(samples=8)
+    competence_id = f"competence.{primitive.primitive_id}"
+    context = ActuatorEvidenceContext(
+        "body.test.1", "episode.test.1", "morphology.test.1", "surface.fp.1"
+    )
+    ledger = CausalEvidenceLedger()
+    for i in range(8):
+        ledger.observe(
+            _transition(
+                i * 2,
+                i * 2 + 1,
+                competence_id=competence_id,
+                context_ref=context.fingerprint,
+            )
+        )
+    for i in range(8):
+        ledger.observe_passive_window(
+            tick_start=20 + i * 2,
+            tick_end=21 + i * 2,
+            context_ref=context.fingerprint,
+            prior_state_ref=f"passive.before.{i}",
+            resulting_state_ref=f"passive.after.{i}",
+            effect_id=None,
+        )
+
+    registry = CompetenceExecutionBindingRegistry()
+    record = derive_motor_competence_from_evidence(
+        primitive,
+        effect_id="effect.test.1",
+        ledger=ledger,
+        controllability_model=ControllabilityModel(),
+        context_ref=context.fingerprint,
+        tick=40,
+        binding_registry=registry,
+    )
+
+    assert record.competence.maturity in {
+        CompetenceMaturity.ESTABLISHED,
+        CompetenceMaturity.ROBUST,
+    }
+    assert record.binding is None
+    assert registry.get(competence_id) is None
+
+
+def test_evidence_refs_and_binding_are_scoped_to_current_context():
+    primitive = _primitive(samples=8)
+    competence_id = f"competence.{primitive.primitive_id}"
+    current = ActuatorEvidenceContext(
+        "body.current", "episode.current", "morphology.current", "surface.current"
+    )
+    prior = ActuatorEvidenceContext(
+        "body.prior", "episode.prior", "morphology.prior", "surface.prior"
+    )
+    ledger = CausalEvidenceLedger()
+    for i in range(8):
+        ledger.observe(
+            _transition(
+                i * 2,
+                i * 2 + 1,
+                competence_id=competence_id,
+                context_ref=prior.fingerprint,
+            )
+        )
+    for i in range(8):
+        ledger.observe(
+            _transition(
+                100 + i * 2,
+                101 + i * 2,
+                competence_id=competence_id,
+                context_ref=current.fingerprint,
+            )
+        )
+    for i in range(8):
+        ledger.observe_passive_window(
+            tick_start=200 + i * 2,
+            tick_end=201 + i * 2,
+            context_ref=current.fingerprint,
+            prior_state_ref=f"passive.current.before.{i}",
+            resulting_state_ref=f"passive.current.after.{i}",
+            effect_id=None,
+        )
+
+    registry = CompetenceExecutionBindingRegistry()
+    record = derive_motor_competence_from_evidence(
+        primitive,
+        effect_id="effect.test.1",
+        ledger=ledger,
+        controllability_model=ControllabilityModel(),
+        context_ref=current.fingerprint,
+        applicability_context=current,
+        tick=300,
+        binding_registry=registry,
+    )
+
+    current_ids = {
+        item.evidence_id
+        for item in ledger.intervention_evidence
+        if item.context_ref == current.fingerprint
+    }
+    prior_ids = {
+        item.evidence_id
+        for item in ledger.intervention_evidence
+        if item.context_ref == prior.fingerprint
+    }
+    assert record.competence.evidence.controllability_evidence_refs
+    assert set(record.competence.evidence.controllability_evidence_refs) <= current_ids
+    assert not (set(record.competence.evidence.controllability_evidence_refs) & prior_ids)
+    assert record.binding is not None
+    assert set(record.binding.evidence_refs) <= current_ids
+    assert record.binding.surface_fingerprint == current.surface_fingerprint
+    assert record.binding.applicability_fingerprint == current.fingerprint
+
+
+def test_mismatched_context_ref_and_applicability_are_rejected():
+    context = ActuatorEvidenceContext(
+        "body.test.1", "episode.test.1", "morphology.test.1", "surface.fp.1"
+    )
+    with pytest.raises(ValueError, match="context_ref must match"):
+        derive_motor_competence_from_evidence(
+            _primitive(),
+            effect_id="effect.test.1",
+            ledger=CausalEvidenceLedger(),
+            controllability_model=ControllabilityModel(),
+            context_ref="unrelated.context",
+            applicability_context=context,
+            tick=0,
+        )
