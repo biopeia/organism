@@ -49,7 +49,8 @@ class ExplorationActionCandidate:
     candidate_id: str
     organism_id: str
     world_id: str
-    causal_tick: int
+    source_causal_tick: int
+    target_causal_tick: int
     base_generation: int
     proposal: ActionProposal | None
     motor_command: MotorCommand | None
@@ -112,6 +113,7 @@ class OrganismExplorationComposer:
         *,
         actuator_context: ActuatorEvidenceContext,
         surface: ActuatorSurface,
+        target_causal_tick: int,
     ) -> ExplorationActionCandidate:
         if not isinstance(transition, OrganismTransitionState):
             raise TypeError("transition must be OrganismTransitionState")
@@ -148,6 +150,10 @@ class OrganismExplorationComposer:
             raise ValueError("exploration actuator identities do not match the current surface")
 
         tick = transition.world_correlation.causal_tick
+        if type(target_causal_tick) is not int or target_causal_tick != tick + 1:
+            raise ValueError(
+                "target causal tick must immediately follow the accepted transition source tick"
+            )
         engine = CompetenceDevelopmentEngine.restore(
             engine_checkpoint,
             # Sensorimotor checkpoint constitution has an internal stable
@@ -222,7 +228,8 @@ class OrganismExplorationComposer:
             candidate_id=candidate_id,
             organism_id=self._organism_id,
             world_id=transition.world_correlation.world_id,
-            causal_tick=tick,
+            source_causal_tick=tick,
+            target_causal_tick=target_causal_tick,
             base_generation=self._generation,
             proposal=proposal,
             motor_command=command,
@@ -259,7 +266,7 @@ class OrganismExplorationComposer:
             raise ValueError("candidate is no longer the staged Organism action state")
         if (
             candidate.world_id != committed_cut.world_id
-            or candidate.causal_tick != committed_cut.causal_tick
+            or candidate.target_causal_tick != committed_cut.causal_tick
         ):
             raise ValueError("candidate does not match the committed World causal cut")
         self._engine, self._domain = self._staged_state

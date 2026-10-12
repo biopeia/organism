@@ -80,7 +80,10 @@ class _CommittedCut:
 def _candidate_with_command(composer: OrganismExplorationComposer, surface: ActuatorSurface, context: ActuatorEvidenceContext):
     for tick in range(1, 65):
         candidate = composer.prepare(
-            _transition(tick=tick), actuator_context=context, surface=surface
+            _transition(tick=tick),
+            actuator_context=context,
+            surface=surface,
+            target_causal_tick=tick + 1,
         )
         if candidate.motor_command is not None:
             return candidate
@@ -115,16 +118,16 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
     with pytest.raises(ValueError, match="does not match the committed"):
         composer.adopt_after_world_commit(
             first,
-            committed_cut=_CommittedCut("world.1", first.causal_tick + 1, "commit.wrong"),
+            committed_cut=_CommittedCut("world.1", first.source_causal_tick, "commit.wrong"),
         )
     composer.adopt_after_world_commit(
         first,
-        committed_cut=_CommittedCut("world.1", first.causal_tick, "commit.1"),
+        committed_cut=_CommittedCut("world.1", first.target_causal_tick, "commit.1"),
     )
     with pytest.raises(ValueError, match="stale"):
         composer.adopt_after_world_commit(
             first,
-            committed_cut=_CommittedCut("world.1", first.causal_tick, "commit.1"),
+            committed_cut=_CommittedCut("world.1", first.target_causal_tick, "commit.1"),
         )
 
 
@@ -138,12 +141,16 @@ def test_rejects_wrong_episode_morphology_surface_and_lifecycle() -> None:
             _transition(embodiment=EmbodimentContextRef("body.1", "episode.old", "morphology.r1")),
             actuator_context=context,
             surface=surface,
+            target_causal_tick=2,
         )
 
     wrong_surface = ActuatorSurface.from_effector_ids(ACTUATORS, fingerprint_material="changed")
     with pytest.raises(ValueError, match="fingerprint"):
         composer.prepare(
-            _transition(), actuator_context=context, surface=wrong_surface
+            _transition(),
+            actuator_context=context,
+            surface=wrong_surface,
+            target_causal_tick=2,
         )
 
     dormant = transition_organism_lifecycle(
@@ -157,6 +164,7 @@ def test_rejects_wrong_episode_morphology_surface_and_lifecycle() -> None:
             dormant,
             actuator_context=context,
             surface=surface,
+            target_causal_tick=2,
         )
 
 
@@ -173,5 +181,20 @@ def test_surface_order_is_not_actuator_identity_authority() -> None:
     result_b = _candidate_with_command(composer_b, surface_b, context_b)
     assert result_a.motor_command is not None
     assert result_b.motor_command is not None
-    assert result_a.causal_tick == result_b.causal_tick
+    assert result_a.source_causal_tick == result_b.source_causal_tick
+    assert result_a.target_causal_tick == result_b.target_causal_tick
     assert result_a.motor_command == result_b.motor_command
+
+
+def test_target_tick_must_match_world_physical_step_successor() -> None:
+    surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+    context = _context(surface)
+    composer = _composer(surface, context)
+
+    with pytest.raises(ValueError, match="immediately follow"):
+        composer.prepare(
+            _transition(tick=7),
+            actuator_context=context,
+            surface=surface,
+            target_causal_tick=7,
+        )
