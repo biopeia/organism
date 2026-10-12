@@ -40,6 +40,15 @@ class InvalidContinuationCheckpoint(ContinuationError):
     """A continuation envelope is malformed or inconsistent."""
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    document: dict[str, object] = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"duplicate checkpoint field: {key}")
+        document[key] = value
+    return document
+
+
 @dataclass(frozen=True, slots=True)
 class ContinuationId:
     """Stable identity for one continuation, distinct from Organism identity."""
@@ -134,7 +143,7 @@ class OrganismContinuation:
     def from_bytes(cls, payload: bytes) -> "OrganismContinuation":
         expected = {"schema", "schema_version", "continuation_id", "owner_transition_base64", "ancestry"}
         try:
-            doc = json.loads(payload)
+            doc = json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
             if not isinstance(doc, dict) or set(doc) != expected:
                 raise InvalidContinuationCheckpoint("continuation checkpoint has an invalid shape")
             if doc["schema"] != cls.SCHEMA or type(doc["schema_version"]) is not int or doc["schema_version"] != cls.SCHEMA_VERSION:
@@ -300,7 +309,7 @@ class CanonicalContinuationRegistry:
     def from_bytes(cls, payload: bytes) -> "CanonicalContinuationRegistry":
         """Restore owner registry state; caller must load it from its authority store."""
         try:
-            doc = json.loads(payload)
+            doc = json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
             if not isinstance(doc, dict) or set(doc) != {
                 "schema", "schema_version", "authority_id", "records"
             }:
