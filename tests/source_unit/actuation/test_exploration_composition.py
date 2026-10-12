@@ -17,6 +17,7 @@ from organism.actuation import (
     OrganismCheckpointContract,
     OrganismExplorationComposer,
     ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
+    RestoredOrganismExplorationCheckpoint,
     RestoredOrganismTransitionCheckpoint,
 )
 from organism.cognition import (
@@ -600,6 +601,38 @@ def test_exploration_restore_rejects_malformed_embedded_cognitive_payload() -> N
             ),
             expected_organism_id=str(IDENTITY),
             expected_physical_step_id=candidate.physical_step_id,
+        )
+
+
+def test_restored_exploration_result_rejects_same_identity_with_different_payload() -> None:
+    surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+    context = _context(surface)
+    composer = _composer(surface, context)
+    candidate = _candidate_with_command(composer, surface, context)
+    encoded = composer.checkpoint_for_candidate(
+        candidate,
+        transition_state=_transition(tick=candidate.source_causal_tick),
+    )
+    restored = OrganismExplorationComposer.restore_from_committed_checkpoint(
+        encoded,
+        committed_cut=_CommittedCut(
+            candidate.world_id,
+            candidate.target_causal_tick,
+            candidate.commit_id,
+        ),
+        expected_organism_id=str(IDENTITY),
+        expected_physical_step_id=candidate.physical_step_id,
+    )
+    inconsistent_runtime = replace(
+        restored.cognitive_runtime,
+        state=replace(restored.cognitive_runtime.state, last_causal_tick=99),
+    )
+
+    with pytest.raises(ValueError, match="does not match transition checkpoint"):
+        RestoredOrganismExplorationCheckpoint(
+            transition_state=restored.transition_state,
+            cognitive_runtime=inconsistent_runtime,
+            action_composer=restored.action_composer,
         )
 
 
