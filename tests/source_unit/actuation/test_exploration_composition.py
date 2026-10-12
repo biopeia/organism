@@ -95,6 +95,41 @@ def _transition(
     )
 
 
+def _advance_cognition(
+    current: OrganismTransitionState, *, tick: int
+) -> OrganismTransitionState:
+    """Advance the public Organism transition using one opaque test signal."""
+    provenance = SenseProvenance(
+        world_id="world.1",
+        causal_tick=tick,
+        physical_step_id=f"physical-step.{tick}",
+        environment_id="environment.1",
+        environment_revision="environment.r1",
+        sample_frame_id="world.frame",
+        sample_position_m=(0.0, 0.0, 0.0),
+        body_id="body.1",
+        embodiment_episode_id="episode.1",
+        morphology_revision="morphology.r1",
+    )
+    signal = OpaqueSenseSignal(
+        channel_id="channel.1",
+        receptor_id="receptor.1",
+        value=0.25,
+        provenance=provenance,
+        contract_id=SCALAR_FIELD_CONTRACT_ID,
+        contract_revision=SCALAR_FIELD_CONTRACT_REVISION,
+        quantity_kind=SCALAR_FIELD_QUANTITY_KIND,
+        unit=SCALAR_FIELD_UNIT,
+    )
+    return advance_organism_from_sense_signals(
+        current,
+        (SenseChannelBinding("channel.1", "receptor.1", "sense.channel"),),
+        (signal,),
+        expected_provenance=provenance,
+        kernel_limits=KernelLimits(),
+    ).state
+
+
 def _composer(surface: ActuatorSurface, context: ActuatorEvidenceContext) -> OrganismExplorationComposer:
     engine = CompetenceDevelopmentEngine(
         ACTUATORS,
@@ -503,7 +538,7 @@ def test_candidate_checkpoint_restores_and_continues_in_fresh_process(tmp_path: 
     candidate_payload.write_bytes(encoded)
 
     next_tick = candidate.target_causal_tick
-    next_transition = _transition(tick=next_tick)
+    next_transition = _advance_cognition(source_transition, tick=next_tick)
     # Simulate the cut correlation required by the API. This is not evidence
     # that World issued or durably published the cut.
     composer.adopt_after_world_commit(candidate, committed_cut=test_cut_context)
@@ -532,8 +567,8 @@ from test_exploration_composition import (
     IDENTITY,
     OrganismExplorationComposer,
     _CommittedCut,
+    _advance_cognition,
     _context,
-    _transition,
 )
 from organism.actuation import ActuatorSurface
 
@@ -547,7 +582,7 @@ restored = OrganismExplorationComposer.restore_from_committed_checkpoint(
     expected_physical_step_id=physical_step_id,
 )
 next_tick = int(asserted_tick)
-transition = _transition(tick=next_tick)
+transition = _advance_cognition(restored.transition_state, tick=next_tick)
 surface = ActuatorSurface.from_effector_ids(ACTUATORS)
 context = _context(surface)
 candidate = restored.action_composer.prepare(
@@ -565,6 +600,7 @@ checkpoint = restored.action_composer.checkpoint_for_candidate(
 print(json.dumps({
     "pid": os.getpid(),
     "candidate_id": candidate.candidate_id,
+    "transition_hex": transition.to_bytes().hex(),
     "motor_command": repr(candidate.motor_command),
     "proposal": repr(candidate.proposal),
     "checkpoint_hex": checkpoint.hex(),
@@ -598,6 +634,7 @@ print(json.dumps({
     observed = json.loads(process.stdout)
     assert observed["pid"] != os.getpid()
     assert observed["candidate_id"] == uninterrupted_candidate.candidate_id
+    assert bytes.fromhex(observed["transition_hex"]) == next_transition.to_bytes()
     assert observed["motor_command"] == repr(uninterrupted_candidate.motor_command)
     assert observed["proposal"] == repr(uninterrupted_candidate.proposal)
     assert bytes.fromhex(observed["checkpoint_hex"]) == expected_checkpoint
