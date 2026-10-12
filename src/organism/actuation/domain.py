@@ -159,7 +159,11 @@ class ActionDomain:
                 or proposal.evaluation.controllability is not None
             ):
                 raise ValueError("intent-free exploration cannot claim causal evidence")
-            if maximum_duration is None or maximum_duration <= 0:
+            if (
+                isinstance(maximum_duration, bool)
+                or not isinstance(maximum_duration, int)
+                or maximum_duration <= 0
+            ):
                 raise ValueError("intent-free exploration requires a positive maximum duration")
         else:
             intent = self._intents.get(proposal.intent_id)

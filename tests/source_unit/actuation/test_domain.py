@@ -188,7 +188,7 @@ def test_exploration_proposal_without_intent_can_commit_and_issue_command():
 
 @pytest.mark.parametrize(
     "maximum_duration",
-    (None, 0),
+    (None, 0, 1.5, True),
 )
 def test_intent_free_exploration_requires_positive_duration(maximum_duration):
     surface = derive_actuator_constitution(("effector.left",))
