@@ -101,7 +101,7 @@ def test_admitted_action_composes_to_registered_actuation_and_explicit_close():
         sequence=((MotorIntent("effector.left", 0.75),),),
     )
     command = domain.issue_command(controller, tick=5, command_id="command.1")
-    actuations = domain.execute(command, surface)
+    actuations = domain.execute(command, surface, tick=5)
     assert [(item.actuator_id, item.delivered) for item in actuations] == [
         ("effector.left", 0.75)
     ]
@@ -171,10 +171,12 @@ def test_exploration_proposal_without_intent_can_commit_and_issue_command():
     command = domain.issue_command(controller, tick=7, command_id="command.exploration.1")
     assert command.competence_id is None
     assert command.channels == (("effector.left", 0.25),)
-    assert domain.execute(command, surface)[0].delivered == 0.25
+    assert domain.execute(command, surface, tick=7)[0].delivered == 0.25
     assert domain.issue_command(controller, tick=8, command_id="command.exploration.2")
     with pytest.raises(RuntimeError, match="has expired"):
         domain.issue_command(controller, tick=9, command_id="command.exploration.3")
+    with pytest.raises(RuntimeError, match="has expired"):
+        domain.execute(command, surface, tick=9)
     domain.close_exploration(
         commitment.commitment_id,
         tick=9,
@@ -366,7 +368,7 @@ def test_domain_rejects_unknown_stale_or_provenance_mismatched_command():
         embodiment_id=command.embodiment_id,
     )
     with pytest.raises(RuntimeError, match="registered active commitment"):
-        domain.execute(forged, surface)
+        domain.execute(forged, surface, tick=5)
 
     domain.close(
         commitment.commitment_id,
@@ -375,7 +377,7 @@ def test_domain_rejects_unknown_stale_or_provenance_mismatched_command():
         reason="controller_terminal_failure",
     )
     with pytest.raises(RuntimeError, match="registered active commitment"):
-        domain.execute(command, surface)
+        domain.execute(command, surface, tick=6)
 
 
 def test_no_proposal_does_not_issue_or_create_a_commitment():

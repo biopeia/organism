@@ -235,11 +235,24 @@ class ActionDomain:
             issued_at_tick=tick,
         )
 
-    def execute(self, command: MotorCommand, surface: ActuatorSurface) -> tuple[Actuation, ...]:
+    def execute(
+        self,
+        command: MotorCommand,
+        surface: ActuatorSurface,
+        *,
+        tick: int,
+    ) -> tuple[Actuation, ...]:
         """Execute only a command bound to this domain's registered active commitment."""
+        _validate_causal_tick(tick, minimum=command.issued_at_tick, field="tick")
         commitment = self._commitments.get(command.commitment_id)
         if commitment is None or commitment is not self.active_commitment:
             raise RuntimeError("motor command does not reference the registered active commitment")
+        if (
+            commitment.intent_id is None
+            and commitment.maximum_duration is not None
+            and tick - commitment.started_tick >= commitment.maximum_duration
+        ):
+            raise RuntimeError("intent-free exploration commitment has expired")
         if (
             command.controller_id != commitment.controller_id
             or command.competence_id != commitment.competence_id
