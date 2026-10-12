@@ -17,8 +17,10 @@ class CompetenceMaturity(StrEnum):
 class CompetenceGate:
     """Evidence an organism requires before a competence counts as established.
 
-    Organism configuration, carried by the canonical organism profile
-    (ADR-0062); never part of a competence's evidence or checkpoint.
+    Organism configuration, carried by the canonical organism profile. A
+    runtime checkpoint may record the effective configuration for exact
+    continuation; it is not competence evidence and does not transfer
+    configuration authority to the checkpoint.
     """
 
     min_support: int = 2

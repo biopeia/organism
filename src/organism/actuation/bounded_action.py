@@ -93,7 +93,7 @@ class _DecodedExplorationCheckpoint:
     commit_id: str
 
 
-ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA = "biopeia-organism-exploration-checkpoint-v3"
+ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA = "biopeia-organism-exploration-checkpoint-v4"
 ORGANISM_TRANSITION_CHECKPOINT_SCHEMA = "organism-transition-v2"
 
 
