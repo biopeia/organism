@@ -127,13 +127,20 @@ class OrganismLongitudinalCheckpoint:
             ):
                 raise InvalidLongitudinalCheckpoint("unsupported longitudinal checkpoint schema")
             raw_components = document["components"]
-            if not isinstance(raw_components, dict) or set(raw_components) != REQUIRED_LONGITUDINAL_COMPONENTS:
-                raise InvalidLongitudinalCheckpoint("longitudinal checkpoint component closure mismatch")
+            if (
+                not isinstance(raw_components, dict)
+                or set(raw_components) != REQUIRED_LONGITUDINAL_COMPONENTS
+            ):
+                raise InvalidLongitudinalCheckpoint(
+                    "longitudinal checkpoint component closure mismatch"
+                )
             components: dict[str, bytes] = {}
             for name, entry in raw_components.items():
                 if not isinstance(entry, dict) or set(entry) != {"payload_base64", "sha256"}:
                     raise InvalidLongitudinalCheckpoint(f"invalid {name} component envelope")
-                if not isinstance(entry["payload_base64"], str) or not isinstance(entry["sha256"], str):
+                if not isinstance(entry["payload_base64"], str) or not isinstance(
+                    entry["sha256"], str
+                ):
                     raise InvalidLongitudinalCheckpoint(f"invalid {name} component envelope")
                 component = base64.b64decode(entry["payload_base64"], validate=True)
                 if not component or sha256(component).hexdigest() != entry["sha256"]:
@@ -163,6 +170,36 @@ class OrganismLongitudinalCheckpoint:
                 raise MissingCheckpointDependency(dependency.locator) from exc
             if sha256(value).hexdigest() != dependency.sha256_hex:
                 raise CheckpointDependencyMismatch(dependency.locator)
+
+    def restore_components(
+        self,
+        decoders: Mapping[str, Callable[[bytes], object]],
+        *,
+        read_dependency: Callable[[str], bytes],
+    ) -> Mapping[str, object]:
+        """Decode the full profile only after verifying its external closure.
+
+        Decoder callbacks are explicitly supplied by the owning runtime because
+        subsystem restoration may require caller-owned configuration. A partial
+        decoder registry, a decoder failure, or an unresolved external artifact
+        fails the whole restoration rather than returning a partial profile.
+        Callbacks remain responsible for validating their subsystem-specific
+        identity, configuration and applicability invariants.
+        """
+        if not isinstance(decoders, Mapping) or set(decoders) != REQUIRED_LONGITUDINAL_COMPONENTS:
+            raise InvalidLongitudinalCheckpoint("decoder registry does not match component closure")
+        if any(not callable(decoder) for decoder in decoders.values()):
+            raise InvalidLongitudinalCheckpoint("every component decoder must be callable")
+        self.verify_dependency_closure(read_dependency)
+        restored: dict[str, object] = {}
+        for name in sorted(REQUIRED_LONGITUDINAL_COMPONENTS):
+            try:
+                restored[name] = decoders[name](self.components[name])
+            except Exception as exc:
+                raise InvalidLongitudinalCheckpoint(
+                    f"failed to restore longitudinal component: {name}"
+                ) from exc
+        return MappingProxyType(restored)
 
     def to_organism_checkpoint(self) -> OrganismCheckpoint:
         """Wrap this aggregate in the existing opaque owner checkpoint envelope."""
