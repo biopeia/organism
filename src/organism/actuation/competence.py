@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -269,6 +270,37 @@ class CompetenceLibrary:
                 _motor_competence_payload(item) for item in self.items
             ],
         }
+
+    def to_bytes(self) -> bytes:
+        """Return a deterministic, self-contained export for owner checkpoints."""
+        return json.dumps(
+            self.checkpoint(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+
+    @classmethod
+    def from_bytes(
+        cls,
+        payload: bytes,
+        *,
+        gate: CompetenceGate = DEFAULT_COMPETENCE_GATE,
+    ) -> "CompetenceLibrary":
+        """Restore only an unambiguous JSON export with the current schema."""
+        if not isinstance(payload, bytes):
+            raise ValueError("competence library export must be bytes")
+
+        def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate competence library field")
+                result[key] = value
+            return result
+
+        try:
+            decoded = json.loads(payload, object_pairs_hook=reject_duplicate_keys)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid competence library export") from exc
+        return cls.restore(decoded, gate=gate)
 
     @classmethod
     def restore(

@@ -85,6 +85,11 @@ def test_competence_library_checkpoint_roundtrip() -> None:
     assert r2.effect_id is None
     assert r2.evidence.support == 2
 
+    encoded = library.to_bytes()
+    assert encoded == library.to_bytes()
+    restored_from_bytes = CompetenceLibrary.from_bytes(encoded)
+    assert restored_from_bytes.checkpoint() == library.checkpoint()
+
 
 def test_competence_library_restore_respects_custom_gate() -> None:
     custom_gate = CompetenceGate(min_support=10, min_consistency=0.9)
@@ -200,6 +205,20 @@ def test_competence_effect_model_checkpoint_roundtrip() -> None:
     assert rest_pred.effect_id == orig_pred.effect_id == "eff.alpha"
     assert rest_pred.support == orig_pred.support == 2
     assert rest_pred.confidence == orig_pred.confidence == 1.0
+
+    encoded = model.to_bytes()
+    assert encoded == model.to_bytes()
+    restored_from_bytes = CompetenceEffectModel.from_bytes(encoded)
+    assert restored_from_bytes.checkpoint() == model.checkpoint()
+
+
+@pytest.mark.parametrize(
+    "restore",
+    (CompetenceLibrary.from_bytes, CompetenceEffectModel.from_bytes),
+)
+def test_model_byte_exports_reject_duplicate_json_fields(restore) -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        restore(b'{"schema_version":1,"schema_version":1}')
 
 
 def test_competence_effect_model_restore_rejects_malformed_payload() -> None:
