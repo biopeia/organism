@@ -319,6 +319,7 @@ class OrganismExplorationComposer:
         target_causal_tick: int,
         physical_step_id: str,
         commit_id: str,
+        required_complete_groups: tuple[tuple[str, ...], ...] = (),
     ) -> ExplorationActionCandidate:
         if not isinstance(transition, OrganismTransitionState):
             raise TypeError("transition must be OrganismTransitionState")
@@ -375,6 +376,25 @@ class OrganismExplorationComposer:
         intents = engine.motor_intents(tick)
         if engine.last_output_source != "exploration":
             raise ValueError("learned primitive replay is not admitted as exploration")
+        # Some Embodiment contracts require every channel in a command group
+        # to be explicit. Complete only the command representation here;
+        # this metadata must not alter Organism's exploration policy.
+        by_id = {intent.actuator_id: intent for intent in intents}
+        seen: set[str] = set()
+        for group in required_complete_groups:
+            if (
+                not isinstance(group, tuple)
+                or len(group) < 2
+                or len(set(group)) != len(group)
+                or any(actuator_id not in surface.actuator_ids for actuator_id in group)
+                or seen.intersection(group)
+            ):
+                raise ValueError("required complete command groups must be valid and non-overlapping")
+            seen.update(group)
+            if any(actuator_id in by_id for actuator_id in group):
+                for actuator_id in group:
+                    by_id.setdefault(actuator_id, MotorIntent(actuator_id, 0.0))
+        intents = tuple(by_id[actuator_id] for actuator_id in sorted(by_id))
         for intent in intents:
             surface.validate(intent.actuator_id, intent.activation)
 

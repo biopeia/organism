@@ -1040,3 +1040,41 @@ def test_restored_transition_result_rejects_same_identity_with_different_payload
             transition_state=restored.transition_state,
             cognitive_runtime=inconsistent_runtime,
         )
+
+
+def test_composer_expands_active_exclusive_group_to_explicit_neutral_only() -> None:
+    actuator_ids = ("motor.a", "motor.b", "effector.unrelated")
+    surface = ActuatorSurface.from_effector_ids(actuator_ids)
+    context = _context(surface)
+    engine = CompetenceDevelopmentEngine(
+        actuator_ids,
+        organism_id=str(IDENTITY),
+        embodiment_fingerprint=context.fingerprint,
+    )
+    composer = OrganismExplorationComposer(organism_id=str(IDENTITY), engine=engine)
+
+    candidate = None
+    for tick in range(1, 65):
+        candidate = composer.prepare(
+            _transition(tick=tick),
+            actuator_context=context,
+            surface=surface,
+            target_causal_tick=tick + 1,
+            physical_step_id=f"physical-step.{tick}",
+            commit_id=f"commit.{tick}",
+            required_complete_groups=(("motor.a", "motor.b"),),
+        )
+        if (
+            candidate.motor_command is not None
+            and any(
+                actuator_id in {"motor.a", "motor.b"}
+                for actuator_id, _value in candidate.motor_command.channels
+            )
+        ):
+            break
+    assert candidate is not None and candidate.motor_command is not None
+    channels = dict(candidate.motor_command.channels)
+    active_group = {key: value for key, value in channels.items() if key in {"motor.a", "motor.b"}}
+    assert len(active_group) == 2
+    assert sum(value > 0.0 for value in active_group.values()) == 1
+    assert channels.get("effector.unrelated", 0.0) > 0.0 or "effector.unrelated" not in channels
