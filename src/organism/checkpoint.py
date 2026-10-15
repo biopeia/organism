@@ -114,6 +114,44 @@ class OrganismLongitudinalCheckpoint:
         return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     @classmethod
+    def capture_components(
+        cls,
+        identity: OrganismIdentity,
+        component_states: Mapping[str, object],
+        encoders: Mapping[str, Callable[[object, OrganismIdentity], bytes]],
+        *,
+        dependencies: tuple[CheckpointDependency, ...] = (),
+    ) -> "OrganismLongitudinalCheckpoint":
+        """Encode the complete named owner state through subsystem codecs.
+
+        The owning composition supplies actual state objects and one codec per
+        required section. Encoders receive the canonical identity so they can
+        reject foreign component state before it is captured.
+        """
+        if not isinstance(identity, OrganismIdentity):
+            raise InvalidLongitudinalCheckpoint("identity must be an OrganismIdentity")
+        if (
+            not isinstance(component_states, Mapping)
+            or set(component_states) != REQUIRED_LONGITUDINAL_COMPONENTS
+        ):
+            raise InvalidLongitudinalCheckpoint(
+                "component state set does not match continuation closure"
+            )
+        if not isinstance(encoders, Mapping) or set(encoders) != REQUIRED_LONGITUDINAL_COMPONENTS:
+            raise InvalidLongitudinalCheckpoint("encoder registry does not match component closure")
+        if any(not callable(encoder) for encoder in encoders.values()):
+            raise InvalidLongitudinalCheckpoint("every component encoder must be callable")
+        encoded: dict[str, bytes] = {}
+        for name in sorted(REQUIRED_LONGITUDINAL_COMPONENTS):
+            try:
+                encoded[name] = encoders[name](component_states[name], identity)
+            except Exception as exc:
+                raise InvalidLongitudinalCheckpoint(
+                    f"failed to capture longitudinal component: {name}"
+                ) from exc
+        return cls(identity, encoded, dependencies)
+
+    @classmethod
     def from_bytes(cls, payload: bytes) -> "OrganismLongitudinalCheckpoint":
         try:
             document = json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
@@ -173,7 +211,7 @@ class OrganismLongitudinalCheckpoint:
 
     def restore_components(
         self,
-        decoders: Mapping[str, Callable[[bytes], object]],
+        decoders: Mapping[str, Callable[[bytes, OrganismIdentity], object]],
         *,
         read_dependency: Callable[[str], bytes],
     ) -> Mapping[str, object]:
@@ -194,7 +232,7 @@ class OrganismLongitudinalCheckpoint:
         restored: dict[str, object] = {}
         for name in sorted(REQUIRED_LONGITUDINAL_COMPONENTS):
             try:
-                restored[name] = decoders[name](self.components[name])
+                restored[name] = decoders[name](self.components[name], self.identity)
             except Exception as exc:
                 raise InvalidLongitudinalCheckpoint(
                     f"failed to restore longitudinal component: {name}"

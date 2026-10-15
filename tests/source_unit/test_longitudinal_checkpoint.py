@@ -42,14 +42,30 @@ def test_longitudinal_checkpoint_rejects_missing_or_unknown_components() -> None
         OrganismLongitudinalCheckpoint(
             OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041")), components
         )
-
-    components["agency_actuation"] = b"agency"
+    components["agency"] = b"agency"
     components["unregistered"] = b"must not be silently ignored"
     with pytest.raises(InvalidLongitudinalCheckpoint, match="closure mismatch"):
         OrganismLongitudinalCheckpoint(
             OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041")), components
         )
 
+
+def test_capture_uses_a_complete_identity_bound_encoder_registry() -> None:
+    identity = OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041"))
+    states = {name: name for name in REQUIRED_LONGITUDINAL_COMPONENTS}
+    encoders = {
+        name: lambda value, owner: f"{owner}:{value}".encode()
+        for name in REQUIRED_LONGITUDINAL_COMPONENTS
+    }
+    checkpoint = OrganismLongitudinalCheckpoint.capture_components(identity, states, encoders)
+
+    assert all(str(identity).encode() in payload for payload in checkpoint.components.values())
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="encoder registry"):
+        OrganismLongitudinalCheckpoint.capture_components(
+            identity,
+            states,
+            {key: value for key, value in encoders.items() if key != "agency"},
+        )
 
 def test_longitudinal_checkpoint_rejects_tampered_component_digest() -> None:
     document = json.loads(_checkpoint().to_bytes())
@@ -70,7 +86,10 @@ def test_longitudinal_checkpoint_rejects_duplicate_json_keys() -> None:
 
 def test_restore_requires_complete_decoders_and_dependency_closure() -> None:
     checkpoint = _checkpoint()
-    decoders = {name: bytes.decode for name in REQUIRED_LONGITUDINAL_COMPONENTS}
+    decoders = {
+        name: lambda payload, identity: payload.decode()
+        for name in REQUIRED_LONGITUDINAL_COMPONENTS
+    }
     with pytest.raises(InvalidLongitudinalCheckpoint, match="decoder registry"):
         checkpoint.restore_components(
             {key: value for key, value in decoders.items() if key != "agency"},
@@ -84,7 +103,7 @@ def test_restore_requires_complete_decoders_and_dependency_closure() -> None:
         dependencies=(CheckpointDependency("model://predictor", sha256(dependency).hexdigest()),),
     )
 
-    def fail_decode(payload: bytes) -> object:
+    def fail_decode(payload: bytes, identity: OrganismIdentity) -> object:
         raise ValueError("invalid subsystem payload")
 
     with pytest.raises(InvalidLongitudinalCheckpoint, match="failed to restore"):
