@@ -35,6 +35,7 @@ class AvailabilityReason(StrEnum):
     UNBOUND = "unbound"
     SURFACE_MISMATCH = "surface_mismatch"
     APPLICABILITY_MISMATCH = "applicability_mismatch"
+    APPLICABILITY_UNKNOWN = "applicability_unknown"
     BINDING_STALE = "binding_stale"
     BINDING_INVALIDATED = "binding_invalidated"
     CONTROLLER_UNAVAILABLE = "controller_unavailable"
@@ -77,6 +78,8 @@ def derive_availability(
     )
     applicability_match = (
         binding is not None
+        and applicability_fingerprint is not None
+        and binding.applicability_fingerprint is not None
         and binding.applicability_fingerprint == applicability_fingerprint
     )
     mature = competence.maturity in _MATURE
@@ -87,6 +90,12 @@ def derive_availability(
     )
     if not predictable:
         scope = None
+    elif applicability_fingerprint is None or (
+        binding is not None and binding.applicability_fingerprint is None
+    ):
+        # Missing current or stored context is unknown, not proof that the
+        # prediction belongs to a historical embodiment.
+        scope = PredictionScope.UNCERTAIN_CURRENT
     elif status is BindingStatus.VALID and not applicability_match:
         # A binding can remain valid for its original body while not applying
         # to the current one. Preserve the learned knowledge as historical,
@@ -115,7 +124,12 @@ def derive_availability(
     elif not surface_match:
         reason = AvailabilityReason.SURFACE_MISMATCH
     elif not applicability_match:
-        reason = AvailabilityReason.APPLICABILITY_MISMATCH
+        reason = (
+            AvailabilityReason.APPLICABILITY_UNKNOWN
+            if applicability_fingerprint is None
+            or binding.applicability_fingerprint is None
+            else AvailabilityReason.APPLICABILITY_MISMATCH
+        )
     elif not controller_available:
         reason = AvailabilityReason.CONTROLLER_UNAVAILABLE
     elif suppressed:

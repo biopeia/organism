@@ -67,6 +67,10 @@ class AffordanceResolver:
         binding = self._bindings.get(competence.competence_id)
         if binding is None:
             return None
+        # Applicability includes body, episode, morphology and surface. If
+        # either side lacks that identity, do not expose an executable action.
+        if self._applicability_fingerprint is None:
+            return None
         if (
             self._surface_fingerprint is not None
             and binding.surface_fingerprint != self._surface_fingerprint
@@ -74,8 +78,8 @@ class AffordanceResolver:
             return None
         binding_applicability = getattr(binding, "applicability_fingerprint", None)
         if (
-            binding_applicability is not None
-            and binding_applicability != self._applicability_fingerprint
+            binding_applicability is None
+            or binding_applicability != self._applicability_fingerprint
         ):
             return None
         prediction = self._predict(

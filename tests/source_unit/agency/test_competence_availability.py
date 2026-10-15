@@ -88,6 +88,15 @@ def test_valid_binding_for_previous_embodiment_is_historical_not_current():
     assert state.prediction_scope is PredictionScope.HISTORICAL
 
 
+def test_missing_current_applicability_context_is_unknown_and_never_executable():
+    state = _derive(_binding(), applicability_fingerprint=None)
+
+    assert state.predictable_now
+    assert not state.executable_now
+    assert state.prediction_scope is PredictionScope.UNCERTAIN_CURRENT
+    assert state.reason is AvailabilityReason.APPLICABILITY_UNKNOWN
+
+
 def test_uncertain_current_scope_and_invalidated_bindings():
     controller = _binding(
         status=BindingStatus.STALE, status_reason=StalenessReason.CONTROLLER_UNAVAILABLE
