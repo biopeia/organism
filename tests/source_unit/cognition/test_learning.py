@@ -190,10 +190,10 @@ def test_oja_update_never_leaves_weight_range_under_repeated_extremes():
     assert WEIGHT_RANGE[0] <= edge.weight <= WEIGHT_RANGE[1]
 
 
-# --- end-to-end demonstration ---
+# --- bounded characterization; no predictive-efficacy claim ---
 
 
-def test_a_predictor_measurably_learns_a_periodic_signal_over_many_ticks():
+def test_alternating_signal_oja_loop_does_not_beat_zero_output_baseline():
     from organism.cognition.graph import TickContext
 
     sense = PlasticNode(node_id="s", kind=NodeKind.SENSE)
@@ -211,7 +211,9 @@ def test_a_predictor_measurably_learns_a_periodic_signal_over_many_ticks():
     graph = CognitiveGraph(nodes=(sense, predictor), edges=(feed,), kernel_limits=KernelLimits())
 
     previous_frame: dict[str, float] = {}
-    losses: list[float] = []
+    model_losses: list[float] = []
+    zero_output_losses: list[float] = []
+    persistence_losses: list[float] = []
     for tick in range(1, 201):
         signal = 0.8 if tick % 2 == 0 else -0.8
         frame = graph.activate(
@@ -222,12 +224,15 @@ def test_a_predictor_measurably_learns_a_periodic_signal_over_many_ticks():
             graph, current=frame.activations, previous=previous_frame
         )
         for error in errors:
-            update_eligibility(
-                feed,
-                source_previous=previous_frame.get("s", 0.0),
-                target_current=frame.activations["p"],
-                decay=0.9,
-            )
+            # Score the prior tick's predictor against this causally subsequent
+            # target before applying this tick's caller-supplied Oja update.
+            model_losses.append(error.loss)
+            zero_output_losses.append(huber_loss(signal))
+            persistence_losses.append(huber_loss(signal - previous_frame["s"]))
+
+            # These controls are explicitly supplied by this test harness.
+            # Prediction error, eligibility trace and PlasticEdge.plasticity are
+            # not connected to the update by the current learning contract.
             apply_oja_update(
                 feed,
                 source_activation=previous_frame.get("s", 0.0),
@@ -236,13 +241,22 @@ def test_a_predictor_measurably_learns_a_periodic_signal_over_many_ticks():
                 modulation=1.0,
                 eligible=True,
             )
-            losses.append(error.loss)
-
         previous_frame = dict(frame.activations)
 
-    early_average = sum(losses[:20]) / 20
-    late_average = sum(losses[-20:]) / 20
-    assert late_average < early_average
+    assert len(model_losses) == 199
+    model_average = sum(model_losses) / len(model_losses)
+    zero_output_average = sum(zero_output_losses) / len(zero_output_losses)
+    persistence_average = sum(persistence_losses) / len(persistence_losses)
+
+    # The loop only characterizes this particular caller-driven update. Its
+    # output does not beat the trivial zero predictor on causally subsequent
+    # samples, so it is not evidence of predictive learning.
+    assert model_average > zero_output_average, (
+        f"expected this bounded characterization to expose no gain; model mean "
+        f"loss={model_average:.6f}, zero-output baseline={zero_output_average:.6f}"
+    )
+    assert persistence_average > zero_output_average
+    assert abs(feed.weight) < 1e-3
 
 
 def test_lagged_shadow_prediction_learns_delayed_relation_without_graph_mutation():
