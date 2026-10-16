@@ -255,16 +255,22 @@ class OrganismCheckpointContract:
                     state.verify_dependency_closure(self._read_dependency)
                 return True
             if schema_version in _EXPLORATION_SCHEMAS:
-                decoded = OrganismExplorationComposer._decode_checkpoint(
-                    encoded,
-                    expected_organism_id=owner_identity,
-                    read_dependency=self._read_dependency,
-                    kernel_limits=self._kernel_limits,
-                    history_cache=self._history_cache,
-                )
-                self._validate_transition_owner_payload(decoded.restored.transition_state)
+                try:
+                    decoded = OrganismExplorationComposer._decode_checkpoint(
+                        encoded,
+                        expected_organism_id=owner_identity,
+                        expected_schema=schema_version,
+                        read_dependency=self._read_dependency,
+                        kernel_limits=self._kernel_limits,
+                        history_cache=self._history_cache,
+                    )
+                    self._validate_transition_owner_payload(decoded.restored.transition_state)
+                except Exception:
+                    # Never keep an index advanced by a checkpoint that failed.
+                    self._history_cache.clear()
+                    raise
                 return True
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, KeyError):
             return False
         return False
 
@@ -353,8 +359,16 @@ class OrganismExplorationComposer:
         # v5 mode when an action-history index is held (organism#183).
         if history is not None and not isinstance(history, action_history.HistoryIndex):
             raise TypeError("history must be an action_history.HistoryIndex")
+        if history is not None and history.ref.count and (
+            action_domain is None
+            or action_domain._retired_commitment_ids is not history.recorded_commitments
+            or action_domain._retired_intent_ids is not history.recorded_intents
+            or action_domain._retired_closed_ids is not history.closed_ids
+        ):
+            raise ValueError("a non-empty action history requires the action domain restored with it")
         self._history = history
         self._history_dirty = False
+        self._staged_export: tuple | None = None
         self._generation = 0
         self._staged_candidate_id: str | None = None
         self._staged_state: tuple[CompetenceDevelopmentEngine, ActionDomain] | None = None
@@ -569,6 +583,10 @@ class OrganismExplorationComposer:
         payload = self._candidate_payload(candidate, transition_state)
         if self._history is None:
             return self._encode(payload), None
+        if self._staged_export is not None and self._staged_export[0] == candidate.candidate_id:
+            # _candidate_payload has already checked ownership and the exact
+            # transition; the export itself must not change.
+            return self._staged_export[1], self._staged_export[2]
         assert self._staged_state is not None
         _, domain = self._staged_state
         self._history_dirty = True
@@ -583,6 +601,8 @@ class OrganismExplorationComposer:
         )
         engine, _ = self._staged_state
         self._staged_state = (engine, live)
+        # Repeated exports of this candidate return exactly the same result.
+        self._staged_export = (candidate.candidate_id, encoded, declaration)
         return encoded, declaration
 
     def _candidate_payload(
@@ -734,6 +754,7 @@ class OrganismExplorationComposer:
         generative_registry: GenerativeModelRegistry | None = None,
         running_version: tuple[int, int, int] | None = None,
         history_cache: dict | None = None,
+        expected_schema: str | None = None,
     ) -> _DecodedExplorationCheckpoint:
         if not isinstance(encoded, bytes):
             raise TypeError("encoded checkpoint must be bytes")
@@ -759,6 +780,8 @@ class OrganismExplorationComposer:
             raise ValueError("exploration checkpoint fields do not match schema")
         if payload["schema"] not in _EXPLORATION_SCHEMAS:
             raise ValueError("unsupported exploration checkpoint schema")
+        if expected_schema is not None and payload["schema"] != expected_schema:
+            raise ValueError("exploration checkpoint schema differs from its declared schema version")
         if payload["organism_id"] != expected_organism_id:
             raise ValueError("exploration checkpoint does not match expected owner or physical step")
         if expected_physical_step_id is not None and payload["physical_step_id"] != expected_physical_step_id:
@@ -917,6 +940,7 @@ class OrganismExplorationComposer:
             raise ValueError("candidate does not match the committed World causal cut")
         self._engine, self._domain = self._staged_state
         self._history_dirty = False
+        self._staged_export = None
         self._staged_candidate_id = None
         self._staged_state = None
         self._staged_transition_digest = None

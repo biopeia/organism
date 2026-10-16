@@ -183,3 +183,107 @@ def test_incremental_validation_refuses_corrupt_or_reused_identity():
     forging = OrganismCheckpointContract(read_dependency=store2.__getitem__)
     forging._history_cache = contract._history_cache
     assert not forging.validate_checkpoint(ah._canon(payload), str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+
+
+# ------------------------------------------ independent review regressions
+def _forge(store, checkpoints, mutate_segment=None, mutate_payload=None):
+    """Re-sign the last checkpoint's newest segment and/or payload after mutation."""
+    import json as _json
+    k = max(i for i, (_, d) in enumerate(checkpoints) if d is not None and d.new_blob is not None)
+    payload = _json.loads(checkpoints[k][0])
+    seg = _json.loads(store[checkpoints[k][1].head])
+    store2 = dict(store)
+    if mutate_segment:
+        mutate_segment(seg)
+        forged = ah._canon(seg)
+        head = ah.sha256(forged).hexdigest()
+        store2[head] = forged
+        payload["action_domain"]["history"]["head"] = head
+    if mutate_payload:
+        mutate_payload(payload["action_domain"])
+    return k, ah._canon(payload), store2
+
+
+def _warm_and_cold(k, forged, store, checkpoints):
+    warm = OrganismCheckpointContract(read_dependency=store.__getitem__)
+    for encoded, _ in checkpoints[:k]:
+        assert warm.validate_checkpoint(encoded, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+    cold = OrganismCheckpointContract(read_dependency=store.__getitem__)
+    return (warm.validate_checkpoint(forged, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA),
+            cold.validate_checkpoint(forged, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA))
+
+
+@pytest.mark.parametrize("case", ["segment-seq-collision", "unknown-kind", "malformed-record"])
+def test_incremental_and_cold_agree_on_forged_segments(case):
+    store, checkpoints = _v5_lineage(20)
+
+    def mutate(seg):
+        rec = seg["records"][0]
+        if case == "segment-seq-collision":
+            rec["seq"] = 0                                 # seq already used by an older segment
+        elif case == "unknown-kind":
+            seg["records"].append({"kind": "bogus", "id": "c.future"})
+        else:
+            rec.pop("seq")
+
+    k, forged, store2 = _forge(store, checkpoints, mutate_segment=mutate)
+    assert _warm_and_cold(k, forged, store2, checkpoints) == (False, False)
+
+
+@pytest.mark.parametrize("case", ["live-seq-collision", "rewound-counter"])
+def test_ref_equal_warm_path_checks_live_seqs_and_counters(case):
+    store, checkpoints = _v5_lineage(20)
+    k = max(i for i, (_, d) in enumerate(checkpoints) if d is not None and d.new_blob is not None)
+
+    def mutate(domain):
+        if case == "live-seq-collision":
+            domain["live_commitments"][0]["seq"] = 0
+        else:
+            domain["next_commitment_seq"] = 1
+    import json as _json
+    payload = _json.loads(checkpoints[k][0])
+    mutate(payload["action_domain"])
+    forged = ah._canon(payload)
+    warm = OrganismCheckpointContract(read_dependency=store.__getitem__)
+    for encoded, _ in checkpoints[: k + 1]:                 # cache now holds this exact ref
+        warm.validate_checkpoint(encoded, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+    cold = OrganismCheckpointContract(read_dependency=store.__getitem__)
+    assert not warm.validate_checkpoint(forged, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+    assert not cold.validate_checkpoint(forged, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+
+
+def test_cached_index_never_crosses_owners():
+    store, checkpoints = _v5_lineage(10)
+    k = max(i for i, (_, d) in enumerate(checkpoints) if d is not None and d.new_blob is not None)
+    import json as _json
+    payload = _json.loads(checkpoints[k][0])["action_domain"]
+    cache: dict = {}
+    ah.restore_compact(payload, organism_id=str(IDENTITY), resolve=store.__getitem__, cache=cache)
+    with pytest.raises(ah.ActionHistoryError):
+        ah.restore_compact(payload, organism_id="organism.other", resolve=store.__getitem__, cache=cache)
+
+
+def test_repeated_export_of_a_candidate_is_identical():
+    surface, context, _, v5 = _composers()
+    for tick in range(1, 4):
+        candidate = _prepare(v5, surface, context, tick)
+        first = v5.checkpoint_with_dependency_for_candidate(candidate, transition_state=_transition(tick=tick))
+        assert v5.checkpoint_with_dependency_for_candidate(candidate, transition_state=_transition(tick=tick)) == first
+        v5.adopt_after_world_commit(candidate, committed_cut=_CommittedCut(candidate.world_id, tick + 1,
+                                                                           candidate.commit_id))
+
+
+def test_v5_bytes_are_not_valid_under_the_v4_label():
+    store, checkpoints = _v5_lineage(4)
+    contract = OrganismCheckpointContract(read_dependency=store.__getitem__)
+    assert not contract.validate_checkpoint(checkpoints[-1][0], str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA)
+
+
+def test_composer_rejects_history_without_its_domain():
+    store, checkpoints = _v5_lineage(10)
+    import json as _json
+    payload = _json.loads(checkpoints[-1][0])["action_domain"]
+    _, index = ah.restore_compact(payload, organism_id=str(IDENTITY), resolve=store.__getitem__)
+    surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+    with pytest.raises(ValueError, match="requires the action domain"):
+        OrganismExplorationComposer(organism_id=str(IDENTITY), engine=_engine(_context(surface)), history=index)
