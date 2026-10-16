@@ -122,35 +122,13 @@ class HistoryIndex:
     next_intent_seq: int = 0
 
 
-class _KnownDict(dict):
-    """Live records; membership also covers every id the index remembers."""
-
-    def __init__(self, live: Mapping[str, Any], known: set[str]) -> None:
-        super().__init__(live)
-        self._known = known
-
-    def __contains__(self, key: object) -> bool:
-        return dict.__contains__(self, key) or key in self._known
-
-
-class _KnownSet(set):
-    def __init__(self, known: set[str]) -> None:
-        super().__init__()
-        self._known = known
-
-    def __contains__(self, key: object) -> bool:
-        return set.__contains__(self, key) or key in self._known
-
-
 def _guarded(live_domain_payload: dict, index: HistoryIndex) -> ActionDomain:
-    # ADAPTER: the intended implementation keeps these membership sets inside
-    # ActionDomain itself (see the #183 specification). Method code is
-    # unchanged and runs in its original order.
-    domain = ActionDomain.restore(live_domain_payload)
-    domain._commitments = _KnownDict(domain._commitments, index.recorded_commitments)
-    domain._intents = _KnownDict(domain._intents, index.recorded_intents)
-    domain._closed_commitments = _KnownSet(index.closed_ids)
-    return domain
+    return ActionDomain.restore_live(
+        live_domain_payload,
+        retired_intent_ids=index.recorded_intents,
+        retired_commitment_ids=index.recorded_commitments,
+        retired_closed_ids=index.closed_ids,
+    )
 
 
 # ---------------------------------------------------------------- checkpoint
@@ -296,3 +274,70 @@ def compact_to_v4(payload: dict, *, organism_id: str, resolve: Resolver) -> dict
     """Exact inverse of ``v4_to_compact`` (registration order restored by seq)."""
     ref = _check_payload(payload)
     return _full_from(payload, load_history(ref, organism_id=organism_id, resolve=resolve))
+
+
+# ----------------------------------------------------------- v5 + declaration
+EXPLORATION_V4_SCHEMA = "biopeia-organism-exploration-checkpoint-v4"
+EXPLORATION_V5_SCHEMA = "biopeia-organism-exploration-checkpoint-v5"
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyDeclaration:
+    """What Organism declares to World for one checkpoint (contract draft).
+
+    ``head`` is the digest the checkpoint depends on (None: no history yet);
+    ``parent`` is the head of the checkpoint this one extends. ``new_blob`` is
+    the only dependency not yet durable: World must persist it, check
+    ``sha256(new_blob) == head`` and ``parent ==`` the extended cut's head,
+    before committing. Without a new blob, ``head == parent``.
+    World never interprets the bytes.
+    """
+
+    head: str | None
+    parent: str | None
+    new_blob: bytes | None
+
+    def __post_init__(self) -> None:
+        if self.new_blob is None:
+            if self.head != self.parent:
+                raise ActionHistoryError("a declaration without new bytes must keep its head")
+        elif sha256(self.new_blob).hexdigest() != self.head:
+            raise ActionHistoryError("declared head does not match the new dependency bytes")
+
+
+def _encode_exploration(payload: dict) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def exploration_checkpoint_v5(v4_payload: Mapping[str, Any], domain: ActionDomain, index: HistoryIndex
+                              ) -> tuple[bytes, DependencyDeclaration, HistoryIndex]:
+    """Build a v5 exploration checkpoint from the fields of a v4 one.
+
+    ``v4_payload`` supplies every non-domain field unchanged; the domain is
+    taken from ``domain``. Organism-side only: World receives the bytes and
+    the declaration.
+    """
+    parent = index.ref.head
+    compact, segment, index = checkpoint_compact(domain, index, organism_id=v4_payload["organism_id"])
+    payload = dict(v4_payload, schema=EXPLORATION_V5_SCHEMA, action_domain=compact)
+    return _encode_exploration(payload), DependencyDeclaration(index.ref.head, parent, segment), index
+
+
+def exploration_v5_to_v4(encoded: bytes, *, resolve: Resolver) -> bytes:
+    """Exact v4 bytes equivalent to a v5 checkpoint (for audit and rollback)."""
+    payload = json.loads(encoded)
+    if payload.get("schema") != EXPLORATION_V5_SCHEMA:
+        raise ActionHistoryError("not a v5 exploration checkpoint")
+    domain = compact_to_v4(payload["action_domain"], organism_id=payload["organism_id"], resolve=resolve)
+    return _encode_exploration(dict(payload, schema=EXPLORATION_V4_SCHEMA, action_domain=domain))
+
+
+def restore_exploration_v5_domain(encoded: bytes, *, resolve: Resolver, cache: dict | None = None
+                                  ) -> tuple[dict, ActionDomain, HistoryIndex]:
+    """Parse a v5 checkpoint and restore its ActionDomain (other fields returned as-is)."""
+    payload = json.loads(encoded)
+    if payload.get("schema") != EXPLORATION_V5_SCHEMA:
+        raise ActionHistoryError("not a v5 exploration checkpoint")
+    domain, index = restore_compact(payload["action_domain"], organism_id=payload["organism_id"],
+                                    resolve=resolve, cache=cache)
+    return payload, domain, index

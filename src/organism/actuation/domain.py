@@ -53,6 +53,12 @@ class ActionDomain:
         self._commitments: dict[str, ActionCommitment] = {}
         self._active_commitment_id: str | None = None
         self._closed_commitments: set[str] = set()
+        # Ids of terminal records kept outside this object (compact checkpoint
+        # with an external history, organism#183). Never serialized by
+        # checkpoint(); empty for a domain restored from a full checkpoint.
+        self._retired_intent_ids: frozenset[str] | set[str] = frozenset()
+        self._retired_commitment_ids: frozenset[str] | set[str] = frozenset()
+        self._retired_closed_ids: frozenset[str] | set[str] = frozenset()
 
     def checkpoint(self) -> dict[str, object]:
         """Export the domain-owned action lifecycle state for exact continuation.
@@ -188,6 +194,34 @@ class ActionDomain:
         domain._closed_commitments = closed_ids
         return domain
 
+    @classmethod
+    def restore_live(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        retired_intent_ids: frozenset[str] | set[str],
+        retired_commitment_ids: frozenset[str] | set[str],
+        retired_closed_ids: frozenset[str] | set[str],
+    ) -> "ActionDomain":
+        """Restore live records whose terminal history is kept elsewhere.
+
+        ``payload`` has the canonical schema but holds only live records. The
+        retired sets carry the identity of every terminal record so the
+        uniqueness and double-close rules answer exactly as with full
+        history. The caller (organism#183 compact checkpoint) is responsible
+        for having validated that history; the sets are shared, not copied.
+        """
+        domain = cls.restore(payload)
+        # O(live records): a live id cannot also belong to the retired history.
+        if any(ident in retired_commitment_ids for ident in domain._commitments) or any(
+            ident in retired_intent_ids for ident in domain._intents
+        ):
+            raise ValueError("a live record id is also recorded as retired")
+        domain._retired_intent_ids = retired_intent_ids
+        domain._retired_commitment_ids = retired_commitment_ids
+        domain._retired_closed_ids = retired_closed_ids
+        return domain
+
     @property
     def active_commitment(self) -> ActionCommitment | None:
         if self._active_commitment_id is None:
@@ -228,7 +262,7 @@ class ActionDomain:
             raise ValueError("intent context does not match its supporting affordance")
         if embodiment_id != supporting_affordance.embodiment_id:
             raise ValueError("intent embodiment does not match its supporting affordance")
-        if intent_id in self._intents:
+        if intent_id in self._intents or intent_id in self._retired_intent_ids:
             raise ValueError("intent_id is already registered")
         _validate_causal_tick(tick, minimum=0, field="tick")
         intent = ActionIntent(
@@ -313,7 +347,7 @@ class ActionDomain:
                 raise ValueError("proposal effect does not match its admitted intent")
             if intent.embodiment_id is not None and intent.embodiment_id != embodiment_id:
                 raise ValueError("execution embodiment does not match its intent")
-        if commitment_id in self._commitments:
+        if commitment_id in self._commitments or commitment_id in self._retired_commitment_ids:
             raise ValueError("commitment_id is already registered")
         commitment = ActionCommitment(
             commitment_id=commitment_id,
@@ -415,7 +449,7 @@ class ActionDomain:
         causal_revision: CausalRevisionState | None = None,
     ) -> None:
         """Close a registered active action from an explicit factual outcome."""
-        if commitment_id in self._closed_commitments:
+        if commitment_id in self._closed_commitments or commitment_id in self._retired_closed_ids:
             raise ValueError("action commitment has already been closed")
         commitment = self._commitments.get(commitment_id)
         if commitment is None or commitment is not self.active_commitment:
@@ -493,7 +527,7 @@ class ActionDomain:
         """End an intent-free exploration commitment without claiming an outcome."""
         if not reason:
             raise ValueError("exploration close reason must not be empty")
-        if commitment_id in self._closed_commitments:
+        if commitment_id in self._closed_commitments or commitment_id in self._retired_closed_ids:
             raise ValueError("action commitment has already been closed")
         commitment = self._commitments.get(commitment_id)
         if commitment is None or commitment is not self.active_commitment:

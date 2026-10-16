@@ -362,3 +362,35 @@ def test_v4_conversion_is_lossless_and_non_destructive():
     assert json.dumps(original, sort_keys=True) == frozen            # input untouched
     assert ah.compact_to_v4(payload, organism_id=ORG, resolve=store.__getitem__) == original
     assert len(json.dumps(payload)) < len(frozen)
+
+
+# ---------------------------------------------------------- v5 declaration
+def test_v5_declaration_and_exact_v4_equivalent():
+    run = _run_with_history()
+    v4 = {"schema": ah.EXPLORATION_V4_SCHEMA, "organism_id": ORG, "generation": 1, "world_id": "w",
+          "source_causal_tick": 5, "target_causal_tick": 6, "physical_step_id": "s", "commit_id": "c",
+          "transition_state_base64": "", "engine": {}, "action_domain": run.oracle.checkpoint()}
+    domain, index = ah.restore_compact(run.compact_ckpts[-1], organism_id=ORG, resolve=run.store.__getitem__)
+    parent = index.ref.head
+    apply(domain, ("close_exploration", {"id": "c3", "tick": 6}))
+    v5, decl, index = ah.exploration_checkpoint_v5(v4, domain, index)
+    assert decl.parent == parent and decl.new_blob is not None and decl.head == index.ref.head
+    run.store[decl.head] = decl.new_blob
+    oracle = ActionDomain.restore(copy.deepcopy(v4["action_domain"]))
+    apply(oracle, ("close_exploration", {"id": "c3", "tick": 6}))
+    expected_v4 = ah._encode_exploration(dict(v4, action_domain=oracle.checkpoint()))
+    assert ah.exploration_v5_to_v4(v5, resolve=run.store.__getitem__) == expected_v4
+    # a step that makes nothing terminal declares no new bytes and keeps its head
+    _, restored, index = ah.restore_exploration_v5_domain(v5, resolve=run.store.__getitem__)
+    _, decl2, _ = ah.exploration_checkpoint_v5(v4, restored, index)
+    assert decl2.new_blob is None and decl2.head == decl2.parent == decl.head
+    with pytest.raises(ah.ActionHistoryError):
+        ah.DependencyDeclaration(decl.head, decl.parent, b"other bytes")
+
+
+def test_retired_ids_cannot_overlap_live_records():
+    live = ActionDomain(outcome_ledger=ExecutiveOutcomeLedger())
+    apply(live, _commit("x", 1))
+    with pytest.raises(ValueError, match="retired"):
+        ActionDomain.restore_live(live.checkpoint(), retired_intent_ids=frozenset(),
+                                  retired_commitment_ids=frozenset({"x"}), retired_closed_ids=frozenset())
