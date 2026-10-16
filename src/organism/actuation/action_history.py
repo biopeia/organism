@@ -83,7 +83,7 @@ def load_history(ref: HistoryRef, *, organism_id: str, resolve: Resolver) -> lis
         try:
             raw = resolve(head)
         except (KeyError, OSError, LookupError) as exc:
-            raise ActionHistoryError(f"history dependency {head} is unavailable") from exc
+            raise ActionHistoryError(f"history dependency {head} is unavailable or invalid: {exc}") from exc
         if not isinstance(raw, bytes) or sha256(raw).hexdigest() != head:
             raise ActionHistoryError(f"history dependency {head} does not match its digest")
         try:
