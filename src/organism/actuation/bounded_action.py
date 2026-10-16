@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from pathlib import Path
-from typing import Callable, Protocol, runtime_checkable
+from typing import Callable, Mapping, Protocol, runtime_checkable
 
 from ..transition import OrganismLifecycle, OrganismTransitionState
 from ..cognition.limits import KernelLimits
@@ -914,6 +914,7 @@ class OrganismExplorationComposer:
         candidate: ExplorationActionCandidate,
         *,
         committed_cut: CommittedWorldCutReference,
+        somatic_observation: Mapping[str, float] | None = None,
     ) -> None:
         """Publish staged state for a matching cut supplied by trusted World code.
 
@@ -939,12 +940,30 @@ class OrganismExplorationComposer:
         ):
             raise ValueError("candidate does not match the committed World causal cut")
         self._engine, self._domain = self._staged_state
+        if somatic_observation is not None:
+            if not isinstance(somatic_observation, Mapping):
+                raise TypeError("somatic_observation must be a Mapping[str, float] or None")
+            motor_vec: dict[str, float] = {}
+            if candidate.motor_command is not None:
+                for actuator_id, activation in candidate.motor_command.channels:
+                    motor_vec[actuator_id] = float(activation)
+            self._engine.observe(
+                tick=committed_cut.causal_tick,
+                body_state=somatic_observation,
+                motor_vector=motor_vec,
+                discovery_eligible=True,
+            )
         self._history_dirty = False
         self._staged_export = None
         self._staged_candidate_id = None
         self._staged_state = None
         self._staged_transition_digest = None
         self._generation += 1
+
+    @property
+    def engine(self) -> CompetenceDevelopmentEngine:
+        """Read-only access to the internal competence engine."""
+        return self._engine
 
 
 __all__ = ["ExplorationActionCandidate", "OrganismExplorationComposer"]
