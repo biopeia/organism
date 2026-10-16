@@ -373,6 +373,7 @@ class OrganismExplorationComposer:
         self._staged_candidate_id: str | None = None
         self._staged_state: tuple[CompetenceDevelopmentEngine, ActionDomain] | None = None
         self._staged_transition_digest: str | None = None
+        self._staged_somatic_observed: bool = False
 
     def prepare(
         self,
@@ -545,7 +546,44 @@ class OrganismExplorationComposer:
         self._staged_candidate_id = candidate_id
         self._staged_state = (engine, domain)
         self._staged_transition_digest = sha256(transition.to_bytes()).hexdigest()
+        self._staged_somatic_observed = False
         return candidate
+
+    def stage_somatic_feedback_for_candidate(
+        self,
+        candidate: ExplorationActionCandidate,
+        *,
+        somatic_observation: Mapping[str, float],
+    ) -> None:
+        """Stage post-physics somatic observation into the candidate state before commit.
+
+        This ensures the candidate owner checkpoint captures the somatic feedback
+        of the target causal tick, guaranteeing atomic durability across restore
+        without altering the live composer engine before World commit confirmation.
+        """
+        if not isinstance(candidate, ExplorationActionCandidate) or candidate._owner is not self:
+            raise ValueError("candidate was not prepared by this Organism composer")
+        if candidate.candidate_id != self._staged_candidate_id or self._staged_state is None:
+            raise ValueError("candidate is no longer the staged Organism action state")
+        if not isinstance(somatic_observation, Mapping):
+            raise TypeError("somatic_observation must be a Mapping[str, float]")
+        if getattr(self, "_staged_somatic_observed", False):
+            raise ValueError("somatic observation has already been staged for this candidate")
+
+        engine, domain = self._staged_state
+        motor_vec: dict[str, float] = {}
+        if candidate.motor_command is not None:
+            for actuator_id, activation in candidate.motor_command.channels:
+                motor_vec[actuator_id] = float(activation)
+
+        engine.observe(
+            tick=candidate.target_causal_tick,
+            body_state=somatic_observation,
+            motor_vector=motor_vec,
+            discovery_eligible=True,
+        )
+        self._staged_somatic_observed = True
+        self._staged_export = None
 
     def checkpoint_for_candidate(
         self,
@@ -940,7 +978,7 @@ class OrganismExplorationComposer:
         ):
             raise ValueError("candidate does not match the committed World causal cut")
         self._engine, self._domain = self._staged_state
-        if somatic_observation is not None:
+        if somatic_observation is not None and not getattr(self, "_staged_somatic_observed", False):
             if not isinstance(somatic_observation, Mapping):
                 raise TypeError("somatic_observation must be a Mapping[str, float] or None")
             motor_vec: dict[str, float] = {}
@@ -953,6 +991,7 @@ class OrganismExplorationComposer:
                 motor_vector=motor_vec,
                 discovery_eligible=True,
             )
+        self._staged_somatic_observed = False
         self._history_dirty = False
         self._staged_export = None
         self._staged_candidate_id = None
