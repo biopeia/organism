@@ -22,6 +22,7 @@ from ..cognition.generative.registry import GenerativeModelRegistry
 from .action import ActionEvaluation, ActionJustification, ActionProposal, ActionSource, MotorCommand
 from .context import ActuatorEvidenceContext
 from .controller import SequenceController
+from . import action_history
 from .domain import ActionDomain
 from .sensorimotor import CompetenceDevelopmentEngine
 from .surface import ActuatorSurface
@@ -156,7 +157,15 @@ class _DecodedExplorationCheckpoint:
 
 
 ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA = "biopeia-organism-exploration-checkpoint-v4"
+# Compact form (organism#183, M3): action history kept as World-verified
+# dependencies. Opt-in; v4 remains the default and stays readable.
+ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA = action_history.EXPLORATION_V5_SCHEMA
+_EXPLORATION_SCHEMAS = frozenset({ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA, ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA})
 ORGANISM_TRANSITION_CHECKPOINT_SCHEMA = "organism-transition-v2"
+
+
+def _no_history_read(digest: str) -> bytes:
+    raise LookupError("in-process pruning must not read history")
 
 
 class OrganismCheckpointContract:
@@ -242,7 +251,7 @@ class OrganismCheckpointContract:
                         return False
                     state.verify_dependency_closure(self._read_dependency)
                 return True
-            if schema_version == ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA:
+            if schema_version in _EXPLORATION_SCHEMAS:
                 decoded = OrganismExplorationComposer._decode_checkpoint(
                     encoded,
                     expected_organism_id=owner_identity,
@@ -255,13 +264,23 @@ class OrganismCheckpointContract:
             return False
         return False
 
+    def declared_dependency(self, encoded: bytes, owner_identity: str, schema_version: str) -> str | None:
+        """The dependency these checkpoint bytes require (World owner-contract hook).
+
+        None for transition and v4 exploration checkpoints; the action-history
+        head for v5. Raises on malformed bytes or owner/schema mismatch.
+        """
+        if schema_version == ORGANISM_TRANSITION_CHECKPOINT_SCHEMA:
+            return None
+        return action_history.declared_dependency(encoded, owner_identity, schema_version)
+
     def verify_restoration(self, reference: object) -> bool:
         """Verify bytes selected by World against its committed reference."""
         if (
             getattr(reference, "owner", None) != self.owner
             or not isinstance(getattr(reference, "owner_identity", None), str)
             or getattr(reference, "schema_version", None)
-            not in {ORGANISM_TRANSITION_CHECKPOINT_SCHEMA, ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA}
+            not in {ORGANISM_TRANSITION_CHECKPOINT_SCHEMA, *_EXPLORATION_SCHEMAS}
             or not isinstance(getattr(reference, "locator", None), str)
             or not isinstance(getattr(reference, "sha256", None), str)
         ):
@@ -297,6 +316,7 @@ class OrganismExplorationComposer:
         organism_id: str,
         engine: CompetenceDevelopmentEngine,
         action_domain: ActionDomain | None = None,
+        history: action_history.HistoryIndex | None = None,
     ) -> None:
         if not isinstance(organism_id, str) or not organism_id:
             raise ValueError("organism_id must be non-empty")
@@ -322,10 +342,15 @@ class OrganismExplorationComposer:
             embodiment_fingerprint=engine.embodiment_fingerprint,
         )
         self._domain = (
-            ActionDomain.restore(action_domain.checkpoint())
+            action_domain.clone()
             if action_domain is not None
             else ActionDomain()
         )
+        # v5 mode when an action-history index is held (organism#183).
+        if history is not None and not isinstance(history, action_history.HistoryIndex):
+            raise TypeError("history must be an action_history.HistoryIndex")
+        self._history = history
+        self._history_dirty = False
         self._generation = 0
         self._staged_candidate_id: str | None = None
         self._staged_state: tuple[CompetenceDevelopmentEngine, ActionDomain] | None = None
@@ -342,6 +367,11 @@ class OrganismExplorationComposer:
         commit_id: str,
         required_complete_groups: tuple[tuple[str, ...], ...] = (),
     ) -> ExplorationActionCandidate:
+        if self._history_dirty:
+            # The history index already includes records of a candidate that
+            # World has not committed: continuing would treat uncommitted
+            # identity as retired. Restore from the committed cut instead.
+            raise RuntimeError("action history advanced for an uncommitted candidate; restore from the committed cut")
         if not isinstance(transition, OrganismTransitionState):
             raise TypeError("transition must be OrganismTransitionState")
         if str(transition.identity) != self._organism_id:
@@ -419,7 +449,7 @@ class OrganismExplorationComposer:
         for intent in intents:
             surface.validate(intent.actuator_id, intent.activation)
 
-        domain = ActionDomain.restore(self._domain.checkpoint())
+        domain = self._domain.clone()
         active = domain.active_commitment
         if active is not None:
             if active.intent_id is not None:
@@ -510,6 +540,47 @@ class OrganismExplorationComposer:
         These bytes describe a candidate state, not a committed state. World
         must only select this reference after verifying the matching cut.
         """
+        if self._history is not None:
+            raise ValueError("a v5 composer must export its dependency: use checkpoint_with_dependency_for_candidate")
+        return self._encode(self._candidate_payload(candidate, transition_state))
+
+    def checkpoint_with_dependency_for_candidate(
+        self,
+        candidate: ExplorationActionCandidate,
+        *,
+        transition_state: OrganismTransitionState,
+    ) -> tuple[bytes, action_history.DependencyDeclaration | None]:
+        """Checkpoint bytes plus the dependency World must persist first.
+
+        v4 composers return ``(bytes, None)``. v5 composers return a compact
+        checkpoint and its declaration; the composer's history index then
+        includes this candidate and only ``adopt_after_world_commit`` (or a
+        fresh restore from a committed cut) makes it usable again.
+        """
+        payload = self._candidate_payload(candidate, transition_state)
+        if self._history is None:
+            return self._encode(payload), None
+        assert self._staged_state is not None
+        _, domain = self._staged_state
+        self._history_dirty = True
+        encoded, declaration, self._history = action_history.exploration_checkpoint_v5(
+            payload, domain, self._history
+        )
+        # Keep only live records in memory: terminal ones now live in the
+        # history. Warm path (index ref matches): no history is reloaded.
+        compact = json.loads(encoded)["action_domain"]
+        live, self._history = action_history.restore_compact(
+            compact, organism_id=self._organism_id, resolve=_no_history_read, cache={"index": self._history}
+        )
+        engine, _ = self._staged_state
+        self._staged_state = (engine, live)
+        return encoded, declaration
+
+    def _candidate_payload(
+        self,
+        candidate: ExplorationActionCandidate,
+        transition_state: OrganismTransitionState,
+    ) -> dict:
         if not self._owns_staged_candidate(candidate):
             raise ValueError("candidate is not the currently staged owner state")
         if not isinstance(transition_state, OrganismTransitionState):
@@ -526,7 +597,7 @@ class OrganismExplorationComposer:
             raise ValueError("transition state does not match the staged World source cut")
         assert self._staged_state is not None
         engine, domain = self._staged_state
-        return self._serialize_checkpoint(
+        return self._checkpoint_payload(
             transition_state=transition_state,
             generation=self._generation + 1,
             engine=engine,
@@ -535,7 +606,13 @@ class OrganismExplorationComposer:
             commit_id=candidate.commit_id,
         )
 
-    def _serialize_checkpoint(
+    @staticmethod
+    def _encode(payload: dict) -> bytes:
+        return json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+
+    def _checkpoint_payload(
         self,
         *,
         transition_state: OrganismTransitionState,
@@ -560,9 +637,7 @@ class OrganismExplorationComposer:
             "engine": engine.checkpoint(),
             "action_domain": domain.checkpoint(),
         }
-        return json.dumps(
-            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        return payload
 
     @classmethod
     def restore_from_committed_checkpoint(
@@ -672,7 +747,7 @@ class OrganismExplorationComposer:
         }
         if not isinstance(payload, dict) or set(payload) != expected:
             raise ValueError("exploration checkpoint fields do not match schema")
-        if payload["schema"] != ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA:
+        if payload["schema"] not in _EXPLORATION_SCHEMAS:
             raise ValueError("unsupported exploration checkpoint schema")
         if payload["organism_id"] != expected_organism_id:
             raise ValueError("exploration checkpoint does not match expected owner or physical step")
@@ -766,8 +841,18 @@ class OrganismExplorationComposer:
                 raise ValueError(
                     "restored motor actuator identities do not match the current surface"
                 )
-        domain = ActionDomain.restore(payload["action_domain"])
-        restored = cls(organism_id=organism_id, engine=engine, action_domain=domain)
+        history = None
+        if payload["schema"] == ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA:
+            if read_dependency is None:
+                raise ValueError("a v5 exploration checkpoint requires a dependency resolver")
+            # Loads and verifies the referenced history chain, then reruns the
+            # canonical ActionDomain validation on the reconstruction.
+            domain, history = action_history.restore_compact(
+                payload["action_domain"], organism_id=organism_id, resolve=read_dependency
+            )
+        else:
+            domain = ActionDomain.restore(payload["action_domain"])
+        restored = cls(organism_id=organism_id, engine=engine, action_domain=domain, history=history)
         restored._generation = payload["generation"]
         return _DecodedExplorationCheckpoint(
             restored=RestoredOrganismExplorationCheckpoint(
@@ -820,6 +905,7 @@ class OrganismExplorationComposer:
         ):
             raise ValueError("candidate does not match the committed World causal cut")
         self._engine, self._domain = self._staged_state
+        self._history_dirty = False
         self._staged_candidate_id = None
         self._staged_state = None
         self._staged_transition_digest = None
