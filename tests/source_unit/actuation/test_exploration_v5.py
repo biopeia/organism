@@ -287,3 +287,42 @@ def test_composer_rejects_history_without_its_domain():
     surface = ActuatorSurface.from_effector_ids(ACTUATORS)
     with pytest.raises(ValueError, match="requires the action domain"):
         OrganismExplorationComposer(organism_id=str(IDENTITY), engine=_engine(_context(surface)), history=index)
+
+
+def test_history_is_terminal_and_live_is_not_on_every_path():
+    """Re-review R1: a closed id in history with its commitment live (terminal,
+    then active) was cold-accepted then warm-accepted. The exact split is now
+    required everywhere, so neither state is admissible."""
+    import copy
+    import json as _json
+    store, cps = _v5_lineage(4)
+    base = _json.loads(cps[3][0])
+    active = base["action_domain"]["live_commitments"][0]["record"]
+    y_active = dict(active, commitment_id="exploration-commitment.forged-Y")
+    y_term = dict(y_active, status="invalidated", end_reason="bounded_exploration_step_complete",
+                  ended_tick=y_active["started_tick"])
+    st = dict(store)
+
+    def put(prev, records):
+        raw = ah.encode_segment(organism_id=str(IDENTITY), previous=prev, records=records)
+        head = ah.sha256(raw).hexdigest()
+        st[head] = raw
+        return ah.HistoryRef(head, prev.count + len(records))
+
+    def checkpoint(ref, live, active_id, nxt):
+        p = copy.deepcopy(base)
+        ad = p["action_domain"]
+        ad["history"] = {"head": ref.head, "count": ref.count}
+        ad.update(live_commitments=live, live_intents=[], active_commitment_id=active_id,
+                  next_commitment_seq=nxt, next_intent_seq=0)
+        return ah._canon(p)
+
+    r1 = put(ah.EMPTY, [{"kind": "closed", "id": y_active["commitment_id"]}])
+    p1 = checkpoint(r1, [{"seq": 0, "record": y_term}], None, 1)                # live but terminal
+    p2 = checkpoint(r1, [{"seq": 0, "record": y_active}], y_active["commitment_id"], 1)
+    contract = OrganismCheckpointContract(read_dependency=st.__getitem__)
+    for encoded in (p1, p2):
+        assert not contract.validate_checkpoint(encoded, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+    with pytest.raises(ah.ActionHistoryError, match="not terminal"):            # active record inside history
+        ah.load_history(put(ah.EMPTY, [{"kind": "commitment", "seq": 0, "record": y_active}]),
+                        organism_id=str(IDENTITY), resolve=st.__getitem__)

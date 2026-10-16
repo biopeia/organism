@@ -74,6 +74,11 @@ def _is_seq(value: object) -> bool:
     return type(value) is int and value >= 0
 
 
+def _terminal(kind: str, record: dict) -> bool:
+    status = record.get("status")
+    return status != "active" if kind == "commitment" else status in _TERMINAL_INTENT
+
+
 def _check_record(record: object) -> None:
     """Every history record has one of three exact shapes."""
     if not isinstance(record, dict):
@@ -85,6 +90,8 @@ def _check_record(record: object) -> None:
                 or not isinstance(record["record"], dict) or not isinstance(record["record"].get(key), str)
                 or not record["record"][key]):
             raise ActionHistoryError(f"malformed {kind} history record")
+        if not _terminal(kind, record["record"]):
+            raise ActionHistoryError(f"history {kind} record is not terminal")
     elif kind == "closed":
         if set(record) != {"kind", "id"} or not isinstance(record["id"], str) or not record["id"]:
             raise ActionHistoryError("malformed closed history record")
@@ -259,6 +266,10 @@ def _check_seqs(payload: dict, new: list[dict], index: HistoryIndex) -> None:
         live = payload.get(live_key)
         if not isinstance(live, list) or any(not isinstance(r, dict) for r in live):
             raise ActionHistoryError("malformed live records")
+        # The split is exact: history holds terminal records only, the payload
+        # live ones only, so identity checks never need to cross the boundary.
+        if any(not isinstance(r.get("record"), dict) or _terminal(kind, r["record"]) for r in live):
+            raise ActionHistoryError(f"live {kind} record is terminal")
         seqs = [r["seq"] for r in new if r["kind"] == kind] + [r.get("seq") for r in live]
         if any(not _is_seq(q) for q in seqs) or len(set(seqs)) != len(seqs) or any(q in recorded for q in seqs):
             raise ActionHistoryError("duplicate or invalid registration sequence")
