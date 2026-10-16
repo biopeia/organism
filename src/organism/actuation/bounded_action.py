@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
+from enum import Enum
 from hashlib import sha256
 from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
@@ -43,6 +44,13 @@ class CommittedWorldCutReference(Protocol):
     commit_id: str
 
 
+class ExplorationOutcome(str, Enum):
+    """Explicit result of a completed bounded exploration evaluation."""
+
+    MOTOR_COMMAND = "motor_command"
+    NO_ACTUATION = "no_actuation"
+
+
 def _identifier(kind: str, organism_id: str, world_id: str, tick: int) -> str:
     material = f"{kind}\0{organism_id}\0{world_id}\0{tick}".encode("utf-8")
     return f"{kind}.{sha256(material).hexdigest()[:24]}"
@@ -71,7 +79,20 @@ class ExplorationActionCandidate:
     base_generation: int
     proposal: ActionProposal | None
     motor_command: MotorCommand | None
+    outcome: ExplorationOutcome
     _owner: object
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.outcome, ExplorationOutcome):
+            raise TypeError("outcome must be ExplorationOutcome")
+        has_motor_output = self.proposal is not None and self.motor_command is not None
+        has_no_output = self.proposal is None and self.motor_command is None
+        if self.outcome is ExplorationOutcome.MOTOR_COMMAND and not has_motor_output:
+            raise ValueError("MOTOR_COMMAND outcome requires proposal and motor command")
+        if self.outcome is ExplorationOutcome.NO_ACTUATION and not has_no_output:
+            raise ValueError("NO_ACTUATION outcome forbids proposal and motor command")
+        if not (has_motor_output or has_no_output):
+            raise ValueError("proposal and motor command must be supplied together")
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,6 +485,11 @@ class OrganismExplorationComposer:
             base_generation=self._generation,
             proposal=proposal,
             motor_command=command,
+            outcome=(
+                ExplorationOutcome.MOTOR_COMMAND
+                if command is not None
+                else ExplorationOutcome.NO_ACTUATION
+            ),
             _owner=self,
         )
         # Keep owner state private. Preparing a newer candidate replaces the

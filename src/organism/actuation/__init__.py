@@ -16,6 +16,7 @@ from .controller import ControllerFrame, SequenceController
 from .domain import ActionDomain, ActionSelection
 from .bounded_action import (
     ExplorationActionCandidate,
+    ExplorationOutcome,
     ORGANISM_EXPLORATION_CHECKPOINT_SCHEMA,
     ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
     OrganismCheckpointContract,
@@ -111,6 +112,7 @@ __all__ = [
     "EffectSpace",
     "EffectTarget",
     "ExplorationActionCandidate",
+    "ExplorationOutcome",
     "ExplorationPolicy",
     "ExplorationSignals",
     "MotorCommand",

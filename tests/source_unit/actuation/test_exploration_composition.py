@@ -194,6 +194,7 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
     assert first.motor_command.surface_fingerprint == surface.contract_fingerprint
     assert {actuator_id for actuator_id, _ in first.motor_command.channels} <= set(ACTUATORS)
 
+
     # Competing candidates from the same base are possible, but only the one
     # attached to the committed World causal cut can advance owner state.
     with pytest.raises(TypeError, match="committed-cut receipt"):
@@ -371,6 +372,44 @@ def test_production_composer_stages_identity_bound_exploration_without_evidence_
         composer.adopt_after_world_commit(
             first,
             committed_cut=_CommittedCut("world.1", first.target_causal_tick, "commit.1"),
+        )
+
+
+def test_completed_empty_exploration_is_explicit_no_actuation(monkeypatch: pytest.MonkeyPatch) -> None:
+    from organism.actuation import ExplorationOutcome
+
+    surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+    context = _context(surface)
+    composer = _composer(surface, context)
+
+    def completed_without_intents(engine: CompetenceDevelopmentEngine, tick: int):
+        engine._last_output_source = "exploration"
+        engine._last_output_primitive_id = None
+        return ()
+
+    monkeypatch.setattr(CompetenceDevelopmentEngine, "motor_intents", completed_without_intents)
+    candidate = composer.prepare(
+        _transition(tick=1224), actuator_context=context, surface=surface,
+        target_causal_tick=1225, physical_step_id="physical-step.1225", commit_id="commit.1225",
+    )
+    assert candidate.outcome is ExplorationOutcome.NO_ACTUATION
+    assert candidate.proposal is None
+    assert candidate.motor_command is None
+
+
+def test_failed_exploration_never_becomes_no_actuation(monkeypatch: pytest.MonkeyPatch) -> None:
+    surface = ActuatorSurface.from_effector_ids(ACTUATORS)
+    context = _context(surface)
+    composer = _composer(surface, context)
+
+    def failed_evaluation(engine: CompetenceDevelopmentEngine, tick: int):
+        raise RuntimeError("exploration evaluation failed")
+
+    monkeypatch.setattr(CompetenceDevelopmentEngine, "motor_intents", failed_evaluation)
+    with pytest.raises(RuntimeError, match="exploration evaluation failed"):
+        composer.prepare(
+            _transition(tick=1224), actuator_context=context, surface=surface,
+            target_causal_tick=1225, physical_step_id="physical-step.1225", commit_id="commit.1225",
         )
 
 
