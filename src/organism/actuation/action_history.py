@@ -278,6 +278,7 @@ def compact_to_v4(payload: dict, *, organism_id: str, resolve: Resolver) -> dict
 
 # ----------------------------------------------------------- v5 + declaration
 EXPLORATION_V4_SCHEMA = "biopeia-organism-exploration-checkpoint-v4"
+TRANSITION_SCHEMA = "organism-transition-v2"
 EXPLORATION_V5_SCHEMA = "biopeia-organism-exploration-checkpoint-v5"
 
 
@@ -345,11 +346,14 @@ def restore_exploration_v5_domain(encoded: bytes, *, resolve: Resolver, cache: d
 
 def declared_dependency(encoded: bytes, owner_identity: str, schema_version: str) -> str | None:
     """Organism's statement, for World's owner contract, of the dependency
-    an exploration checkpoint requires: None for v4, the history head for v5.
+    a checkpoint requires: None for the transition checkpoint and exploration
+    v4, the history head for exploration v5.
 
     Raises ``ActionHistoryError`` for malformed bytes or an owner/schema
     mismatch, so World refuses the commit instead of guessing.
     """
+    if schema_version == TRANSITION_SCHEMA:
+        return None          # transition checkpoints declare no action-history dependency
     try:
         payload = json.loads(encoded)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

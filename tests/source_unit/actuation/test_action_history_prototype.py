@@ -404,6 +404,7 @@ def test_declared_dependency_states_exactly_what_the_bytes_require():
           "transition_state_base64": "", "engine": {}, "action_domain": run.oracle.checkpoint()}
     v4_bytes = ah._encode_exploration(v4)
     assert ah.declared_dependency(v4_bytes, ORG, ah.EXPLORATION_V4_SCHEMA) is None
+    assert ah.declared_dependency(b"any transition bytes", ORG, ah.TRANSITION_SCHEMA) is None
     domain, index = ah.restore_compact(run.compact_ckpts[-1], organism_id=ORG, resolve=run.store.__getitem__)
     apply(domain, ("close_exploration", {"id": "c3", "tick": 6}))
     v5, decl, index = ah.exploration_checkpoint_v5(v4, domain, index)
