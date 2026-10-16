@@ -394,3 +394,28 @@ def test_retired_ids_cannot_overlap_live_records():
     with pytest.raises(ValueError, match="retired"):
         ActionDomain.restore_live(live.checkpoint(), retired_intent_ids=frozenset(),
                                   retired_commitment_ids=frozenset({"x"}), retired_closed_ids=frozenset())
+
+
+# --------------------------------------------- World owner-contract statement
+def test_declared_dependency_states_exactly_what_the_bytes_require():
+    run = _run_with_history()
+    v4 = {"schema": ah.EXPLORATION_V4_SCHEMA, "organism_id": ORG, "generation": 1, "world_id": "w",
+          "source_causal_tick": 5, "target_causal_tick": 6, "physical_step_id": "s", "commit_id": "c",
+          "transition_state_base64": "", "engine": {}, "action_domain": run.oracle.checkpoint()}
+    v4_bytes = ah._encode_exploration(v4)
+    assert ah.declared_dependency(v4_bytes, ORG, ah.EXPLORATION_V4_SCHEMA) is None
+    domain, index = ah.restore_compact(run.compact_ckpts[-1], organism_id=ORG, resolve=run.store.__getitem__)
+    apply(domain, ("close_exploration", {"id": "c3", "tick": 6}))
+    v5, decl, index = ah.exploration_checkpoint_v5(v4, domain, index)
+    assert ah.declared_dependency(v5, ORG, ah.EXPLORATION_V5_SCHEMA) == decl.head is not None
+    # a step that makes nothing terminal keeps declaring the same head
+    run.store[decl.head] = decl.new_blob
+    _, restored, index = ah.restore_exploration_v5_domain(v5, resolve=run.store.__getitem__)
+    v5_same, decl2, _ = ah.exploration_checkpoint_v5(v4, restored, index)
+    assert ah.declared_dependency(v5_same, ORG, ah.EXPLORATION_V5_SCHEMA) == decl2.head == decl.head
+    for args in ((v5, "organism.other", ah.EXPLORATION_V5_SCHEMA),     # owner mismatch
+                 (v5, ORG, ah.EXPLORATION_V4_SCHEMA),                  # schema mismatch
+                 (b"not json", ORG, ah.EXPLORATION_V5_SCHEMA),
+                 (v4_bytes.replace(ah.EXPLORATION_V4_SCHEMA.encode(), b"x-schema"), ORG, "x-schema")):
+        with pytest.raises(ah.ActionHistoryError):
+            ah.declared_dependency(*args)
