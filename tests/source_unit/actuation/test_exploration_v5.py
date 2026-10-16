@@ -117,3 +117,8 @@ def test_clone_preserves_retired_identity():
     assert "c.x" in copy._retired_commitment_ids and "intent.x" in copy._retired_intent_ids
     # a plain restore drops it, which is why staged copies must use clone()
     assert not ActionDomain.restore(domain.checkpoint())._retired_commitment_ids
+
+
+def test_exports_dependencies_flags_v5_mode_only():
+    _, _, v4, v5 = _composers()
+    assert v4.exports_dependencies is False and v5.exports_dependencies is True

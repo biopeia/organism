@@ -544,6 +544,11 @@ class OrganismExplorationComposer:
             raise ValueError("a v5 composer must export its dependency: use checkpoint_with_dependency_for_candidate")
         return self._encode(self._candidate_payload(candidate, transition_state))
 
+    @property
+    def exports_dependencies(self) -> bool:
+        """True in v5 mode: checkpoints must be exported with their dependency."""
+        return self._history is not None
+
     def checkpoint_with_dependency_for_candidate(
         self,
         candidate: ExplorationActionCandidate,
