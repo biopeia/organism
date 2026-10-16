@@ -20,6 +20,13 @@ from organism.transition import (
     accept_organism_transition,
 )
 
+from organism.memory import (
+    ExperienceRecordingPolicy,
+    accumulate_experience_records,
+    record_cognitive_interpretation,
+    record_sense_reception,
+)
+
 from .composition import (
     CognitionComposition,
     EdgeLearningInstruction,
@@ -49,6 +56,7 @@ def advance_organism_from_sense_signals(
     generative_registry: GenerativeModelRegistry | None = None,
     running_version: tuple[int, int, int] | None = None,
     learning: tuple[EdgeLearningInstruction, ...] = (),
+    experience_policy: ExperienceRecordingPolicy | None = None,
 ) -> AcceptedCognitionTransition:
     """Advance one bounded cognition slice and accept it exactly once.
 
@@ -68,6 +76,8 @@ def advance_organism_from_sense_signals(
         raise OrganismTransitionError("expected_provenance must be a SenseProvenance")
     if not isinstance(kernel_limits, KernelLimits):
         raise OrganismTransitionError("kernel_limits must be explicit KernelLimits")
+    if experience_policy is not None and not isinstance(experience_policy, ExperienceRecordingPolicy):
+        raise OrganismTransitionError("experience_policy must be an ExperienceRecordingPolicy or None")
 
     _validate_embodiment_applicability(current.embodiment, expected_provenance)
     if (
@@ -93,10 +103,42 @@ def advance_organism_from_sense_signals(
         expected_provenance=expected_provenance,
         learning=learning,
     )
+    if experience_policy is None:
+        next_records = runtime.experience_records
+    else:
+        new_records = []
+        organism_id = str(runtime.state.identity)
+        if experience_policy.record_reception:
+            new_records.append(
+                record_sense_reception(
+                    organism_id,
+                    expected_provenance.causal_tick,
+                    signals,
+                    expected_provenance,
+                    evidence_prefix=experience_policy.evidence_prefix,
+                )
+            )
+        if experience_policy.record_interpretation:
+            interp = record_cognitive_interpretation(
+                organism_id,
+                expected_provenance.causal_tick,
+                composition.frame.activations,
+                threshold=experience_policy.activation_threshold,
+            )
+            if interp is not None:
+                new_records.append(interp)
+        next_records = accumulate_experience_records(
+            organism_id,
+            runtime.experience_records,
+            new_records,
+            max_records=experience_policy.max_records,
+        )
+
     next_runtime = replace(
         runtime,
         state=composition.state,
         graph=composition.graph,
+        experience_records=next_records,
     )
     next_checkpoint = next_runtime.to_organism_checkpoint()
     proposal = OrganismTransitionProposal(
