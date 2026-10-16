@@ -1,6 +1,6 @@
 # Organism ↔ World checkpoint dependency contract: DRAFT for review
 
-**Status:** proposal for review (organism#183, world#90). Nothing here is implemented in World, and M3 is not connected to the runtime. The Organism side exists only as the PR #184 prototype. The World side exists only as an out-of-tree reference shim; World code is unchanged.
+**Status:** direction selected by the owner (2026-10-16); implemented as opt-in in **biopeia/world#173** (draft, pending independent review). M3 is not connected to the runtime. The Organism side is in organism main (#184) plus #185/#186; the World side is in world#173. The earlier out-of-tree shim is superseded by tests on World's real runtime.
 
 **Base:** organism `cedce52`, world `1e42240`.
 
@@ -38,11 +38,17 @@ These are for review and are **not implemented**.
 
 | Item | Change |
 |---|---|
-| `OwnerCheckpointPayload` | optional `declaration: DependencyDeclaration \| None = None` (World-side type mirroring §3) |
+| `OwnerCheckpointPayload` | optional `dependency: OwnerCheckpointDependency \| None = None` (World-side type mirroring §3) |
 | Owner checkpoint store | `write_dependency(bytes) -> sha256`, using the existing content-addressed write (temp, fsync, link, directory fsync), and `resolve(sha256) -> bytes` (digest-checked). The location is derived from the digest by the store layout |
-| `CheckpointReference` | optional `dependency_sha256: str \| None = None` |
-| Journal descriptor `_reference_descriptor` | adds the key `"dependency_sha256"` **only when it is not None**. Readers accept exactly the current key set, or the current set plus `dependency_sha256` (today `durable_runtime.py:118,125` and `manifest.py:583` require the exact current set) |
-| Restore composition (`causal_cycle.restore…`) | passes `resolve` to the Organism restorer for references that carry `dependency_sha256` |
+| `CheckpointReference` | optional `dependency_sha256` and `dependency_parent` (both content digests, no locator) |
+| Journal descriptor `_reference_descriptor` | adds the keys `"dependency_sha256"` and `"dependency_parent"` **only when a dependency exists**. Readers accept exactly the current key set, or the current set plus both dependency keys; keys present with a null dependency are rejected (one encoding for "no dependency") |
+| Restore composition (`causal_cycle.restore…`) | passes a digest-verified `read_dependency` to the Organism restorer (world runtime-wiring PR, stacked on world#173) |
+
+## 4b. Owner-contract hook
+
+World's `OwnerCheckpointContract` gains an optional `declared_dependency(encoded, owner_identity, schema_version) -> sha256 | None`. Organism implements it as `action_history.declared_dependency`: None for v4, the history head for v5; it raises on an owner or schema mismatch. World refuses a commit whose reference omits or contradicts that statement, and refuses a dependency from an owner whose contract lacks the hook.
+
+Organism's owner contract (`OrganismCheckpointContract.declared_dependency`, organism#186) dispatches by schema: None for `organism-transition-v2` and exploration v4, the head for v5. World re-checks the statement at commit **and** at restore/recovery: a dependency carried by an owner without the hook, or contradicting its owner's statement, is refused.
 
 ## 5. Commit invariants (World)
 
@@ -71,6 +77,11 @@ These are for review and are **not implemented**.
 - **`dependency_sha256` is a content reference with no locator.** World resolves it through its store layout. The dependency part of the journal digest is therefore location-independent; F10 verifies this: identical `dependency_sha256` under two roots.
 - **The existing `locator` field is not changed by this contract.** References keep their absolute locator, so the root-dependence reported in world#90 remains for the payload reference itself. This contract neither decides nor blocks world#90's disposition.
 - **v4 references produce byte-identical journal descriptors** (F9 compares them with World's own `_reference_descriptor`), so existing journals and digests verify unchanged.
+
+## 7b. Stated limits (from the independent review)
+
+- **Lineage is declared, not proven by World.** World checks `dependency_parent` against the base cut's recorded head only. It cannot tell whether new bytes really extend that parent: an owner could drop its dependency and later restart a chain whose content extends an older one. Chain integrity is enforced by the owner (Organism verifies links, counts and owner on restore).
+- **Store layout assumption.** Dependencies are resolved at `<store root>/<sha[:2]>/<sha>.blob`, the layout of `FileOwnerCheckpointStore`, with the root derived from the payload's locator. Another layout fails closed.
 
 ## 8. Failure tests (reference shim on World's real `FileOwnerCheckpointStore`)
 

@@ -194,6 +194,20 @@ class ActionDomain:
         domain._closed_commitments = closed_ids
         return domain
 
+    def clone(self) -> "ActionDomain":
+        """Independent copy of the records with the same retired identity.
+
+        ``ActionDomain.restore(domain.checkpoint())`` copies the records but
+        drops identity kept outside the checkpoint (organism#183); callers
+        that stage work on a copy must use this instead. The retired sets are
+        shared, not copied: they only grow, through the owner's history.
+        """
+        domain = ActionDomain.restore(self.checkpoint())
+        domain._retired_intent_ids = self._retired_intent_ids
+        domain._retired_commitment_ids = self._retired_commitment_ids
+        domain._retired_closed_ids = self._retired_closed_ids
+        return domain
+
     @classmethod
     def restore_live(
         cls,
