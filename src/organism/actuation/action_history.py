@@ -341,3 +341,25 @@ def restore_exploration_v5_domain(encoded: bytes, *, resolve: Resolver, cache: d
     domain, index = restore_compact(payload["action_domain"], organism_id=payload["organism_id"],
                                     resolve=resolve, cache=cache)
     return payload, domain, index
+
+
+def declared_dependency(encoded: bytes, owner_identity: str, schema_version: str) -> str | None:
+    """Organism's statement, for World's owner contract, of the dependency
+    an exploration checkpoint requires: None for v4, the history head for v5.
+
+    Raises ``ActionHistoryError`` for malformed bytes or an owner/schema
+    mismatch, so World refuses the commit instead of guessing.
+    """
+    try:
+        payload = json.loads(encoded)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ActionHistoryError("exploration checkpoint is not valid JSON") from exc
+    if not isinstance(payload, dict) or payload.get("schema") != schema_version:
+        raise ActionHistoryError("checkpoint schema does not match the declared schema version")
+    if payload.get("organism_id") != owner_identity:
+        raise ActionHistoryError("checkpoint owner does not match the declared owner identity")
+    if schema_version == EXPLORATION_V4_SCHEMA:
+        return None
+    if schema_version != EXPLORATION_V5_SCHEMA:
+        raise ActionHistoryError("unsupported exploration checkpoint schema")
+    return _check_payload(payload.get("action_domain")).head
