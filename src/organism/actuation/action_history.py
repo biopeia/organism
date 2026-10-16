@@ -70,7 +70,12 @@ def encode_segment(*, organism_id: str, previous: HistoryRef, records: list[dict
     })
 
 
-def load_history(ref: HistoryRef, *, organism_id: str, resolve: Resolver) -> list[dict]:
+class _NotAnAncestor(Exception):
+    """Incremental verification target is not on the chain (branch or gap)."""
+
+
+def load_history(ref: HistoryRef, *, organism_id: str, resolve: Resolver,
+                 stop_at: HistoryRef | None = None) -> list[dict]:
     """Walk the chain from ``ref`` back to genesis and return records in order.
 
     Every segment is digest-checked here even if the resolver already did so;
@@ -80,6 +85,10 @@ def load_history(ref: HistoryRef, *, organism_id: str, resolve: Resolver) -> lis
     chunks: list[list[dict]] = []
     head, count = ref.head, ref.count
     while head is not None:
+        if stop_at is not None and (head, count) == (stop_at.head, stop_at.count):
+            return [record for chunk in reversed(chunks) for record in chunk]
+        if stop_at is not None and count <= stop_at.count:
+            raise _NotAnAncestor()
         try:
             raw = resolve(head)
         except (KeyError, OSError, LookupError) as exc:
@@ -99,6 +108,8 @@ def load_history(ref: HistoryRef, *, organism_id: str, resolve: Resolver) -> lis
             raise ActionHistoryError("history segment count does not match its chain position")
         chunks.append(seg["records"])
         head, count = prev.head, prev.count
+    if stop_at is not None and stop_at.head is not None:
+        raise _NotAnAncestor()
     return [record for chunk in reversed(chunks) for record in chunk]
 
 
@@ -231,7 +242,7 @@ def restore_compact(payload: dict, *, organism_id: str, resolve: Resolver,
     ref = _check_payload(payload)
     index = cache.get("index") if cache is not None else None
     if index is not None and index.ref != ref:
-        index = None
+        index = _extend(index, payload, ref, organism_id=organism_id, resolve=resolve)
     live_payload = {
         "schema_version": payload["domain_schema_version"],
         "intents": [r["record"] for r in sorted(payload["live_intents"], key=lambda x: x["seq"])],
@@ -259,6 +270,37 @@ def restore_compact(payload: dict, *, organism_id: str, resolve: Resolver,
     if cache is not None:
         cache["index"] = index
     return _guarded(live_payload, index), index
+
+
+def _extend(index: HistoryIndex, payload: dict, ref: HistoryRef, *, organism_id: str,
+            resolve: Resolver) -> HistoryIndex | None:
+    """Incrementally verify a chain that extends ``index.ref``; None means "go cold".
+
+    Only the new segments are loaded and digest/link/count-checked; the
+    canonical ActionDomain validation runs on the new records with the live
+    payload (a closure and its commitment are always recorded together), and
+    no new id may already be retired. Any doubt falls back to the full cold
+    verification, which is authoritative.
+    """
+    try:
+        new = load_history(ref, organism_id=organism_id, resolve=resolve, stop_at=index.ref)
+    except _NotAnAncestor:
+        return None
+    ids_c = [r["record"]["commitment_id"] for r in new if r["kind"] == "commitment"]
+    ids_i = [r["record"]["intent_id"] for r in new if r["kind"] == "intent"]
+    closed = [r["id"] for r in new if r["kind"] == "closed"]
+    if (any(i in index.recorded_commitments for i in ids_c) or any(i in index.recorded_intents for i in ids_i)
+            or any(i in index.closed_ids for i in closed)):
+        return None
+    try:
+        ActionDomain.restore(_full_from(payload, new))
+    except ValueError:
+        return None
+    index.recorded_commitments.update(ids_c)
+    index.recorded_intents.update(ids_i)
+    index.closed_ids.update(closed)
+    index.ref = ref
+    return index
 
 
 # ---------------------------------------------------------------- conversion

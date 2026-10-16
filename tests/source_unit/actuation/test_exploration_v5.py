@@ -122,3 +122,64 @@ def test_clone_preserves_retired_identity():
 def test_exports_dependencies_flags_v5_mode_only():
     _, _, v4, v5 = _composers()
     assert v4.exports_dependencies is False and v5.exports_dependencies is True
+
+
+def _v5_lineage(ticks):
+    surface, context, _, v5 = _composers()
+    store: dict[str, bytes] = {}
+    checkpoints = []
+    for tick in range(1, ticks + 1):
+        c5 = _prepare(v5, surface, context, tick)
+        b5, decl = v5.checkpoint_with_dependency_for_candidate(c5, transition_state=_transition(tick=tick))
+        if decl is not None and decl.new_blob is not None:
+            store[decl.head] = decl.new_blob
+        v5.adopt_after_world_commit(c5, committed_cut=_CommittedCut(c5.world_id, tick + 1, c5.commit_id))
+        checkpoints.append((b5, decl))
+    return store, checkpoints
+
+
+def test_commit_validation_verifies_only_new_history_segments():
+    store, checkpoints = _v5_lineage(40)
+    reads: list[str] = []
+
+    def resolve(digest):
+        reads.append(digest)
+        return store[digest]
+
+    contract = OrganismCheckpointContract(read_dependency=resolve)
+    per_validation = []
+    for encoded, _ in checkpoints:
+        before = len(reads)
+        assert contract.validate_checkpoint(encoded, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+        per_validation.append(len(reads) - before)
+    assert max(per_validation[1:]) <= 1            # constant per commit, not O(history)
+    assert sum(per_validation) <= len(store)       # each segment read once in total
+    # an older checkpoint (another branch point) is still valid: full cold verification
+    assert contract.validate_checkpoint(checkpoints[5][0], str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+
+
+def test_incremental_validation_refuses_corrupt_or_reused_identity():
+    store, checkpoints = _v5_lineage(12)
+    heads = [d.head for _, d in checkpoints if d is not None and d.new_blob is not None]
+    contract = OrganismCheckpointContract(read_dependency=store.__getitem__)
+    i = next(k for k, (_, d) in enumerate(checkpoints) if d is not None and d.new_blob is not None and d.head == heads[-1])
+    for encoded, _ in checkpoints[:i]:
+        contract.validate_checkpoint(encoded, str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+    tampered = dict(store)
+    tampered[heads[-1]] = store[heads[-1]].replace(b"exploration", b"exploratioN", 1)
+    corrupt = OrganismCheckpointContract(read_dependency=tampered.__getitem__)
+    corrupt._history_cache = contract._history_cache
+    assert not corrupt.validate_checkpoint(checkpoints[i][0], str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)
+    # a validly-hashed segment that re-records an already retired id is refused
+    import json as _json
+    seg = _json.loads(store[heads[-1]])
+    old = _json.loads(store[heads[0]])["records"][0]
+    seg["records"] = seg["records"] + [old]
+    forged = ah._canon(seg)
+    forged_head = ah.sha256(forged).hexdigest()
+    payload = _json.loads(checkpoints[i][0])
+    payload["action_domain"]["history"] = {"head": forged_head, "count": payload["action_domain"]["history"]["count"] + 1}
+    store2 = dict(store, **{forged_head: forged})
+    forging = OrganismCheckpointContract(read_dependency=store2.__getitem__)
+    forging._history_cache = contract._history_cache
+    assert not forging.validate_checkpoint(ah._canon(payload), str(IDENTITY), ORGANISM_EXPLORATION_CHECKPOINT_V5_SCHEMA)

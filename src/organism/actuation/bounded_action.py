@@ -186,6 +186,9 @@ class OrganismCheckpointContract:
         kernel_limits: KernelLimits | None = None,
     ) -> None:
         self._read_dependency = read_dependency
+        # Verified action-history index of the last validated v5 checkpoint:
+        # the next commit (which extends it) only verifies new segments.
+        self._history_cache: dict = {}
         # Validation must use the same owner-configured resource ceilings as
         # restoration. The default is the canonical kernel safety profile.
         self._kernel_limits = kernel_limits or KernelLimits()
@@ -257,6 +260,7 @@ class OrganismCheckpointContract:
                     expected_organism_id=owner_identity,
                     read_dependency=self._read_dependency,
                     kernel_limits=self._kernel_limits,
+                    history_cache=self._history_cache,
                 )
                 self._validate_transition_owner_payload(decoded.restored.transition_state)
                 return True
@@ -729,6 +733,7 @@ class OrganismExplorationComposer:
         kernel_limits: KernelLimits | None = None,
         generative_registry: GenerativeModelRegistry | None = None,
         running_version: tuple[int, int, int] | None = None,
+        history_cache: dict | None = None,
     ) -> _DecodedExplorationCheckpoint:
         if not isinstance(encoded, bytes):
             raise TypeError("encoded checkpoint must be bytes")
@@ -853,7 +858,8 @@ class OrganismExplorationComposer:
             # Loads and verifies the referenced history chain, then reruns the
             # canonical ActionDomain validation on the reconstruction.
             domain, history = action_history.restore_compact(
-                payload["action_domain"], organism_id=organism_id, resolve=read_dependency
+                payload["action_domain"], organism_id=organism_id, resolve=read_dependency,
+                cache=history_cache,
             )
         else:
             domain = ActionDomain.restore(payload["action_domain"])
