@@ -62,6 +62,13 @@ def record_sense_reception(
     - epistemic_status: OBSERVED (direct sensory receipt)
     - evidence_refs: bound to the specific causal tick and world provenance
     """
+    for sig in signals:
+        sig_prov = getattr(sig, "provenance", None)
+        if sig_prov is not None and sig_prov != provenance:
+            raise ValueError(
+                f"signal channel {getattr(sig, 'channel_id', '?')!r} provenance "
+                f"({sig_prov}) does not match reception provenance ({provenance})"
+            )
     if not signals:
         tokens = ("signal:none",)
     else:

@@ -134,6 +134,15 @@ def test_record_sense_reception_creates_direct_observed_record() -> None:
     assert "ch:ch2:0.2500" in record.context_tokens
 
 
+def test_record_sense_reception_rejects_mismatched_signal_provenance() -> None:
+    prov_real = _provenance(10)
+    prov_fake = _provenance(99)  # fake tick
+    signal_fake = _signal(prov_fake, "ch1", 0.75)
+
+    with pytest.raises(ValueError, match="does not match reception provenance"):
+        record_sense_reception("org-1", 10, (signal_fake,), prov_real)
+
+
 def test_record_cognitive_interpretation_creates_cognitive_associated_record() -> None:
     activations = {"node.a": 0.85, "node.b": 0.12, "node.c": -0.65}
     record = record_cognitive_interpretation("org-1", 10, activations, threshold=0.5)
