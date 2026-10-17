@@ -495,6 +495,21 @@ class OrganismVitalRuntime:
             or getattr(candidate, "commit_id", None) != committed_cut.commit_id
         ):
             raise InvalidLongitudinalCheckpoint("committed cut does not match pending vital candidate")
+        if self._pending_checkpoint is None or self._pending_dependencies is None:
+            raise InvalidLongitudinalCheckpoint(
+                "pending vital candidate has no exported checkpoint or dependencies"
+            )
+        # Vital owner objects are mutable. Re-encode the entire staged
+        # composition immediately before adoption and require byte identity
+        # with the payload exported to World. Otherwise World could have
+        # committed one state while this runtime silently adopts another.
+        current_pending = self._pending_vital_state.capture_transition(
+            dependencies=self._pending_dependencies
+        ).to_bytes()
+        if current_pending != self._pending_checkpoint:
+            raise InvalidLongitudinalCheckpoint(
+                "pending vital state changed after export; recover from the last committed cut"
+            )
         if not composer.matches_vital_baseline(
             competencies=self._pending_vital_state.competencies,
             actions=self._pending_vital_state.actions,
@@ -503,7 +518,11 @@ class OrganismVitalRuntime:
                 "composer has not adopted the committed candidate state"
             )
         self._accepted = self._pending_vital_state
-        self._accepted_checkpoint = self._accepted.capture()
+        # Keep the accepted baseline exactly equal to the bytes World
+        # committed, rather than taking a fresh mutable snapshot.
+        self._accepted_checkpoint = OrganismTransitionState.from_bytes(
+            self._pending_checkpoint
+        ).owner_checkpoint
         self._pending_candidate_id = None
         self._pending_source = None
         self._pending_dependencies = None

@@ -534,6 +534,26 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     )
     with pytest.raises(InvalidLongitudinalCheckpoint, match="has not adopted"):
         vital_runtime.adopt_after_world_commit(composer, candidate, committed_cut=cut_receipt)
+    # A mutable non-composer owner must not drift between export and commit
+    # adoption. Reproduce the reviewed mismatch: World has the original bytes,
+    # while an owner ledger is mutated after export.
+    post_export_record = ExperienceRecord(
+        record_id="experience.post-export", organism_id=str(identity), tick_class=15,
+        context_tokens=("sense",), action_token="action.late", outcome_tokens=(),
+        epistemic_status=EpistemicStatus.OBSERVED, evidence_refs=("record.late",),
+        confidence_class=4, source_kind=SourceKind.DIRECT,
+    )
+    experience_before_drift = candidate_experience.to_bytes()
+    candidate_experience.append(post_export_record)
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="pending vital state changed after export"):
+        vital_runtime.adopt_after_world_commit(composer, candidate, committed_cut=cut_receipt)
+    # Restore the exact test fixture bytes after proving adoption rejected the
+    # drift. ExperienceLedger intentionally exposes an immutable records view.
+    restored_experience = ExperienceLedger.from_bytes(
+        experience_before_drift, organism_id=str(identity)
+    )
+    candidate_experience._records = restored_experience._records
+    candidate_experience._record_ids = restored_experience._record_ids
     composer.adopt_after_world_commit(candidate, committed_cut=cut_receipt)
     vital_runtime.adopt_after_world_commit(composer, candidate, committed_cut=cut_receipt)
     assert vital_runtime.accepted_source_checkpoint.private_state == candidate_checkpoint.owner_checkpoint.private_state
