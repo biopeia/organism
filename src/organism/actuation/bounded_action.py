@@ -15,6 +15,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
 
+from ..checkpoint import CheckpointDependency
 from ..transition import OrganismLifecycle, OrganismTransitionState
 from ..cognition.limits import KernelLimits
 from ..cognition.portable_checkpoint import CognitiveRuntimeCheckpoint
@@ -657,6 +658,43 @@ class OrganismExplorationComposer:
         if self._history is not None:
             raise ValueError("a v5 composer must export its dependency: use checkpoint_with_dependency_for_candidate")
         return self._encode(self._candidate_payload(candidate, transition_state))
+
+    def vital_checkpoint_for_candidate(
+        self,
+        candidate: ExplorationActionCandidate,
+        *,
+        transition_state: OrganismTransitionState,
+        vital_state: object,
+        dependencies: tuple[CheckpointDependency, ...] = (),
+    ) -> bytes:
+        """Export the full active vital composition for this staged candidate.
+
+        The caller must supply the other live, owner-authored Organism
+        components. This method replaces only the competence engine and
+        ActionDomain with the exact staged candidate versions, then binds the
+        aggregate to the transition/cut already validated by this composer.
+        It deliberately supplies no defaults for other vital components.
+        """
+        from dataclasses import replace
+
+        from ..longitudinal import OrganismVitalState
+
+        self._candidate_payload(candidate, transition_state)
+        if not isinstance(vital_state, OrganismVitalState):
+            raise TypeError("vital_state must be OrganismVitalState")
+        if vital_state.identity != transition_state.identity or vital_state.transition.to_bytes() != transition_state.to_bytes():
+            raise ValueError("vital state does not match the staged transition source")
+        if vital_state.cognition.to_bytes() != transition_state.owner_checkpoint.private_state:
+            raise ValueError("vital cognition differs from the staged transition owner payload")
+        assert self._staged_state is not None
+        staged_engine, staged_domain = self._staged_state
+        staged_vital = replace(
+            vital_state,
+            transition=transition_state,
+            competencies=staged_engine,
+            actions=staged_domain,
+        )
+        return staged_vital.capture_transition(dependencies=dependencies).to_bytes()
 
     @property
     def exports_dependencies(self) -> bool:

@@ -247,8 +247,13 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     agency = ProspectiveAgency(organism_id=str(identity), outcome_value_ledger=OutcomeValueLedger(),
                                policy=policy, query_budget=5)
     actuator_ids = tuple(f"actuator.{i}" for i in range(4))
-    engine = CompetenceDevelopmentEngine(actuator_ids, organism_id=str(identity),
-                                         embodiment_fingerprint="embodiment.test", max_concurrent=2)
+    from organism.actuation.surface import ActuatorSurface, derive_actuator_constitution
+    surface = ActuatorSurface.from_effector_ids(actuator_ids)
+    actuator_context = ActuatorEvidenceContext("body.1", "episode.1", "morphology.1", surface.contract_fingerprint)
+    engine = CompetenceDevelopmentEngine(
+        actuator_ids, organism_id=str(identity),
+        embodiment_fingerprint=actuator_context.fingerprint, max_concurrent=2,
+    )
     sequence = (
         {"actuator.0": 0.7, "actuator.1": 0.3}, {"actuator.0": 0.5, "actuator.2": 0.6},
         {"actuator.1": 0.6, "actuator.3": 0.4}, {"actuator.0": 0.3, "actuator.2": 0.7, "actuator.3": 0.2},
@@ -303,9 +308,9 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     proposal = ActionProposal("proposal.1", ActionSource.COMPETENCE, "effect.walk", "competence.walk",
         ActionJustification(effect_target_id="effect.walk", competence_id="competence.walk"),
         ActionEvaluation(effect_confidence=0.5, uncertainty=0.2), intent_id="intent.closed")
-    surface = derive_actuator_constitution(("effector.left",))
+    action_surface = derive_actuator_constitution(("effector.left",))
     selected = actions.select_and_commit((proposal,), tick=4, commitment_id="commitment.closed",
-        controller_id="controller.1", surface=surface, embodiment_id="body.1",
+        controller_id="controller.1", surface=action_surface, embodiment_id="body.1",
         interruptibility=1.0, minimum_duration=0, maximum_duration=None)
     actions.close(selected.commitment.commitment_id, status=IntentStatus.SATISFIED,
         tick=5, reason="anticipated_effect_observed", outcome=ExecutiveOutcomeSample(tick=5, outcome_class=OutcomeClass.POSITIVE,
@@ -316,12 +321,57 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
                   context_ref="context.2", embodiment_id="body.1", tick=6)
     active_proposal = replace(proposal, proposal_id="proposal.2", intent_id="intent.active")
     selected_active = actions.select_and_commit((active_proposal,), tick=6, commitment_id="commitment.active",
-        controller_id="controller.2", surface=surface, embodiment_id="body.1",
+        controller_id="controller.2", surface=action_surface, embodiment_id="body.1",
         interruptibility=1.0, minimum_duration=0, maximum_duration=None)
     assert selected_active.commitment is actions.active_commitment
     assert actions._outcome_ledger.get(("competence.walk", "effect.walk")).satisfactions == 1
     vital = OrganismVitalState(transition, cognition, experience, agency, engine, actions, bindings)
     captured = vital.capture_transition()
+
+    # Exercise the production candidate seam: cognition is the exact accepted
+    # source payload, while engine and ActionDomain are taken from staged
+    # candidate state, not stale objects held by the caller.
+    from organism.actuation.bounded_action import OrganismExplorationComposer
+    from organism.actuation.context import ActuatorEvidenceContext
+    staged_engine = CompetenceDevelopmentEngine.restore(
+        engine.checkpoint(), actuator_ids=actuator_ids, organism_id=str(identity),
+        embodiment_fingerprint=actuator_context.fingerprint,
+        expected_max_concurrent=2, gate=engine.gate,
+    )
+    source_transition = replace(
+        transition, owner_checkpoint=OrganismCheckpoint(identity, cognition.to_bytes())
+    )
+    composer = OrganismExplorationComposer(
+        organism_id=str(identity),
+        engine=staged_engine,
+        action_domain=ActionDomain(organism_id=str(identity)),
+    )
+    candidate = composer.prepare(
+        source_transition, actuator_context=actuator_context, surface=surface,
+        target_causal_tick=124, physical_step_id="physical-step.124", commit_id="commit.124",
+    )
+    candidate_vital = replace(
+        vital, transition=source_transition,
+        actions=ActionDomain(organism_id=str(identity)),
+    )
+    candidate_bytes = composer.vital_checkpoint_for_candidate(
+        candidate, transition_state=source_transition, vital_state=candidate_vital,
+    )
+    candidate_checkpoint = OrganismTransitionState.from_bytes(candidate_bytes)
+    candidate_aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(
+        candidate_checkpoint.owner_checkpoint
+    )
+    assert candidate_checkpoint.world_correlation == source_transition.world_correlation
+    assert set(candidate_aggregate.components) == REQUIRED_LONGITUDINAL_COMPONENTS
+    candidate_engine = json.loads(candidate_aggregate.components["competencies"])
+    assert candidate_engine["engine"]["embodiment_fingerprint"] == actuator_context.fingerprint
+    assert candidate_engine["engine"]["primitives"] == engine.checkpoint()["primitives"]
+    with pytest.raises(ValueError, match="cognition differs"):
+        composer.vital_checkpoint_for_candidate(
+            candidate, transition_state=source_transition,
+            vital_state=replace(candidate_vital, cognition=replace(cognition, experience_records=())),
+        )
+
     payload_path = tmp_path / "checkpoint.json"
     payload_path.write_bytes(captured.to_bytes())
     aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(captured.owner_checkpoint)
@@ -368,8 +418,13 @@ from organism.longitudinal import OrganismVitalRestoreContext, OrganismVitalStat
 transition = OrganismTransitionState.from_bytes(open(sys.argv[1], 'rb').read())
 identity = str(transition.identity)
 policy = ProspectivePolicy(organism_id=identity, min_model_confidence=0.73, min_value_samples=5, decision_margin=0.03)
+from organism.actuation.context import ActuatorEvidenceContext
+from organism.actuation.surface import ActuatorSurface
+actuator_ids = tuple(f'actuator.{i}' for i in range(4))
+surface = ActuatorSurface.from_effector_ids(actuator_ids)
+actuator_context = ActuatorEvidenceContext('body.1', 'episode.1', 'morphology.1', surface.contract_fingerprint)
 context = OrganismVitalRestoreContext(kernel_limits=KernelLimits(max_nodes=512), policy=policy,
-    actuator_ids=tuple(f'actuator.{i}' for i in range(4)), embodiment_fingerprint='embodiment.test',
+    actuator_ids=actuator_ids, embodiment_fingerprint=actuator_context.fingerprint,
     expected_max_concurrent=int(sys.argv[2]),
     competence_gate=CompetenceGate(min_support=3, min_consistency=0.8),
     running_version=(0, 85, 0))
