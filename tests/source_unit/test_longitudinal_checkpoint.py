@@ -176,9 +176,13 @@ def test_longitudinal_checkpoint_captures_and_restores_action_domain() -> None:
 def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_configuration(tmp_path) -> None:
     """M2 restores owner state, not merely a structurally valid aggregate."""
     from organism.actuation.binding import (CompetenceExecutionBindingRegistry, BindingStatus, StalenessReason)
-    from organism.actuation.competence import CompetenceGate
+    from organism.actuation.competence import (
+        CompetenceEvidence, CompetenceGate, CompetenceLibrary, MotorCompetence,
+    )
     from organism.actuation.domain import ActionDomain
     from organism.actuation.sensorimotor import CompetenceDevelopmentEngine
+    from organism.actuation.evidence import CausalEvidenceLedger, SensorimotorTransition
+    from organism.actuation.model import CompetenceEffectModel, ControllabilityModel, AgencyModel
     from organism.actuation.context import ActuatorEvidenceContext
     from organism.agency.intention import IntentStatus
     from organism.agency.policy import ProspectivePolicy
@@ -285,6 +289,41 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     bindings.set_status("competence.pending", BindingStatus.STALE,
         StalenessReason.SURFACE_NOT_CURRENT, tick=2, cause_refs=("surface-revision-2",))
     assert bindings.checkpoint()["pending_transitions"]
+    # These are additional live Organism-owned competence/evidence/model
+    # owners; their native codecs preserve bounded capacity and configuration.
+    competence_library = CompetenceLibrary(max_competences=17)
+    competence_library.add(MotorCompetence(
+        competence_id="competence.walk", controller_id="controller.walk",
+        effect_id="effect.walk",
+        evidence=CompetenceEvidence(
+            controller_seed_ref="seed.walk", effect_evidence_refs=("evidence.motor.1",),
+            context_evidence_refs=("context.walk",),
+            controllability_evidence_refs=("evidence.control.1",), support=3,
+            reproducibility=0.9, controllability=0.8, directional_consistency=0.85,
+            gate=engine.gate,
+        ),
+    ))
+    causal_evidence = CausalEvidenceLedger(capacity=31, passive_capacity=9)
+    causal_evidence.observe(SensorimotorTransition(
+        transition_id="transition.motor.1", tick_start=8, tick_end=9,
+        context_ref="context.walk", commitment_id="commitment.walk",
+        controller_id="controller.walk", competence_id="competence.walk",
+        attempt_id="attempt.walk.1", intervention_signature_id="signature.walk",
+        state_before_ref="state.before", motor_command_ref="motor.command",
+        actuation_ref="actuation.1", prediction_ref="prediction.1",
+        state_after_ref="state.after", observed_effect_id="effect.walk",
+    ))
+    causal_evidence.observe_passive_window(
+        tick_start=9, tick_end=10, context_ref="context.walk",
+        prior_state_ref="state.after", resulting_state_ref="state.passive.after",
+        effect_id="effect.walk",
+    )
+    effect_model = CompetenceEffectModel(max_contexts=23)
+    effect_model.rebuild(causal_evidence)
+    controllability_model = ControllabilityModel()
+    controllability_model.rebuild(causal_evidence)
+    agency_model = AgencyModel()
+    agency_model.rebuild(causal_evidence)
     from organism.agency.executive_outcome import ExecutiveOutcomeLedger
     actions = ActionDomain(organism_id=str(identity), outcome_ledger=ExecutiveOutcomeLedger())
     from organism.agency.affordance import ActionAffordance
@@ -328,8 +367,32 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     source_transition = replace(
         transition, owner_checkpoint=OrganismCheckpoint(identity, cognition.to_bytes())
     )
-    vital = OrganismVitalState(source_transition, cognition, experience, agency, engine, actions, bindings)
+    vital = OrganismVitalState(
+        source_transition, cognition, experience, agency, engine, actions, bindings,
+        competence_library, causal_evidence, effect_model, controllability_model, agency_model,
+    )
     captured = vital.capture_transition()
+
+    # A payload that declares the full-vital schema must never be reinterpreted
+    # as the older cognitive-only format when its closure is malformed.
+    malformed_document = json.loads(captured.owner_checkpoint.private_state)
+    del malformed_document["components"]["experience_memory"]
+    malformed_owner = OrganismCheckpoint(
+        identity,
+        json.dumps(malformed_document, sort_keys=True, separators=(",", ":")).encode(),
+    )
+    malformed_transition = replace(captured, owner_checkpoint=malformed_owner)
+    from organism.actuation.bounded_action import (
+        ORGANISM_TRANSITION_CHECKPOINT_SCHEMA, OrganismCheckpointContract,
+    )
+    contract = OrganismCheckpointContract(vital_restore_context=_restore_context())
+    assert not contract.validate_checkpoint(
+        malformed_transition.to_bytes(), str(identity), ORGANISM_TRANSITION_CHECKPOINT_SCHEMA,
+    )
+    with pytest.raises(InvalidLongitudinalCheckpoint):
+        contract.restore_transition_checkpoint(
+            malformed_transition.to_bytes(), str(identity),
+        )
 
     # Exercise the owner-held production candidate seam. The runtime captures
     # all ten required active components and rejects caller-side drift. Keep
@@ -353,9 +416,11 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         target_causal_tick=124, physical_step_id="physical-step.124", commit_id="commit.124",
     )
     vital_runtime = OrganismVitalRuntime(candidate_vital)
+    # Production callers need not rebuild/pass the complete owner composition:
+    # the runtime parses the cognition emitted by the transition and holds all
+    # other accepted owners itself.
     candidate_bytes = vital_runtime.checkpoint_for_candidate(
         composer, candidate, transition_state=source_transition,
-        candidate_vital_state=candidate_vital,
     )
     assert vital_runtime.checkpoint_for_candidate(
         composer, candidate, transition_state=source_transition,
@@ -388,20 +453,20 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
             composer, next_candidate, transition_state=source_transition,
             candidate_vital_state=candidate_vital,
         )
-    changed_snapshot_ledger = ExperienceLedger.from_bytes(
-        candidate_vital.experience.to_bytes(), organism_id=str(identity)
+    # A candidate does not become the runtime's accepted baseline until the
+    # composer has adopted it and the caller supplies the matching cut receipt.
+    from types import SimpleNamespace
+    cut_receipt = SimpleNamespace(
+        world_id=candidate.world_id,
+        causal_tick=candidate.target_causal_tick,
+        commit_id=candidate.commit_id,
     )
-    changed_snapshot_ledger.append(ExperienceRecord(
-        record_id="experience.changed-candidate", organism_id=str(identity), tick_class=14,
-        context_tokens=("sense",), action_token="action.changed", outcome_tokens=(),
-        epistemic_status=EpistemicStatus.OBSERVED, evidence_refs=("record.changed",),
-        confidence_class=5, source_kind=SourceKind.DIRECT,
-    ))
-    with pytest.raises(InvalidLongitudinalCheckpoint, match="another vital-state candidate"):
-        vital_runtime.checkpoint_for_candidate(
-            composer, candidate, transition_state=source_transition,
-            candidate_vital_state=replace(candidate_vital, experience=changed_snapshot_ledger),
-        )
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="has not adopted"):
+        vital_runtime.adopt_after_world_commit(composer, candidate, committed_cut=cut_receipt)
+    composer.adopt_after_world_commit(candidate, committed_cut=cut_receipt)
+    vital_runtime.adopt_after_world_commit(composer, candidate, committed_cut=cut_receipt)
+    assert vital_runtime.accepted_source_checkpoint.private_state == candidate_checkpoint.owner_checkpoint.private_state
+    assert vital_runtime._pending_candidate_id is None
     experience.append(ExperienceRecord(
         record_id="experience.after-capture", organism_id=str(identity), tick_class=13,
         context_tokens=("sense",), action_token="action.late", outcome_tokens=(),
@@ -459,7 +524,10 @@ from organism.cognition.limits import KernelLimits
 from organism.actuation.competence import CompetenceGate
 from organism.agency.policy import ProspectivePolicy
 from organism import OrganismLongitudinalCheckpoint
-from organism.longitudinal import OrganismVitalRestoreContext, OrganismVitalState, restore_vital_state
+from organism.longitudinal import (
+    OrganismVitalRestoreContext, OrganismVitalRuntime, OrganismVitalState,
+    restore_vital_state,
+)
 transition = OrganismTransitionState.from_bytes(open(sys.argv[1], 'rb').read())
 identity = str(transition.identity)
 policy = ProspectivePolicy(organism_id=identity, min_model_confidence=0.73, min_value_samples=5, decision_margin=0.03)
@@ -475,9 +543,8 @@ context = OrganismVitalRestoreContext(kernel_limits=KernelLimits(max_nodes=512),
     running_version=(0, 85, 0))
 restored = restore_vital_state(transition.owner_checkpoint, context)
 assert restored.transition.to_bytes() == transition.to_bytes()
-restored_vital = OrganismVitalState(restored.transition, restored.cognition, restored.experience,
-    restored.agency, restored.competencies, restored.actions, restored.bindings)
-restored_checkpoint = restored_vital.capture()
+restored_runtime = OrganismVitalRuntime.from_restored_state(restored)
+restored_checkpoint = restored_runtime.accepted_source_checkpoint
 restored_aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(restored_checkpoint)
 actual_digests = {name: sha256(payload).hexdigest()
     for name, payload in restored_aggregate.components.items()}
@@ -486,6 +553,16 @@ assert restored.cognition.sensory_normalizers['sense'].count == 2
 assert restored.experience.max_records == 64
 assert restored.agency.checkpoint()['query_budget'] == 5
 assert restored.competencies.checkpoint()['competence_gate'] == {'min_support': 3, 'min_consistency': 0.8}
+competency = json.loads(OrganismLongitudinalCheckpoint.from_organism_checkpoint(
+    transition.owner_checkpoint).components['competencies'])
+assert restored.competence_library.checkpoint() == competency['library']
+assert restored.competence_library.checkpoint()['max_competences'] == 17
+assert restored.causal_evidence.checkpoint() == competency['causal_evidence']
+assert len(restored.causal_evidence.evidence) == 2
+assert restored.effect_model.checkpoint() == competency['effect_model']
+assert restored.effect_model.checkpoint()['max_contexts'] == 23
+assert restored.controllability_model.checkpoint() == competency['controllability_model']
+assert restored.agency_model.checkpoint() == competency['agency_model']
 print('fresh-process-restore-ok')
 """
     result = subprocess.run([sys.executable, "-c", script, str(payload_path), str(expected_max_concurrent), str(digest_path)],
@@ -507,6 +584,13 @@ def test_checkpoint_requires_explicit_classification_for_every_component() -> No
         OrganismLongitudinalCheckpoint(
             checkpoint.identity, checkpoint.components, incomplete
         )
+
+
+def test_vital_runtime_factory_accepts_only_a_verified_restore_result() -> None:
+    from organism.longitudinal import OrganismVitalRuntime
+
+    with pytest.raises(TypeError, match="RestoredOrganismVitalState"):
+        OrganismVitalRuntime.from_restored_state(object())
 
 
 def test_checkpoint_rejects_inactive_declaration_without_verified_profile_proof() -> None:

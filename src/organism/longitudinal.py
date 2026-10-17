@@ -8,12 +8,15 @@ claim that a bounded exploration checkpoint is a complete runtime checkpoint.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Callable, Mapping, Sequence
 
 from .actuation.binding import CompetenceExecutionBindingRegistry
+from .actuation.competence import CompetenceLibrary
 from .actuation.domain import ActionDomain
+from .actuation.evidence import CausalEvidenceLedger
+from .actuation.model import AgencyModel, CompetenceEffectModel, ControllabilityModel
 from .actuation.sensorimotor import CompetenceDevelopmentEngine, CompetenceGate
 from .agency.prospective import ProspectiveAgency, ProspectivePolicy
 from .checkpoint import (
@@ -73,6 +76,11 @@ class OrganismVitalState:
     competencies: CompetenceDevelopmentEngine
     actions: ActionDomain
     bindings: CompetenceExecutionBindingRegistry
+    competence_library: CompetenceLibrary
+    causal_evidence: CausalEvidenceLedger
+    effect_model: CompetenceEffectModel
+    controllability_model: ControllabilityModel
+    agency_model: AgencyModel
 
     def __post_init__(self) -> None:
         identity = self.transition.identity
@@ -180,6 +188,11 @@ class OrganismVitalState:
             "competencies": _canonical_json({
                 "engine": self.competencies.checkpoint(),
                 "bindings": self.bindings.checkpoint(),
+                "library": self.competence_library.checkpoint(),
+                "causal_evidence": self.causal_evidence.checkpoint(),
+                "effect_model": self.effect_model.checkpoint(),
+                "controllability_model": self.controllability_model.checkpoint(),
+                "agency_model": self.agency_model.checkpoint(),
             }),
             "action_commitments": self.actions.to_bytes(),
         }
@@ -237,14 +250,68 @@ class OrganismVitalRuntime:
         self._accepted_checkpoint = accepted.capture()
         self._pending_candidate_id: str | None = None
         self._pending_source: bytes | None = None
-        self._pending_vital_source: bytes | None = None
         self._pending_dependencies: tuple[CheckpointDependency, ...] | None = None
         self._pending_checkpoint: bytes | None = None
+        self._pending_vital_state: OrganismVitalState | None = None
+
+    @classmethod
+    def from_restored_state(cls, restored: "RestoredOrganismVitalState") -> "OrganismVitalRuntime":
+        """Create the owner-held runtime directly from the verified restore result.
+
+        This is an integration seam, not a default composition: every required
+        owner must have been materialized by ``restore_vital_state`` first.
+        Keeping this conversion here avoids callers rebuilding the aggregate
+        positionally (and accidentally omitting or substituting an owner).
+        """
+        if not isinstance(restored, RestoredOrganismVitalState):
+            raise TypeError("restored must be RestoredOrganismVitalState")
+        accepted = OrganismVitalState(
+            transition=restored.transition,
+            cognition=restored.cognition,
+            experience=restored.experience,
+            agency=restored.agency,
+            competencies=restored.competencies,
+            actions=restored.actions,
+            bindings=restored.bindings,
+            competence_library=restored.competence_library,
+            causal_evidence=restored.causal_evidence,
+            effect_model=restored.effect_model,
+            controllability_model=restored.controllability_model,
+            agency_model=restored.agency_model,
+        )
+        return cls(accepted)
 
     @property
     def accepted_source_checkpoint(self) -> OrganismCheckpoint:
         """Return the immutable owner checkpoint that seeded this runtime."""
         return self._accepted_checkpoint
+
+    def candidate_state_for_transition(
+        self, transition_state: OrganismTransitionState
+    ) -> OrganismVitalState:
+        """Compose a full candidate from the accepted owners and produced transition.
+
+        The transition producer owns the cognitive bytes. Other vital owners
+        remain the exact instances held by this runtime until their own staging
+        APIs are wired into the same cycle. This is intentionally fail-closed:
+        it never fills absent components or accepts a caller-built replacement
+        composition.
+        """
+        if not isinstance(transition_state, OrganismTransitionState):
+            raise TypeError("transition_state must be OrganismTransitionState")
+        if transition_state.identity != self._accepted.identity:
+            raise InvalidLongitudinalCheckpoint("candidate transition identity differs from accepted vital state")
+        cognition_bytes = transition_state.owner_checkpoint.private_state
+        # The transition owner checkpoint carries the canonical full cognitive
+        # runtime, not the narrower recurrent-state format. Until the runtime
+        # receives an explicit staged cognitive composition, accept only the
+        # exact already-accepted bytes; do not silently keep stale graph/learning
+        # state when a candidate cognition payload has advanced.
+        if cognition_bytes != self._accepted.cognition.to_bytes():
+            raise InvalidLongitudinalCheckpoint(
+                "advanced cognition requires a complete candidate vital composition"
+            )
+        return replace(self._accepted, transition=transition_state)
 
     def checkpoint_for_candidate(
         self,
@@ -252,44 +319,63 @@ class OrganismVitalRuntime:
         candidate: object,
         *,
         transition_state: OrganismTransitionState,
-        candidate_vital_state: OrganismVitalState,
+        candidate_vital_state: OrganismVitalState | None = None,
         dependencies: tuple[CheckpointDependency, ...] = (),
     ) -> bytes:
-        """Export one staged candidate against an explicit full owner snapshot.
+        """Export one staged candidate against the privately held full state.
 
         Repeated requests for the same candidate/source/dependency tuple are
         idempotent. A different candidate cannot supersede an unresolved one;
         callers must recover from World-selected committed state after a
-        rejected or abandoned candidate. The caller must provide a complete
-        candidate snapshot from all Organism state owners; this runtime never
-        silently fills unobserved components from its accepted baseline.
+        rejected or abandoned candidate.
         """
+        from dataclasses import replace
+
         from .actuation.bounded_action import OrganismExplorationComposer
 
         if not isinstance(composer, OrganismExplorationComposer):
             raise TypeError("composer must be OrganismExplorationComposer")
         if not isinstance(transition_state, OrganismTransitionState):
             raise TypeError("transition_state must be OrganismTransitionState")
-        if not isinstance(candidate_vital_state, OrganismVitalState):
-            raise TypeError("candidate_vital_state must be OrganismVitalState")
         current = self._accepted.capture()
         if current.private_state != self._accepted_checkpoint.private_state:
             raise InvalidLongitudinalCheckpoint(
                 "accepted vital state changed outside a committed restore boundary"
             )
         if transition_state.identity != self._accepted.identity:
-            raise InvalidLongitudinalCheckpoint("candidate source identity differs from accepted vital state")
-        accepted_transition = self._accepted.transition
+            raise InvalidLongitudinalCheckpoint("candidate transition identity differs from accepted vital state")
+        if candidate_vital_state is None:
+            candidate_vital_state = self.candidate_state_for_transition(transition_state)
+        if not isinstance(candidate_vital_state, OrganismVitalState):
+            raise TypeError("candidate_vital_state must be a complete OrganismVitalState")
         if (
-            transition_state.organism_step != accepted_transition.organism_step
-            or transition_state.embodiment != accepted_transition.embodiment
-            or transition_state.world_correlation != accepted_transition.world_correlation
-            or transition_state.lifecycle != accepted_transition.lifecycle
-            or transition_state.lifecycle_history != accepted_transition.lifecycle_history
+            candidate_vital_state.identity != transition_state.identity
+            or candidate_vital_state.transition.to_bytes() != transition_state.to_bytes()
+            or candidate_vital_state.cognition.to_bytes()
+            != transition_state.owner_checkpoint.private_state
         ):
-            raise InvalidLongitudinalCheckpoint("candidate source cut differs from accepted vital state")
-        if transition_state.owner_checkpoint.private_state != self._accepted.cognition.to_bytes():
-            raise InvalidLongitudinalCheckpoint("candidate cognition differs from accepted vital state")
+            raise InvalidLongitudinalCheckpoint(
+                "candidate vital composition does not match the produced transition and cognition"
+            )
+        # The canonical cognition producer may advance cognitive state and its
+        # projections. Other accepted owners must remain the exact live owners
+        # held at the source cut; do not fill missing state or accept caller
+        # substitutions as part of candidate export.
+        unchanged_owners = (
+            candidate_vital_state.experience.to_bytes() == self._accepted.experience.to_bytes()
+            and candidate_vital_state.agency.checkpoint() == self._accepted.agency.checkpoint()
+            and candidate_vital_state.actions.checkpoint() == self._accepted.actions.checkpoint()
+            and candidate_vital_state.bindings.checkpoint() == self._accepted.bindings.checkpoint()
+            and candidate_vital_state.competence_library.checkpoint() == self._accepted.competence_library.checkpoint()
+            and candidate_vital_state.causal_evidence.checkpoint() == self._accepted.causal_evidence.checkpoint()
+            and candidate_vital_state.effect_model.checkpoint() == self._accepted.effect_model.checkpoint()
+            and candidate_vital_state.controllability_model.checkpoint() == self._accepted.controllability_model.checkpoint()
+            and candidate_vital_state.agency_model.checkpoint() == self._accepted.agency_model.checkpoint()
+        )
+        if not unchanged_owners:
+            raise InvalidLongitudinalCheckpoint(
+                "non-cognitive vital owners changed outside their accepted staging boundary"
+            )
         if not composer.matches_vital_baseline(
             competencies=self._accepted.competencies, actions=self._accepted.actions
         ):
@@ -301,12 +387,10 @@ class OrganismVitalRuntime:
         if not isinstance(candidate_id, str) or not candidate_id:
             raise ValueError("candidate has no stable owner identity")
         source_bytes = transition_state.to_bytes()
-        vital_source_bytes = candidate_vital_state.capture(dependencies=dependencies).to_bytes()
         if self._pending_candidate_id is not None:
             if (
                 self._pending_candidate_id != candidate_id
                 or self._pending_source != source_bytes
-                or self._pending_vital_source != vital_source_bytes
                 or self._pending_dependencies != dependencies
             ):
                 raise InvalidLongitudinalCheckpoint(
@@ -315,39 +399,66 @@ class OrganismVitalRuntime:
             assert self._pending_checkpoint is not None
             return self._pending_checkpoint
 
-        if candidate_vital_state.identity != self._accepted.identity:
-            raise InvalidLongitudinalCheckpoint("candidate vital state identity differs from accepted state")
-        if candidate_vital_state.transition.to_bytes() != transition_state.to_bytes():
-            raise InvalidLongitudinalCheckpoint("candidate vital state does not match the source transition")
-        if candidate_vital_state.cognition.to_bytes() != transition_state.owner_checkpoint.private_state:
-            raise InvalidLongitudinalCheckpoint("candidate vital cognition differs from source transition")
         staged = getattr(composer, "_staged_state", None)
         if staged is None:
             raise InvalidLongitudinalCheckpoint("composer has no staged candidate state")
         staged_engine, staged_actions = staged
-        if not composer.matches_vital_baseline(
-            competencies=candidate_vital_state.competencies,
-            actions=candidate_vital_state.actions,
-        ):
-            raise InvalidLongitudinalCheckpoint(
-                "composer baseline differs from explicit candidate competence or action state"
-            )
-        # This validates/captures every required component from the supplied
-        # candidate owner snapshot. The composer substitutes only its two
-        # explicitly staged domains; memory, genetics, agency, bindings and
-        # other state are never inherited invisibly from `_accepted`.
-        encoded = composer.vital_checkpoint_for_candidate(
+        candidate_state = replace(
+            candidate_vital_state,
+            transition=transition_state,
+            competencies=staged_engine,
+            actions=staged_actions,
+        )
+        encoded = composer._vital_checkpoint_for_candidate(
             candidate,
             transition_state=transition_state,
-            vital_state=candidate_vital_state,
+            vital_state=candidate_state,
             dependencies=dependencies,
         )
         self._pending_candidate_id = candidate_id
         self._pending_source = source_bytes
-        self._pending_vital_source = vital_source_bytes
         self._pending_dependencies = dependencies
         self._pending_checkpoint = encoded
+        self._pending_vital_state = candidate_state
         return encoded
+
+    def adopt_after_world_commit(self, composer: object, candidate: object, *, committed_cut: object) -> None:
+        """Advance the held full state only for the exact committed candidate.
+
+        The caller is the trusted World composition and must pass its actual
+        receipt after commit verification. This validates receipt correlation;
+        it does not independently authenticate World provenance.
+        """
+        from .actuation.bounded_action import CommittedWorldCutReference, OrganismExplorationComposer
+
+        if not isinstance(composer, OrganismExplorationComposer):
+            raise TypeError("composer must be OrganismExplorationComposer")
+        if not isinstance(committed_cut, CommittedWorldCutReference):
+            raise TypeError("adoption requires a World committed-cut receipt")
+        if self._pending_vital_state is None or self._pending_candidate_id is None:
+            raise InvalidLongitudinalCheckpoint("no complete vital candidate is awaiting commit")
+        if getattr(candidate, "candidate_id", None) != self._pending_candidate_id:
+            raise InvalidLongitudinalCheckpoint("committed candidate differs from pending vital candidate")
+        if (
+            getattr(candidate, "world_id", None) != committed_cut.world_id
+            or getattr(candidate, "target_causal_tick", None) != committed_cut.causal_tick
+            or getattr(candidate, "commit_id", None) != committed_cut.commit_id
+        ):
+            raise InvalidLongitudinalCheckpoint("committed cut does not match pending vital candidate")
+        if not composer.matches_vital_baseline(
+            competencies=self._pending_vital_state.competencies,
+            actions=self._pending_vital_state.actions,
+        ):
+            raise InvalidLongitudinalCheckpoint(
+                "composer has not adopted the committed candidate state"
+            )
+        self._accepted = self._pending_vital_state
+        self._accepted_checkpoint = self._accepted.capture()
+        self._pending_candidate_id = None
+        self._pending_source = None
+        self._pending_dependencies = None
+        self._pending_checkpoint = None
+        self._pending_vital_state = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,6 +487,11 @@ class RestoredOrganismVitalState:
     competencies: CompetenceDevelopmentEngine
     actions: ActionDomain
     bindings: CompetenceExecutionBindingRegistry
+    competence_library: CompetenceLibrary
+    causal_evidence: CausalEvidenceLedger
+    effect_model: CompetenceEffectModel
+    controllability_model: ControllabilityModel
+    agency_model: AgencyModel
 
 
 def restore_vital_state(
@@ -455,7 +571,10 @@ def restore_vital_state(
             agency_data, organism_id=str(checkpoint.identity), policy=context.policy
         )
         competency_data = json.loads(raw["competencies"])
-        if set(competency_data) != {"engine", "bindings"}:
+        if set(competency_data) != {
+            "engine", "bindings", "library", "causal_evidence", "effect_model",
+            "controllability_model", "agency_model",
+        }:
             raise ValueError("invalid competence component envelope")
         engine = CompetenceDevelopmentEngine.restore(
             competency_data["engine"], actuator_ids=context.actuator_ids,
@@ -467,6 +586,13 @@ def restore_vital_state(
         bindings = CompetenceExecutionBindingRegistry.from_bytes(
             _canonical_json(competency_data["bindings"])
         )
+        library = CompetenceLibrary.from_bytes(
+            _canonical_json(competency_data["library"]), gate=context.competence_gate
+        )
+        causal_evidence = CausalEvidenceLedger.restore(competency_data["causal_evidence"])
+        effect_model = CompetenceEffectModel.restore(competency_data["effect_model"])
+        controllability_model = ControllabilityModel.restore(competency_data["controllability_model"])
+        agency_model = AgencyModel.restore(competency_data["agency_model"])
         actions = ActionDomain.from_bytes(raw["action_commitments"])
         if bindings.organism_id != str(checkpoint.identity):
             raise ValueError("binding registry owner identity mismatch")
@@ -500,11 +626,14 @@ def restore_vital_state(
         )
         # Construct once more to apply the same cross-owner identity invariants.
         result = RestoredOrganismVitalState(
-            transition, cognition, experience, agency, engine, actions, bindings
+            transition, cognition, experience, agency, engine, actions, bindings,
+            library, causal_evidence, effect_model, controllability_model, agency_model,
         )
         OrganismVitalState(
             result.transition, result.cognition, result.experience, result.agency,
-            result.competencies, result.actions, result.bindings,
+            result.competencies, result.actions, result.bindings, result.competence_library,
+            result.causal_evidence, result.effect_model, result.controllability_model,
+            result.agency_model,
         )
         return result
     except InvalidLongitudinalCheckpoint:
