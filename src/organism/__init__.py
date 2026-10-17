@@ -13,6 +13,7 @@ from .checkpoint import (
 )
 from .identity import OrganismIdentity
 from .longitudinal import (
+    OrganismVitalRuntime,
     OrganismVitalRestoreContext,
     OrganismVitalState,
     RestoredOrganismVitalState,
@@ -54,6 +55,7 @@ __all__ = [
     "LongitudinalComponentClassification",
     "OrganismCheckpoint",
     "OrganismIdentity",
+    "OrganismVitalRuntime",
     "OrganismVitalRestoreContext",
     "OrganismVitalState",
     "RestoredOrganismVitalState",
