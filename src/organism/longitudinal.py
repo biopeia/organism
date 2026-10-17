@@ -232,11 +232,12 @@ class OrganismVitalRuntime:
     """Owner-held, single-source composition boundary for candidate export.
 
     The runtime captures one accepted full vital composition at construction.
-    It never accepts a caller-supplied replacement composition at export time.
+    Candidate export requires an explicit complete staged owner composition.
+    The runtime binds that composition to the produced transition and cognition
+    bytes; it never fills missing candidate owners from its accepted baseline.
     Owner objects are mutable, so every export recomputes the canonical full
-    checkpoint and refuses if any component changed outside an accepted
-    restore/reconstruction boundary. This prevents pairing a candidate with
-    stale/future caller-owned ledger, agency, genetics, safety, or binding state.
+    checkpoint and refuses if the accepted or pending candidate changes outside
+    its corresponding commit boundary.
 
     This class does not confirm World commits. A pending candidate remains
     pending until this runtime is discarded and recreated from the full state
@@ -261,6 +262,7 @@ class OrganismVitalRuntime:
         self._pending_candidate_id: str | None = None
         self._pending_source: bytes | None = None
         self._pending_dependencies: tuple[CheckpointDependency, ...] | None = None
+        self._pending_vital_source: bytes | None = None
         self._pending_checkpoint: bytes | None = None
         self._pending_vital_state: OrganismVitalState | None = None
 
@@ -341,7 +343,7 @@ class OrganismVitalRuntime:
         candidate: object,
         *,
         transition_state: OrganismTransitionState,
-        candidate_vital_state: OrganismVitalState | None = None,
+        candidate_vital_state: OrganismVitalState,
         dependencies: tuple[CheckpointDependency, ...] = (),
     ) -> bytes:
         """Export one staged candidate against the privately held full state.
@@ -366,8 +368,6 @@ class OrganismVitalRuntime:
             )
         if transition_state.identity != self._accepted.identity:
             raise InvalidLongitudinalCheckpoint("candidate transition identity differs from accepted vital state")
-        if candidate_vital_state is None:
-            candidate_vital_state = self.candidate_state_for_transition(transition_state)
         if not isinstance(candidate_vital_state, OrganismVitalState):
             raise TypeError("candidate_vital_state must be a complete OrganismVitalState")
         if (
@@ -379,30 +379,18 @@ class OrganismVitalRuntime:
             raise InvalidLongitudinalCheckpoint(
                 "candidate vital composition does not match the produced transition and cognition"
             )
-        # The canonical cognition producer may advance cognitive state and its
-        # projections. Other accepted owners must remain the exact live owners
-        # held at the source cut; do not fill missing state or accept caller
-        # substitutions as part of candidate export.
-        unchanged_owners = (
-            candidate_vital_state.experience.to_bytes() == self._accepted.experience.to_bytes()
-            and candidate_vital_state.agency.checkpoint() == self._accepted.agency.checkpoint()
-            and candidate_vital_state.actions.checkpoint() == self._accepted.actions.checkpoint()
-            and candidate_vital_state.bindings.checkpoint() == self._accepted.bindings.checkpoint()
-            and candidate_vital_state.competence_library.checkpoint() == self._accepted.competence_library.checkpoint()
-            and candidate_vital_state.causal_evidence.checkpoint() == self._accepted.causal_evidence.checkpoint()
-            and candidate_vital_state.effect_model.checkpoint() == self._accepted.effect_model.checkpoint()
-            and candidate_vital_state.controllability_model.checkpoint() == self._accepted.controllability_model.checkpoint()
-            and candidate_vital_state.agency_model.checkpoint() == self._accepted.agency_model.checkpoint()
-        )
-        if not unchanged_owners:
-            raise InvalidLongitudinalCheckpoint(
-                "non-cognitive vital owners changed outside their accepted staging boundary"
-            )
+        # Every active owner must be supplied explicitly for this candidate.
+        # In particular, do not silently substitute accepted memory, agency,
+        # binding, or model snapshots when their producers have staged a new
+        # value for the same cycle. OrganismVitalState.capture() validates the
+        # complete typed composition before it can cross the persistence seam.
+        candidate_vital_source = candidate_vital_state.capture().private_state
         if not composer.matches_vital_baseline(
-            competencies=self._accepted.competencies, actions=self._accepted.actions
+            competencies=candidate_vital_state.competencies,
+            actions=candidate_vital_state.actions,
         ):
             raise InvalidLongitudinalCheckpoint(
-                "composer baseline differs from accepted competence or action state"
+                "composer baseline differs from explicit candidate competence or action state"
             )
 
         candidate_id = getattr(candidate, "candidate_id", None)
@@ -414,6 +402,7 @@ class OrganismVitalRuntime:
                 self._pending_candidate_id != candidate_id
                 or self._pending_source != source_bytes
                 or self._pending_dependencies != dependencies
+                or self._pending_vital_source != candidate_vital_source
             ):
                 raise InvalidLongitudinalCheckpoint(
                     "another vital-state candidate is unresolved; recover from the last committed cut"
@@ -425,12 +414,7 @@ class OrganismVitalRuntime:
         if staged is None:
             raise InvalidLongitudinalCheckpoint("composer has no staged candidate state")
         staged_engine, staged_actions = staged
-        candidate_state = replace(
-            candidate_vital_state,
-            transition=transition_state,
-            competencies=staged_engine,
-            actions=staged_actions,
-        )
+        candidate_state = replace(candidate_vital_state, competencies=staged_engine, actions=staged_actions)
         encoded = composer._vital_checkpoint_for_candidate(
             candidate,
             transition_state=transition_state,
@@ -440,6 +424,7 @@ class OrganismVitalRuntime:
         self._pending_candidate_id = candidate_id
         self._pending_source = source_bytes
         self._pending_dependencies = dependencies
+        self._pending_vital_source = candidate_vital_source
         self._pending_checkpoint = encoded
         self._pending_vital_state = candidate_state
         return encoded
@@ -479,6 +464,7 @@ class OrganismVitalRuntime:
         self._pending_candidate_id = None
         self._pending_source = None
         self._pending_dependencies = None
+        self._pending_vital_source = None
         self._pending_checkpoint = None
         self._pending_vital_state = None
 

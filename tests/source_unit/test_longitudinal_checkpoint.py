@@ -403,7 +403,16 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         "commitment.active", status=IntentStatus.INTERRUPTED, tick=7,
         reason="candidate-seam-test-boundary",
     )
-    candidate_vital = replace(vital, actions=candidate_actions)
+    # Exercise a live non-cognitive owner advance in the same candidate. The
+    # checkpoint seam must receive this exact staged ledger, not silently use
+    # the accepted source snapshot.
+    candidate_experience = ExperienceLedger.from_bytes(experience.to_bytes(), organism_id=str(identity))
+    candidate_experience.append(ExperienceRecord(
+        record_id="experience.candidate", organism_id=str(identity), tick_class=13,
+        context_tokens=("sense",), action_token="action.candidate", outcome_tokens=("outcome.candidate",),
+        epistemic_status=EpistemicStatus.OBSERVED, evidence_refs=("record.candidate",),
+        confidence_class=7, source_kind=SourceKind.DIRECT,
+    ))
     from organism.actuation.bounded_action import OrganismExplorationComposer
     from organism.actuation.context import ActuatorEvidenceContext
     composer = OrganismExplorationComposer(
@@ -435,20 +444,48 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
             expression_state=cognition.expression_state,
         ).to_organism_checkpoint(),
     )
+    candidate_cognition = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+        candidate_transition.owner_checkpoint,
+        kernel_limits=limits,
+        running_version=(0, 85, 0),
+    )
+    candidate_vital = replace(
+        vital,
+        transition=candidate_transition,
+        cognition=candidate_cognition,
+        actions=candidate_actions,
+        experience=candidate_experience,
+    )
     candidate = composer.prepare(
         candidate_transition, actuator_context=actuator_context, surface=surface,
         target_causal_tick=124, physical_step_id="physical-step.124", commit_id="commit.124",
     )
-    vital_runtime = OrganismVitalRuntime(candidate_vital, running_version=(0, 85, 0))
-    # Production callers need not rebuild/pass the complete owner composition:
-    # the runtime parses the cognition emitted by the transition and holds all
-    # other accepted owners itself.
+    vital_runtime = OrganismVitalRuntime(vital, running_version=(0, 85, 0))
+    # Candidate export requires a complete staged owner snapshot. The runtime
+    # verifies its cognitive and transition bytes against the produced World
+    # candidate instead of silently reusing accepted non-cognitive owners.
     candidate_bytes = vital_runtime.checkpoint_for_candidate(
         composer, candidate, transition_state=candidate_transition,
+        candidate_vital_state=candidate_vital,
     )
     assert vital_runtime.checkpoint_for_candidate(
         composer, candidate, transition_state=candidate_transition,
+        candidate_vital_state=candidate_vital,
     ) == candidate_bytes
+    changed_candidate_experience = ExperienceLedger.from_bytes(
+        candidate_experience.to_bytes(), organism_id=str(identity)
+    )
+    changed_candidate_experience.append(ExperienceRecord(
+        record_id="experience.changed-after-export", organism_id=str(identity), tick_class=14,
+        context_tokens=("sense",), action_token="action.changed", outcome_tokens=(),
+        epistemic_status=EpistemicStatus.OBSERVED, evidence_refs=("record.changed",),
+        confidence_class=4, source_kind=SourceKind.DIRECT,
+    ))
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="another vital-state candidate"):
+        vital_runtime.checkpoint_for_candidate(
+            composer, candidate, transition_state=candidate_transition,
+            candidate_vital_state=replace(candidate_vital, experience=changed_candidate_experience),
+        )
     candidate_checkpoint = OrganismTransitionState.from_bytes(candidate_bytes)
     candidate_aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(
         candidate_checkpoint.owner_checkpoint
@@ -460,15 +497,17 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         for classification in candidate_aggregate.classifications.values()
     )
     accepted_candidate_source = OrganismLongitudinalCheckpoint.from_organism_checkpoint(
-        candidate_vital.capture()
+        vital.capture()
     )
     changed_components = {
         name for name in REQUIRED_LONGITUDINAL_COMPONENTS
         if candidate_aggregate.components[name] != accepted_candidate_source.components[name]
     }
     assert changed_components == {
-        "cognitive_transition", "cognitive_graph", "competencies", "action_commitments"
+        "cognitive_transition", "cognitive_graph", "experience_memory", "competencies", "action_commitments"
     }
+    candidate_memory = json.loads(candidate_aggregate.components["experience_memory"])
+    assert any(item["record_id"] == "experience.candidate" for item in candidate_memory["ledger"]["records"])
     candidate_cognitive_graph = json.loads(candidate_aggregate.components["cognitive_graph"])
     accepted_cognitive_graph = json.loads(
         accepted_candidate_source.components["cognitive_graph"]
@@ -481,6 +520,7 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         next_candidate = replace(candidate, candidate_id="candidate.other")
         vital_runtime.checkpoint_for_candidate(
             composer, next_candidate, transition_state=candidate_transition,
+            candidate_vital_state=candidate_vital,
         )
     # A candidate does not become the runtime's accepted baseline until the
     # composer has adopted it and the caller supplies the matching cut receipt.
@@ -496,7 +536,7 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     vital_runtime.adopt_after_world_commit(composer, candidate, committed_cut=cut_receipt)
     assert vital_runtime.accepted_source_checkpoint.private_state == candidate_checkpoint.owner_checkpoint.private_state
     assert vital_runtime._pending_candidate_id is None
-    experience.append(ExperienceRecord(
+    candidate_experience.append(ExperienceRecord(
         record_id="experience.after-capture", organism_id=str(identity), tick_class=13,
         context_tokens=("sense",), action_token="action.late", outcome_tokens=(),
         epistemic_status=EpistemicStatus.OBSERVED, evidence_refs=("record.late",),
