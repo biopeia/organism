@@ -237,6 +237,7 @@ class OrganismVitalRuntime:
         self._accepted_checkpoint = accepted.capture()
         self._pending_candidate_id: str | None = None
         self._pending_source: bytes | None = None
+        self._pending_vital_source: bytes | None = None
         self._pending_dependencies: tuple[CheckpointDependency, ...] | None = None
         self._pending_checkpoint: bytes | None = None
 
@@ -251,23 +252,26 @@ class OrganismVitalRuntime:
         candidate: object,
         *,
         transition_state: OrganismTransitionState,
+        candidate_vital_state: OrganismVitalState,
         dependencies: tuple[CheckpointDependency, ...] = (),
     ) -> bytes:
-        """Export one staged candidate against the privately held full state.
+        """Export one staged candidate against an explicit full owner snapshot.
 
         Repeated requests for the same candidate/source/dependency tuple are
         idempotent. A different candidate cannot supersede an unresolved one;
         callers must recover from World-selected committed state after a
-        rejected or abandoned candidate.
+        rejected or abandoned candidate. The caller must provide a complete
+        candidate snapshot from all Organism state owners; this runtime never
+        silently fills unobserved components from its accepted baseline.
         """
-        from dataclasses import replace
-
         from .actuation.bounded_action import OrganismExplorationComposer
 
         if not isinstance(composer, OrganismExplorationComposer):
             raise TypeError("composer must be OrganismExplorationComposer")
         if not isinstance(transition_state, OrganismTransitionState):
             raise TypeError("transition_state must be OrganismTransitionState")
+        if not isinstance(candidate_vital_state, OrganismVitalState):
+            raise TypeError("candidate_vital_state must be OrganismVitalState")
         current = self._accepted.capture()
         if current.private_state != self._accepted_checkpoint.private_state:
             raise InvalidLongitudinalCheckpoint(
@@ -297,10 +301,12 @@ class OrganismVitalRuntime:
         if not isinstance(candidate_id, str) or not candidate_id:
             raise ValueError("candidate has no stable owner identity")
         source_bytes = transition_state.to_bytes()
+        vital_source_bytes = candidate_vital_state.capture(dependencies=dependencies).to_bytes()
         if self._pending_candidate_id is not None:
             if (
                 self._pending_candidate_id != candidate_id
                 or self._pending_source != source_bytes
+                or self._pending_vital_source != vital_source_bytes
                 or self._pending_dependencies != dependencies
             ):
                 raise InvalidLongitudinalCheckpoint(
@@ -309,24 +315,36 @@ class OrganismVitalRuntime:
             assert self._pending_checkpoint is not None
             return self._pending_checkpoint
 
+        if candidate_vital_state.identity != self._accepted.identity:
+            raise InvalidLongitudinalCheckpoint("candidate vital state identity differs from accepted state")
+        if candidate_vital_state.transition.to_bytes() != transition_state.to_bytes():
+            raise InvalidLongitudinalCheckpoint("candidate vital state does not match the source transition")
+        if candidate_vital_state.cognition.to_bytes() != transition_state.owner_checkpoint.private_state:
+            raise InvalidLongitudinalCheckpoint("candidate vital cognition differs from source transition")
         staged = getattr(composer, "_staged_state", None)
         if staged is None:
             raise InvalidLongitudinalCheckpoint("composer has no staged candidate state")
         staged_engine, staged_actions = staged
-        candidate_state = replace(
-            self._accepted,
-            transition=transition_state,
-            competencies=staged_engine,
-            actions=staged_actions,
-        )
+        if not composer.matches_vital_baseline(
+            competencies=candidate_vital_state.competencies,
+            actions=candidate_vital_state.actions,
+        ):
+            raise InvalidLongitudinalCheckpoint(
+                "composer baseline differs from explicit candidate competence or action state"
+            )
+        # This validates/captures every required component from the supplied
+        # candidate owner snapshot. The composer substitutes only its two
+        # explicitly staged domains; memory, genetics, agency, bindings and
+        # other state are never inherited invisibly from `_accepted`.
         encoded = composer.vital_checkpoint_for_candidate(
             candidate,
             transition_state=transition_state,
-            vital_state=candidate_state,
+            vital_state=candidate_vital_state,
             dependencies=dependencies,
         )
         self._pending_candidate_id = candidate_id
         self._pending_source = source_bytes
+        self._pending_vital_source = vital_source_bytes
         self._pending_dependencies = dependencies
         self._pending_checkpoint = encoded
         return encoded

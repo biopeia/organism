@@ -355,9 +355,11 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     vital_runtime = OrganismVitalRuntime(candidate_vital)
     candidate_bytes = vital_runtime.checkpoint_for_candidate(
         composer, candidate, transition_state=source_transition,
+        candidate_vital_state=candidate_vital,
     )
     assert vital_runtime.checkpoint_for_candidate(
         composer, candidate, transition_state=source_transition,
+        candidate_vital_state=candidate_vital,
     ) == candidate_bytes
     candidate_checkpoint = OrganismTransitionState.from_bytes(candidate_bytes)
     candidate_aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(
@@ -384,6 +386,21 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         next_candidate = replace(candidate, candidate_id="candidate.other")
         vital_runtime.checkpoint_for_candidate(
             composer, next_candidate, transition_state=source_transition,
+            candidate_vital_state=candidate_vital,
+        )
+    changed_snapshot_ledger = ExperienceLedger.from_bytes(
+        candidate_vital.experience.to_bytes(), organism_id=str(identity)
+    )
+    changed_snapshot_ledger.append(ExperienceRecord(
+        record_id="experience.changed-candidate", organism_id=str(identity), tick_class=14,
+        context_tokens=("sense",), action_token="action.changed", outcome_tokens=(),
+        epistemic_status=EpistemicStatus.OBSERVED, evidence_refs=("record.changed",),
+        confidence_class=5, source_kind=SourceKind.DIRECT,
+    ))
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="another vital-state candidate"):
+        vital_runtime.checkpoint_for_candidate(
+            composer, candidate, transition_state=source_transition,
+            candidate_vital_state=replace(candidate_vital, experience=changed_snapshot_ledger),
         )
     experience.append(ExperienceRecord(
         record_id="experience.after-capture", organism_id=str(identity), tick_class=13,
@@ -394,6 +411,7 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     with pytest.raises(InvalidLongitudinalCheckpoint, match="changed outside a committed restore boundary"):
         vital_runtime.checkpoint_for_candidate(
             composer, candidate, transition_state=source_transition,
+            candidate_vital_state=candidate_vital,
         )
 
     payload_path = tmp_path / "checkpoint.json"
