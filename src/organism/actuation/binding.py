@@ -102,12 +102,15 @@ class BindingTransition:
 class CompetenceExecutionBindingRegistry:
     """Bounded current-embodiment authority, separate from competence knowledge."""
 
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
 
-    def __init__(self, *, capacity: int = 512) -> None:
+    def __init__(self, *, capacity: int = 512, organism_id: str | None = None) -> None:
         if capacity < 1:
             raise ValueError("capacity must be positive")
+        if organism_id is not None and (not isinstance(organism_id, str) or not organism_id):
+            raise ValueError("organism_id must be a non-empty string when provided")
         self.capacity = int(capacity)
+        self.organism_id = organism_id
         self._items: dict[str, CompetenceExecutionBinding] = {}
         # Wave 0 measurement only (Cross-Domain Revision Coherence v1 §2.1).
         self.pressure = CapacityPressure(self.capacity)
@@ -393,6 +396,7 @@ class CompetenceExecutionBindingRegistry:
 
         return {
             "schema_version": self.SCHEMA_VERSION,
+            "organism_id": self.organism_id,
             "capacity": self.capacity,
             "items": [binding_payload(item) for item in self.items],
             "pending_transitions": [
@@ -454,6 +458,7 @@ class CompetenceExecutionBindingRegistry:
     ) -> "CompetenceExecutionBindingRegistry":
         required = {
             "schema_version",
+            "organism_id",
             "capacity",
             "items",
             "pending_transitions",
@@ -470,6 +475,9 @@ class CompetenceExecutionBindingRegistry:
             or version != cls.SCHEMA_VERSION
         ):
             raise ValueError("unsupported competence execution binding checkpoint")
+        organism_id = payload["organism_id"]
+        if organism_id is not None and (not isinstance(organism_id, str) or not organism_id):
+            raise ValueError("invalid competence execution binding organism identity")
         capacity = payload["capacity"]
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
             raise ValueError("invalid competence execution binding capacity")
@@ -483,7 +491,7 @@ class CompetenceExecutionBindingRegistry:
             payload["unconfirmed_executions"], Mapping
         ):
             raise ValueError("invalid competence execution binding metadata")
-        obj = cls(capacity=capacity)
+        obj = cls(capacity=capacity, organism_id=organism_id)
         raw = payload["items"]
         if not isinstance(raw, list) or len(raw) > obj.capacity:
             raise ValueError("invalid or unbounded competence execution bindings")

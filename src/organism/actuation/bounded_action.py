@@ -406,11 +406,14 @@ class OrganismExplorationComposer:
             organism_id=organism_id,
             embodiment_fingerprint=engine.embodiment_fingerprint,
         )
+        if action_domain is not None and action_domain.organism_id not in (None, organism_id):
+            raise ValueError("action domain Organism identity does not match this composer")
         self._domain = (
             action_domain.clone()
             if action_domain is not None
-            else ActionDomain()
+            else ActionDomain(organism_id=organism_id)
         )
+        self._domain.bind_owner(organism_id)
         # v5 mode when an action-history index is held (organism#183).
         if history is not None and not isinstance(history, action_history.HistoryIndex):
             raise TypeError("history must be an action_history.HistoryIndex")

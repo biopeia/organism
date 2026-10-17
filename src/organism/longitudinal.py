@@ -80,8 +80,12 @@ class OrganismVitalState:
             raise InvalidLongitudinalCheckpoint("transition and cognition identity differ")
         if self.experience.organism_id != str(identity):
             raise InvalidLongitudinalCheckpoint("experience ledger identity differs")
-        # Existing ActionDomain/agency/competence codecs bind their own identity;
-        # inspect those serialized owner records rather than guessing fields.
+        if self.actions.organism_id != str(identity):
+            raise InvalidLongitudinalCheckpoint("action domain identity differs or is absent")
+        if self.bindings.organism_id != str(identity):
+            raise InvalidLongitudinalCheckpoint("binding registry identity differs or is absent")
+        # Verify each subsystem's serialized identity rather than trusting only
+        # the outer envelope to attest to independently-owned payloads.
         for label, payload in (
             ("agency", _canonical_json(self.agency.checkpoint())),
             ("competencies", _canonical_json(self.competencies.checkpoint())),
@@ -329,6 +333,10 @@ def restore_vital_state(
             _canonical_json(competency_data["bindings"])
         )
         actions = ActionDomain.from_bytes(raw["action_commitments"])
+        if bindings.organism_id != str(checkpoint.identity):
+            raise ValueError("binding registry owner identity mismatch")
+        if actions.organism_id != str(checkpoint.identity):
+            raise ValueError("action domain owner identity mismatch")
         # Reconstitute the transition envelope around the complete outer
         # checkpoint, so World’s normal owner verifier sees and validates the
         # same complete private payload used by typed restoration.

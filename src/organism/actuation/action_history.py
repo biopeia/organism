@@ -278,7 +278,7 @@ def _check_seqs(payload: dict, new: list[dict], index: HistoryIndex) -> None:
             raise ActionHistoryError("registration counter does not exceed every used sequence")
 
 
-def _full_from(payload: dict, records: list[dict]) -> dict:
+def _full_from(payload: dict, records: list[dict], *, organism_id: str) -> dict:
     commits = [(r["seq"], r["record"]) for r in records if r["kind"] == "commitment"]
     commits += [(r["seq"], r["record"]) for r in payload["live_commitments"]]
     intents = [(r["seq"], r["record"]) for r in records if r["kind"] == "intent"]
@@ -289,6 +289,7 @@ def _full_from(payload: dict, records: list[dict]) -> dict:
             raise ActionHistoryError("duplicate registration sequence")
     return {
         "schema_version": payload["domain_schema_version"],
+        "organism_id": organism_id,
         "intents": [r for _, r in sorted(intents, key=lambda x: x[0])],
         "commitments": [r for _, r in sorted(commits, key=lambda x: x[0])],
         "active_commitment_id": payload["active_commitment_id"],
@@ -330,6 +331,7 @@ def restore_compact(payload: dict, *, organism_id: str, resolve: Resolver,
             index = None
     live_payload = {
         "schema_version": payload["domain_schema_version"],
+        "organism_id": organism_id,
         "intents": [r["record"] for r in sorted(payload["live_intents"], key=lambda x: x["seq"])],
         "commitments": [r["record"] for r in sorted(payload["live_commitments"], key=lambda x: x["seq"])],
         "active_commitment_id": payload["active_commitment_id"],
@@ -340,7 +342,7 @@ def restore_compact(payload: dict, *, organism_id: str, resolve: Resolver,
         records = load_history(ref, organism_id=organism_id, resolve=resolve)
         index = HistoryIndex(ref=ref, organism_id=organism_id)
         _check_seqs(payload, records, index)
-        ActionDomain.restore(_full_from(payload, records))   # canonical validation, once
+        ActionDomain.restore(_full_from(payload, records, organism_id=organism_id))   # canonical validation, once
         for r in records:
             if r["kind"] == "commitment":
                 index.recorded_commitments.add(r["record"]["commitment_id"])
@@ -386,7 +388,7 @@ def _extend(index: HistoryIndex, payload: dict, ref: HistoryRef, *, organism_id:
         return None
     try:
         _check_seqs(payload, new, index)
-        ActionDomain.restore(_full_from(payload, new))
+        ActionDomain.restore(_full_from(payload, new, organism_id=index.organism_id or ""))
     except ValueError:
         return None
     # All checks passed: only now advance the index.
@@ -412,7 +414,7 @@ def v4_to_compact(action_domain: Mapping[str, Any], *, organism_id: str
 def compact_to_v4(payload: dict, *, organism_id: str, resolve: Resolver) -> dict:
     """Exact inverse of ``v4_to_compact`` (registration order restored by seq)."""
     ref = _check_payload(payload)
-    return _full_from(payload, load_history(ref, organism_id=organism_id, resolve=resolve))
+    return _full_from(payload, load_history(ref, organism_id=organism_id, resolve=resolve), organism_id=organism_id)
 
 
 # ----------------------------------------------------------- v5 + declaration

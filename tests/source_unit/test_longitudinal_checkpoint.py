@@ -271,7 +271,7 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     assert engine.primitives and engine.snapshot().competence_chunks > 0
     engine.gate = CompetenceGate(min_support=3, min_consistency=0.8)
     from organism.actuation.context import ActuatorEvidenceContext
-    bindings = CompetenceExecutionBindingRegistry()
+    bindings = CompetenceExecutionBindingRegistry(organism_id=str(identity))
     bindings.bind_from_evidence(
         competence_id="competence.pending", surface_fingerprint="surface.s",
         applicability_context=ActuatorEvidenceContext("body.1", "episode.1", "morphology.1", "surface.s"), effect_id="effect.e",
@@ -281,7 +281,7 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         StalenessReason.SURFACE_NOT_CURRENT, tick=2, cause_refs=("surface-revision-2",))
     assert bindings.checkpoint()["pending_transitions"]
     from organism.agency.executive_outcome import ExecutiveOutcomeLedger
-    actions = ActionDomain(outcome_ledger=ExecutiveOutcomeLedger())
+    actions = ActionDomain(organism_id=str(identity), outcome_ledger=ExecutiveOutcomeLedger())
     from organism.agency.affordance import ActionAffordance
     from organism.agency.prospective import ProspectiveDecision
     from organism.actuation.action import (ActionEvaluation, ActionJustification, ActionProposal, ActionSource)
@@ -325,6 +325,27 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     payload_path = tmp_path / "checkpoint.json"
     payload_path.write_bytes(captured.to_bytes())
     aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(captured.owner_checkpoint)
+    # The owner envelope alone cannot prove ownership of nested component
+    # state. Both independently-restorable payloads carry and verify it.
+    from organism.longitudinal import restore_vital_state
+    for component, path in (("action_commitments", ()), ("competencies", ("bindings",))):
+        for owner_id in ("00000000-0000-0000-0000-000000000099", None):
+            components = dict(aggregate.components)
+            component_payload = json.loads(components[component])
+            target = component_payload
+            for key in path:
+                target = target[key]
+            if owner_id is None:
+                target.pop("organism_id")
+            else:
+                target["organism_id"] = owner_id
+            components[component] = json.dumps(component_payload, sort_keys=True, separators=(",", ":")).encode()
+            forged = OrganismLongitudinalCheckpoint(
+                aggregate.identity, components, aggregate.classifications, aggregate.dependencies,
+            )
+            forged_owner = OrganismCheckpoint(aggregate.identity, forged.to_bytes())
+            with pytest.raises(InvalidLongitudinalCheckpoint, match="failed to restore"):
+                restore_vital_state(forged_owner, _restore_context())
     expected_max_concurrent = json.loads(aggregate.components["competencies"])["engine"]["max_concurrent"]
     expected_component_digests = {
         name: sha256(payload).hexdigest() for name, payload in aggregate.components.items()
