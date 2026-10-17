@@ -53,12 +53,12 @@ class ExplorationOutcome(str, Enum):
     NO_ACTUATION = "no_actuation"
 
 
-def _declares_longitudinal_checkpoint(payload: bytes) -> bool:
-    """Detect a full-vital payload before choosing a legacy restore path.
+def _has_longitudinal_checkpoint_marker(payload: bytes) -> bool:
+    """Identify declared full-vital payloads without accepting their shape.
 
-    A valid JSON document that names the longitudinal schema must be restored
-    strictly. A malformed or incomplete document must not silently downgrade
-    to the older cognition-only format.
+    Parsing validity is deliberately separate: callers that see this marker
+    must run the strict longitudinal codec and propagate any failure instead of
+    attempting a partial cognitive restore.
     """
     try:
         document = json.loads(payload)
@@ -244,11 +244,14 @@ class OrganismCheckpointContract:
 
     def _validate_transition_owner_payload(self, state: OrganismTransitionState) -> None:
         """Validate private owner bytes, not just the generic envelope shape."""
-        if _declares_longitudinal_checkpoint(state.owner_checkpoint.private_state):
+        if _has_longitudinal_checkpoint_marker(state.owner_checkpoint.private_state):
+            # Once a payload declares the longitudinal schema, any parse,
+            # integrity, identity or dependency failure is terminal. Falling
+            # back to the older cognitive-only codec here would turn a
+            # damaged full-vital checkpoint into an apparently valid partial
+            # restore.
             from ..checkpoint import OrganismLongitudinalCheckpoint
 
-            # Do not downgrade declared full-vital state to a partial cognitive
-            # restore if parsing, integrity, or component validation fails.
             OrganismLongitudinalCheckpoint.from_organism_checkpoint(state.owner_checkpoint)
             self._restore_complete_vital_transition(state)
             return
@@ -283,7 +286,7 @@ class OrganismCheckpointContract:
         transition = OrganismTransitionState.from_bytes(encoded)
         if str(transition.identity) != owner_identity:
             raise ValueError("transition checkpoint does not match expected owner")
-        if _declares_longitudinal_checkpoint(transition.owner_checkpoint.private_state):
+        if _has_longitudinal_checkpoint_marker(transition.owner_checkpoint.private_state):
             _, restored = self._restore_complete_vital_transition(transition)
             # The result advertises the complete materialized closure, not a
             # cognition-only projection. Keep the canonical transition bytes.
@@ -669,7 +672,7 @@ class OrganismExplorationComposer:
             raise ValueError("a v5 composer must export its dependency: use checkpoint_with_dependency_for_candidate")
         return self._encode(self._candidate_payload(candidate, transition_state))
 
-    def vital_checkpoint_for_candidate(
+    def _vital_checkpoint_for_candidate(
         self,
         candidate: ExplorationActionCandidate,
         *,
@@ -677,7 +680,7 @@ class OrganismExplorationComposer:
         vital_state: object,
         dependencies: tuple[CheckpointDependency, ...] = (),
     ) -> bytes:
-        """Export the full active vital composition for this staged candidate.
+        """Internal export of the full active vital composition for this staged candidate.
 
         The caller must supply the other live, owner-authored Organism
         components. This method replaces only the competence engine and
@@ -707,7 +710,11 @@ class OrganismExplorationComposer:
         return staged_vital.capture_transition(dependencies=dependencies).to_bytes()
 
     def matches_vital_baseline(self, *, competencies: CompetenceDevelopmentEngine, actions: ActionDomain) -> bool:
-        """Check that the composer owners match the full vital-state baseline."""
+        """Check that the full composition's committed actuation owners match this composer.
+
+        This is a read-only consistency check for Organism's full-state runtime
+        boundary. It does not establish that World committed a cut.
+        """
         if not isinstance(competencies, CompetenceDevelopmentEngine) or not isinstance(actions, ActionDomain):
             return False
         return (
