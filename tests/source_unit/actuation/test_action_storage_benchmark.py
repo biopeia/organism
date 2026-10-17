@@ -237,3 +237,157 @@ def test_interrupted_vs_uninterrupted_v5_trajectory_equality():
 
     assert cuts_uninterrupted == cuts_interrupted
     assert blobs_uninterrupted == blobs_interrupted
+
+
+def test_fresh_process_nontrivial_action_domain_restore():
+    """Verify fresh-process deserialization and continuation of non-trivial ActionDomain state."""
+    import os
+    import sys
+    import subprocess
+    import tempfile
+    from organism import OrganismIdentity, OrganismLongitudinalCheckpoint
+    from organism.checkpoint import REQUIRED_LONGITUDINAL_COMPONENTS
+    from organism.actuation.action import ActionEvaluation, ActionJustification, ActionProposal, ActionSource
+    from organism.actuation.domain import ActionDomain
+    from organism.agency.affordance import ActionAffordance
+    from organism.agency.executive_outcome import ExecutiveOutcomeLedger
+    from organism.agency.prospective import ProspectiveDecision
+
+    ledger = ExecutiveOutcomeLedger()
+    domain = ActionDomain(outcome_ledger=ledger)
+
+    decision = ProspectiveDecision(
+        competence_id="competence.reach",
+        anticipated_effect_id="effect.contact",
+        prediction_ref="pred.1",
+        confidence=0.8,
+        epistemic_relevance=0.5,
+        homeostatic_relevance=0.1,
+        origin_refs=("source.vision",),
+        supporting_affordance_id="affordance.reach.1",
+    )
+    affordance = ActionAffordance(
+        affordance_id="affordance.reach.1",
+        competence_id="competence.reach",
+        anticipated_effect_id="effect.contact",
+        context_ref="ctx.1",
+        embodiment_id="body.1",
+        prediction_confidence=0.8,
+        controllability=0.9,
+        executability_confidence=1.0,
+        prediction_ref="pred.1",
+        evidence_refs=("ev.1",),
+    )
+
+    domain.admit(
+        decision,
+        supporting_affordance=affordance,
+        intent_id="intent.reach.1",
+        context_ref="ctx.1",
+        embodiment_id="body.1",
+        tick=1,
+    )
+
+    surface = ActuatorSurface.from_effector_ids(("actuator.1", "actuator.2"))
+    proposal = ActionProposal(
+        proposal_id="proposal.reach.1",
+        source=ActionSource.COMPETENCE,
+        effect_target_id="effect.contact",
+        competence_id="competence.reach",
+        intent_id="intent.reach.1",
+        justification=ActionJustification(
+            originating_need_id=None,
+            effect_target_id="effect.contact",
+            competence_id="competence.reach",
+            prediction_id="pred.1",
+            evidence_refs=("ev.1",),
+        ),
+        evaluation=ActionEvaluation(
+            effect_confidence=0.8,
+            controllability=0.9,
+            uncertainty=0.1,
+        ),
+    )
+
+    domain.select_and_commit(
+        (proposal,),
+        tick=2,
+        commitment_id="commitment.reach.1",
+        controller_id="controller.reach.1",
+        surface=surface,
+        embodiment_id="body.1",
+        interruptibility=0.5,
+        minimum_duration=1,
+        maximum_duration=5,
+    )
+
+    domain_bytes = domain.to_bytes()
+    identity = OrganismIdentity.parse("00000000-0000-0000-0000-000000000041")
+    components = {name: f"{name}:vital".encode() for name in REQUIRED_LONGITUDINAL_COMPONENTS}
+    components["action_commitments"] = domain_bytes
+    longitudinal_bytes = OrganismLongitudinalCheckpoint(identity=identity, components=components).to_bytes()
+
+    worker_code = """
+import sys
+from organism import OrganismIdentity, OrganismLongitudinalCheckpoint
+from organism.checkpoint import REQUIRED_LONGITUDINAL_COMPONENTS
+from organism.actuation.domain import ActionDomain
+from organism.agency.executive_outcome import ExecutiveOutcomeSample, OutcomeClass
+from organism.agency.intention import IntentStatus
+
+longitudinal_payload = sys.stdin.buffer.read()
+checkpoint = OrganismLongitudinalCheckpoint.from_bytes(longitudinal_payload)
+
+decoders = {name: (lambda p, o: p) for name in REQUIRED_LONGITUDINAL_COMPONENTS}
+decoders["action_commitments"] = lambda p, o: ActionDomain.from_bytes(p)
+
+restored_components = checkpoint.restore_components(decoders, read_dependency=lambda loc: b"")
+restored_domain = restored_components["action_commitments"]
+
+assert restored_domain.active_commitment is not None
+assert restored_domain.active_commitment.commitment_id == "commitment.reach.1"
+assert restored_domain.active_commitment.competence_id == "competence.reach"
+assert "intent.reach.1" in restored_domain._intents
+intent = restored_domain._intents["intent.reach.1"]
+assert intent.status is IntentStatus.ACTIVE
+
+sample = ExecutiveOutcomeSample(
+    tick=5,
+    outcome_class=OutcomeClass.POSITIVE,
+    reason="anticipated_effect_observed",
+    effect_similarity=1.0,
+    prediction_mismatch=0.0,
+    progress_before_failure=None,
+)
+restored_domain.close(
+    "commitment.reach.1",
+    status=IntentStatus.SATISFIED,
+    tick=5,
+    reason="anticipated_effect_observed",
+    outcome=sample,
+)
+
+assert restored_domain.active_commitment is None
+assert "commitment.reach.1" in restored_domain._closed_commitments
+assert restored_domain._outcome_ledger.get(("competence.reach", "effect.contact")) is not None
+print("FRESH_PROCESS_RESTORE_SUCCESS")
+"""
+
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(worker_code)
+    worker_path = f.name
+
+    try:
+        env = {**os.environ, "PYTHONPATH": "src"}
+        proc = subprocess.run(
+            [sys.executable, worker_path],
+            input=longitudinal_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        assert proc.returncode == 0, f"Child process failed: {proc.stderr.decode()}"
+        assert "FRESH_PROCESS_RESTORE_SUCCESS" in proc.stdout.decode()
+    finally:
+        Path(worker_path).unlink(missing_ok=True)
+
