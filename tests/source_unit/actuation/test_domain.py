@@ -651,3 +651,44 @@ def test_interrupted_commitment_can_be_closed_without_outcome_evidence():
     assert commitment.status.value == "interrupted"
     assert domain.active_commitment is None
 
+
+def test_action_domain_to_bytes_and_from_bytes_round_trip():
+    domain, intent, commitment, _ = _active_domain()
+    encoded = domain.to_bytes()
+    assert isinstance(encoded, bytes)
+
+    restored = ActionDomain.from_bytes(encoded)
+    assert restored.checkpoint() == domain.checkpoint()
+    assert restored.to_bytes() == encoded
+
+    # Continuation from restored state works identically
+    restored.close(
+        commitment.commitment_id,
+        status=IntentStatus.INTERRUPTED,
+        tick=6,
+        reason="operator_interruption",
+    )
+    assert restored.active_commitment is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"",
+        b"{",
+        b"[]",
+        b'{"schema_version":1,"schema_version":1}',
+        b'{"schema_version":1,"extra":true}',
+    ],
+)
+def test_action_domain_from_bytes_rejects_malformed_and_duplicate_keys(payload: bytes):
+    with pytest.raises(ValueError, match="invalid action domain checkpoint"):
+        ActionDomain.from_bytes(payload)
+
+
+@pytest.mark.parametrize("payload", [None, "{}", bytearray(b"{}")])
+def test_action_domain_from_bytes_rejects_non_bytes(payload: object):
+    with pytest.raises(ValueError, match="invalid action domain checkpoint bytes"):
+        ActionDomain.from_bytes(payload)  # type: ignore[arg-type]
+
+

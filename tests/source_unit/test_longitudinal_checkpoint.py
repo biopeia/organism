@@ -113,3 +113,35 @@ def test_restore_requires_complete_decoders_and_dependency_closure() -> None:
         )
     with pytest.raises(CheckpointDependencyMismatch, match="model://predictor"):
         checkpoint.restore_components(decoders, read_dependency=lambda locator: b"wrong")
+
+
+def test_longitudinal_checkpoint_captures_and_restores_action_domain() -> None:
+    from organism.actuation.domain import ActionDomain
+
+    identity = OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041"))
+    domain = ActionDomain()
+    states = {name: name for name in REQUIRED_LONGITUDINAL_COMPONENTS}
+    states["action_commitments"] = domain
+
+    encoders = {
+        name: (lambda value, owner: f"{owner}:{value}".encode())
+        for name in REQUIRED_LONGITUDINAL_COMPONENTS
+    }
+    encoders["action_commitments"] = lambda value, owner: value.to_bytes()
+
+    checkpoint = OrganismLongitudinalCheckpoint.capture_components(identity, states, encoders)
+    assert "action_commitments" in checkpoint.components
+
+    decoders = {
+        name: (lambda payload, owner: payload.decode())
+        for name in REQUIRED_LONGITUDINAL_COMPONENTS
+    }
+    decoders["action_commitments"] = lambda payload, owner: ActionDomain.from_bytes(payload)
+
+    restored_components = checkpoint.restore_components(
+        decoders, read_dependency=lambda locator: b""
+    )
+    restored_domain = restored_components["action_commitments"]
+    assert isinstance(restored_domain, ActionDomain)
+    assert restored_domain.checkpoint() == domain.checkpoint()
+
