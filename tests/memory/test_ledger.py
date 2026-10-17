@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
@@ -102,3 +103,62 @@ def test_restore_rejects_missing_or_null_required_checkpoint_state() -> None:
     invalid_record = {**valid, "records": [record]}
     with pytest.raises(ValueError, match="experience checkpoint fields"):
         ExperienceLedger.restore(invalid_record, organism_id="org-1")
+
+
+def test_byte_checkpoint_round_trip_preserves_non_default_capacity_and_order() -> None:
+    ledger = ExperienceLedger("org-1", max_records=37)
+    ledger.extend((_record("r1"), _record("r2")))
+
+    encoded = ledger.to_bytes()
+    restored = ExperienceLedger.from_bytes(encoded, organism_id="org-1")
+
+    assert isinstance(encoded, bytes)
+    assert restored.checkpoint() == ledger.checkpoint()
+    assert restored.to_bytes() == encoded
+
+
+def test_byte_checkpoint_restoration_preserves_next_ledger_transition() -> None:
+    continuous = ExperienceLedger("org-1", max_records=16)
+    continuous.extend((_record("r1"), _record("r2")))
+    restored = ExperienceLedger.from_bytes(continuous.to_bytes(), organism_id="org-1")
+
+    continuous.append(_record("r3"))
+    restored.append(_record("r3"))
+
+    assert restored.checkpoint() == continuous.checkpoint()
+    assert restored.to_bytes() == continuous.to_bytes()
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        b"{",
+        b"[]",
+        b'{"schema_version":1,"schema_version":1}',
+        json.dumps(
+            {
+                "schema_version": 1,
+                "organism_id": "org-1",
+                "max_records": 37,
+                "records": [],
+                "unexpected": True,
+            }
+        ).encode(),
+    ],
+)
+def test_byte_checkpoint_rejects_malformed_or_ambiguous_payloads(encoded: bytes) -> None:
+    with pytest.raises(ValueError, match="invalid experience ledger checkpoint"):
+        ExperienceLedger.from_bytes(encoded, organism_id="org-1")
+
+
+@pytest.mark.parametrize("encoded", [None, "{}", bytearray(b"{}")])
+def test_byte_checkpoint_rejects_non_bytes_payloads(encoded: object) -> None:
+    with pytest.raises(ValueError, match="invalid experience ledger checkpoint bytes"):
+        ExperienceLedger.from_bytes(encoded, organism_id="org-1")  # type: ignore[arg-type]
+
+
+def test_byte_checkpoint_requires_matching_owner_identity() -> None:
+    encoded = ExperienceLedger("org-1", max_records=37).to_bytes()
+
+    with pytest.raises(ValueError, match="organism mismatch"):
+        ExperienceLedger.from_bytes(encoded, organism_id="org-2")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import json
 from typing import Iterable, Mapping
 
 from .experience import ExperienceRecord
@@ -76,6 +77,36 @@ class ExperienceLedger:
             "max_records": self._max_records,
             "records": [record.canonical_payload() for record in self._records],
         }
+
+    def to_bytes(self) -> bytes:
+        """Serialize this owner state deterministically for a checkpoint envelope."""
+        return json.dumps(
+            self.checkpoint(), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")
+
+    @classmethod
+    def from_bytes(cls, payload: bytes, *, organism_id: str) -> "ExperienceLedger":
+        """Restore an exact ledger checkpoint, rejecting ambiguous JSON objects."""
+        if not isinstance(payload, bytes):
+            raise ValueError("invalid experience ledger checkpoint bytes")
+
+        def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate key")
+                result[key] = value
+            return result
+
+        try:
+            decoded = json.loads(
+                payload.decode("utf-8"), object_pairs_hook=reject_duplicate_keys
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError("invalid experience ledger checkpoint bytes") from exc
+        if not isinstance(decoded, dict):
+            raise ValueError("invalid experience ledger checkpoint bytes")
+        return cls.restore(decoded, organism_id=organism_id)
 
     @classmethod
     def restore(
