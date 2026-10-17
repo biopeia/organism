@@ -696,6 +696,15 @@ class OrganismExplorationComposer:
         )
         return staged_vital.capture_transition(dependencies=dependencies).to_bytes()
 
+    def matches_vital_baseline(self, *, competencies: CompetenceDevelopmentEngine, actions: ActionDomain) -> bool:
+        """Check that the composer owners match the full vital-state baseline."""
+        if not isinstance(competencies, CompetenceDevelopmentEngine) or not isinstance(actions, ActionDomain):
+            return False
+        return (
+            self._engine.checkpoint() == competencies.checkpoint()
+            and self._domain.checkpoint() == actions.checkpoint()
+        )
+
     @property
     def exports_dependencies(self) -> bool:
         """True in v5 mode: checkpoints must be exported with their dependency."""

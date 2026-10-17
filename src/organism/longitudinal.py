@@ -215,6 +215,123 @@ class OrganismVitalState:
         )
 
 
+class OrganismVitalRuntime:
+    """Owner-held, single-source composition boundary for candidate export.
+
+    The runtime captures one accepted full vital composition at construction.
+    It never accepts a caller-supplied replacement composition at export time.
+    Owner objects are mutable, so every export recomputes the canonical full
+    checkpoint and refuses if any component changed outside an accepted
+    restore/reconstruction boundary. This prevents pairing a candidate with
+    stale/future caller-owned ledger, agency, genetics, safety, or binding state.
+
+    This class does not confirm World commits. A pending candidate remains
+    pending until this runtime is discarded and recreated from the full state
+    selected by World after its own commit verification.
+    """
+
+    def __init__(self, accepted: OrganismVitalState) -> None:
+        if not isinstance(accepted, OrganismVitalState):
+            raise TypeError("accepted must be OrganismVitalState")
+        self._accepted = accepted
+        self._accepted_checkpoint = accepted.capture()
+        self._pending_candidate_id: str | None = None
+        self._pending_source: bytes | None = None
+        self._pending_dependencies: tuple[CheckpointDependency, ...] | None = None
+        self._pending_checkpoint: bytes | None = None
+
+    @property
+    def accepted_source_checkpoint(self) -> OrganismCheckpoint:
+        """Return the immutable owner checkpoint that seeded this runtime."""
+        return self._accepted_checkpoint
+
+    def checkpoint_for_candidate(
+        self,
+        composer: object,
+        candidate: object,
+        *,
+        transition_state: OrganismTransitionState,
+        dependencies: tuple[CheckpointDependency, ...] = (),
+    ) -> bytes:
+        """Export one staged candidate against the privately held full state.
+
+        Repeated requests for the same candidate/source/dependency tuple are
+        idempotent. A different candidate cannot supersede an unresolved one;
+        callers must recover from World-selected committed state after a
+        rejected or abandoned candidate.
+        """
+        from dataclasses import replace
+
+        from .actuation.bounded_action import OrganismExplorationComposer
+
+        if not isinstance(composer, OrganismExplorationComposer):
+            raise TypeError("composer must be OrganismExplorationComposer")
+        if not isinstance(transition_state, OrganismTransitionState):
+            raise TypeError("transition_state must be OrganismTransitionState")
+        current = self._accepted.capture()
+        if current.private_state != self._accepted_checkpoint.private_state:
+            raise InvalidLongitudinalCheckpoint(
+                "accepted vital state changed outside a committed restore boundary"
+            )
+        if transition_state.identity != self._accepted.identity:
+            raise InvalidLongitudinalCheckpoint("candidate source identity differs from accepted vital state")
+        accepted_transition = self._accepted.transition
+        if (
+            transition_state.organism_step != accepted_transition.organism_step
+            or transition_state.embodiment != accepted_transition.embodiment
+            or transition_state.world_correlation != accepted_transition.world_correlation
+            or transition_state.lifecycle != accepted_transition.lifecycle
+            or transition_state.lifecycle_history != accepted_transition.lifecycle_history
+        ):
+            raise InvalidLongitudinalCheckpoint("candidate source cut differs from accepted vital state")
+        if transition_state.owner_checkpoint.private_state != self._accepted.cognition.to_bytes():
+            raise InvalidLongitudinalCheckpoint("candidate cognition differs from accepted vital state")
+        if not composer.matches_vital_baseline(
+            competencies=self._accepted.competencies, actions=self._accepted.actions
+        ):
+            raise InvalidLongitudinalCheckpoint(
+                "composer baseline differs from accepted competence or action state"
+            )
+
+        candidate_id = getattr(candidate, "candidate_id", None)
+        if not isinstance(candidate_id, str) or not candidate_id:
+            raise ValueError("candidate has no stable owner identity")
+        source_bytes = transition_state.to_bytes()
+        if self._pending_candidate_id is not None:
+            if (
+                self._pending_candidate_id != candidate_id
+                or self._pending_source != source_bytes
+                or self._pending_dependencies != dependencies
+            ):
+                raise InvalidLongitudinalCheckpoint(
+                    "another vital-state candidate is unresolved; recover from the last committed cut"
+                )
+            assert self._pending_checkpoint is not None
+            return self._pending_checkpoint
+
+        staged = getattr(composer, "_staged_state", None)
+        if staged is None:
+            raise InvalidLongitudinalCheckpoint("composer has no staged candidate state")
+        staged_engine, staged_actions = staged
+        candidate_state = replace(
+            self._accepted,
+            transition=transition_state,
+            competencies=staged_engine,
+            actions=staged_actions,
+        )
+        encoded = composer.vital_checkpoint_for_candidate(
+            candidate,
+            transition_state=transition_state,
+            vital_state=candidate_state,
+            dependencies=dependencies,
+        )
+        self._pending_candidate_id = candidate_id
+        self._pending_source = source_bytes
+        self._pending_dependencies = dependencies
+        self._pending_checkpoint = encoded
+        return encoded
+
+
 @dataclass(frozen=True, slots=True)
 class OrganismVitalRestoreContext:
     """Non-checkpoint configuration required to materialize runtime owners."""

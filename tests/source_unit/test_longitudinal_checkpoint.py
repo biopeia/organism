@@ -193,7 +193,7 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     from organism.cognition.portable_checkpoint import CognitiveRuntimeCheckpoint
     from organism.cognition.transition import CognitiveTransitionState
     from organism.genetics import EpigeneticMark, GeneExpressionState, GermlineState, create_standard_genome
-    from organism.longitudinal import OrganismVitalRestoreContext, OrganismVitalState
+    from organism.longitudinal import OrganismVitalRestoreContext, OrganismVitalRuntime, OrganismVitalState
     from organism.memory import ExperienceLedger
     from organism.memory import EpistemicStatus, ExperienceRecord, SourceKind
     from organism.transition import EmbodimentContextRef, OrganismLifecycle, OrganismTransitionState, WorldCausalCorrelation
@@ -325,56 +325,83 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         interruptibility=1.0, minimum_duration=0, maximum_duration=None)
     assert selected_active.commitment is actions.active_commitment
     assert actions._outcome_ledger.get(("competence.walk", "effect.walk")).satisfactions == 1
-    vital = OrganismVitalState(transition, cognition, experience, agency, engine, actions, bindings)
-    captured = vital.capture_transition()
-
-    # Exercise the production candidate seam: cognition is the exact accepted
-    # source payload, while engine and ActionDomain are taken from staged
-    # candidate state, not stale objects held by the caller.
-    from organism.actuation.bounded_action import OrganismExplorationComposer
-    from organism.actuation.context import ActuatorEvidenceContext
-    staged_engine = CompetenceDevelopmentEngine.restore(
-        engine.checkpoint(), actuator_ids=actuator_ids, organism_id=str(identity),
-        embodiment_fingerprint=actuator_context.fingerprint,
-        expected_max_concurrent=2, gate=engine.gate,
-    )
     source_transition = replace(
         transition, owner_checkpoint=OrganismCheckpoint(identity, cognition.to_bytes())
     )
+    vital = OrganismVitalState(source_transition, cognition, experience, agency, engine, actions, bindings)
+    captured = vital.capture_transition()
+
+    # Exercise the owner-held production candidate seam. The runtime captures
+    # all ten required active components and rejects caller-side drift. Keep
+    # the committed active-intention fixture above for restore comparison;
+    # the exploration composer correctly refuses to replace that commitment.
+    candidate_actions = ActionDomain.from_bytes(actions.to_bytes())
+    candidate_actions.close(
+        "commitment.active", status=IntentStatus.INTERRUPTED, tick=7,
+        reason="candidate-seam-test-boundary",
+    )
+    candidate_vital = replace(vital, actions=candidate_actions)
+    from organism.actuation.bounded_action import OrganismExplorationComposer
+    from organism.actuation.context import ActuatorEvidenceContext
     composer = OrganismExplorationComposer(
         organism_id=str(identity),
-        engine=staged_engine,
-        action_domain=ActionDomain(organism_id=str(identity)),
+        engine=engine,
+        action_domain=candidate_actions,
     )
     candidate = composer.prepare(
         source_transition, actuator_context=actuator_context, surface=surface,
         target_causal_tick=124, physical_step_id="physical-step.124", commit_id="commit.124",
     )
-    candidate_vital = replace(
-        vital, transition=source_transition,
-        actions=ActionDomain(organism_id=str(identity)),
+    vital_runtime = OrganismVitalRuntime(candidate_vital)
+    candidate_bytes = vital_runtime.checkpoint_for_candidate(
+        composer, candidate, transition_state=source_transition,
     )
-    candidate_bytes = composer.vital_checkpoint_for_candidate(
-        candidate, transition_state=source_transition, vital_state=candidate_vital,
-    )
+    assert vital_runtime.checkpoint_for_candidate(
+        composer, candidate, transition_state=source_transition,
+    ) == candidate_bytes
     candidate_checkpoint = OrganismTransitionState.from_bytes(candidate_bytes)
     candidate_aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(
         candidate_checkpoint.owner_checkpoint
     )
     assert candidate_checkpoint.world_correlation == source_transition.world_correlation
     assert set(candidate_aggregate.components) == REQUIRED_LONGITUDINAL_COMPONENTS
+    assert all(
+        classification.activity is LongitudinalComponentActivity.ACTIVE
+        for classification in candidate_aggregate.classifications.values()
+    )
+    accepted_candidate_source = OrganismLongitudinalCheckpoint.from_organism_checkpoint(
+        candidate_vital.capture()
+    )
+    changed_components = {
+        name for name in REQUIRED_LONGITUDINAL_COMPONENTS
+        if candidate_aggregate.components[name] != accepted_candidate_source.components[name]
+    }
+    assert changed_components == {"competencies", "action_commitments"}
     candidate_engine = json.loads(candidate_aggregate.components["competencies"])
     assert candidate_engine["engine"]["embodiment_fingerprint"] == actuator_context.fingerprint
     assert candidate_engine["engine"]["primitives"] == engine.checkpoint()["primitives"]
-    with pytest.raises(ValueError, match="cognition differs"):
-        composer.vital_checkpoint_for_candidate(
-            candidate, transition_state=source_transition,
-            vital_state=replace(candidate_vital, cognition=replace(cognition, experience_records=())),
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="another vital-state candidate"):
+        next_candidate = replace(candidate, candidate_id="candidate.other")
+        vital_runtime.checkpoint_for_candidate(
+            composer, next_candidate, transition_state=source_transition,
+        )
+    experience.append(ExperienceRecord(
+        record_id="experience.after-capture", organism_id=str(identity), tick_class=13,
+        context_tokens=("sense",), action_token="action.late", outcome_tokens=(),
+        epistemic_status=EpistemicStatus.OBSERVED, evidence_refs=("record.late",),
+        confidence_class=5, source_kind=SourceKind.DIRECT,
+    ))
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="changed outside a committed restore boundary"):
+        vital_runtime.checkpoint_for_candidate(
+            composer, candidate, transition_state=source_transition,
         )
 
     payload_path = tmp_path / "checkpoint.json"
-    payload_path.write_bytes(captured.to_bytes())
-    aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(captured.owner_checkpoint)
+    # Restore the staged candidate in a fresh process, not the accepted
+    # baseline. This proves that the changed competence/action state survives
+    # the same serialization boundary that World would consume.
+    payload_path.write_bytes(candidate_bytes)
+    aggregate = candidate_aggregate
     # The owner envelope alone cannot prove ownership of nested component
     # state. Both independently-restorable payloads carry and verify it.
     from organism.longitudinal import restore_vital_state
@@ -447,6 +474,12 @@ print('fresh-process-restore-ok')
                             capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "fresh-process-restore-ok"
+    mismatched = subprocess.run(
+        [sys.executable, "-c", script, str(payload_path), str(expected_max_concurrent + 1), str(digest_path)],
+        capture_output=True, text=True, check=False,
+    )
+    assert mismatched.returncode != 0
+    assert "failed to restore" in mismatched.stderr
 
 def test_checkpoint_requires_explicit_classification_for_every_component() -> None:
     checkpoint = _checkpoint()
