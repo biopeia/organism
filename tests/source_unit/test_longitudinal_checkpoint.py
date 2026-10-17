@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
+from dataclasses import replace
+import subprocess
+import sys
 from uuid import UUID
 
 import pytest
@@ -10,16 +13,31 @@ from organism import (
     CheckpointDependency,
     CheckpointDependencyMismatch,
     InvalidLongitudinalCheckpoint,
+    OrganismCheckpoint,
     OrganismIdentity,
     OrganismLongitudinalCheckpoint,
 )
 from organism.checkpoint import REQUIRED_LONGITUDINAL_COMPONENTS
+from organism.checkpoint import (
+    LongitudinalComponentActivity,
+    LongitudinalComponentClassification,
+)
+
+
+def _classifications():
+    return {
+        name: LongitudinalComponentClassification(
+            LongitudinalComponentActivity.ACTIVE, f"test-profile:{name}"
+        )
+        for name in REQUIRED_LONGITUDINAL_COMPONENTS
+    }
 
 
 def _checkpoint() -> OrganismLongitudinalCheckpoint:
     return OrganismLongitudinalCheckpoint(
         identity=OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041")),
         components={name: f"{name}:payload".encode() for name in REQUIRED_LONGITUDINAL_COMPONENTS},
+        classifications=_classifications(),
     )
 
 
@@ -29,6 +47,7 @@ def test_longitudinal_checkpoint_round_trips_exact_component_bytes() -> None:
 
     assert restored.identity == checkpoint.identity
     assert dict(restored.components) == dict(checkpoint.components)
+    assert dict(restored.classifications) == dict(checkpoint.classifications)
     assert restored.to_bytes() == checkpoint.to_bytes()
     assert OrganismLongitudinalCheckpoint.from_organism_checkpoint(
         checkpoint.to_organism_checkpoint()
@@ -38,15 +57,17 @@ def test_longitudinal_checkpoint_round_trips_exact_component_bytes() -> None:
 def test_longitudinal_checkpoint_rejects_missing_or_unknown_components() -> None:
     components = dict(_checkpoint().components)
     components.pop("agency")
-    with pytest.raises(InvalidLongitudinalCheckpoint, match="closure mismatch"):
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="payload mismatch"):
         OrganismLongitudinalCheckpoint(
-            OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041")), components
+            OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041")), components,
+            _classifications(),
         )
     components["agency"] = b"agency"
     components["unregistered"] = b"must not be silently ignored"
-    with pytest.raises(InvalidLongitudinalCheckpoint, match="closure mismatch"):
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="payload mismatch"):
         OrganismLongitudinalCheckpoint(
-            OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041")), components
+            OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041")), components,
+            _classifications(),
         )
 
 
@@ -57,7 +78,9 @@ def test_capture_uses_a_complete_identity_bound_encoder_registry() -> None:
         name: lambda value, owner: f"{owner}:{value}".encode()
         for name in REQUIRED_LONGITUDINAL_COMPONENTS
     }
-    checkpoint = OrganismLongitudinalCheckpoint.capture_components(identity, states, encoders)
+    checkpoint = OrganismLongitudinalCheckpoint.capture_components(
+        identity, states, encoders, classifications=_classifications()
+    )
 
     assert all(str(identity).encode() in payload for payload in checkpoint.components.values())
     with pytest.raises(InvalidLongitudinalCheckpoint, match="encoder registry"):
@@ -65,6 +88,7 @@ def test_capture_uses_a_complete_identity_bound_encoder_registry() -> None:
             identity,
             states,
             {key: value for key, value in encoders.items() if key != "agency"},
+            classifications=_classifications(),
         )
 
 def test_longitudinal_checkpoint_rejects_tampered_component_digest() -> None:
@@ -79,7 +103,7 @@ def test_longitudinal_checkpoint_rejects_tampered_component_digest() -> None:
 
 def test_longitudinal_checkpoint_rejects_duplicate_json_keys() -> None:
     payload = _checkpoint().to_bytes()
-    duplicate = payload[:-1] + b',"schema_version":1}'
+    duplicate = payload[:-1] + b',"schema_version":2}'
     with pytest.raises(InvalidLongitudinalCheckpoint, match="malformed"):
         OrganismLongitudinalCheckpoint.from_bytes(duplicate)
 
@@ -100,6 +124,7 @@ def test_restore_requires_complete_decoders_and_dependency_closure() -> None:
     checkpoint = OrganismLongitudinalCheckpoint(
         identity=checkpoint.identity,
         components=checkpoint.components,
+        classifications=checkpoint.classifications,
         dependencies=(CheckpointDependency("model://predictor", sha256(dependency).hexdigest()),),
     )
 
@@ -129,7 +154,9 @@ def test_longitudinal_checkpoint_captures_and_restores_action_domain() -> None:
     }
     encoders["action_commitments"] = lambda value, owner: value.to_bytes()
 
-    checkpoint = OrganismLongitudinalCheckpoint.capture_components(identity, states, encoders)
+    checkpoint = OrganismLongitudinalCheckpoint.capture_components(
+        identity, states, encoders, classifications=_classifications()
+    )
     assert "action_commitments" in checkpoint.components
 
     decoders = {
@@ -144,4 +171,296 @@ def test_longitudinal_checkpoint_captures_and_restores_action_domain() -> None:
     restored_domain = restored_components["action_commitments"]
     assert isinstance(restored_domain, ActionDomain)
     assert restored_domain.checkpoint() == domain.checkpoint()
+
+
+def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_configuration(tmp_path) -> None:
+    """M2 restores owner state, not merely a structurally valid aggregate."""
+    from organism.actuation.binding import (CompetenceExecutionBindingRegistry, BindingStatus, StalenessReason)
+    from organism.actuation.competence import CompetenceGate
+    from organism.actuation.domain import ActionDomain
+    from organism.actuation.sensorimotor import CompetenceDevelopmentEngine
+    from organism.actuation.context import ActuatorEvidenceContext
+    from organism.agency.intention import IntentStatus
+    from organism.agency.policy import ProspectivePolicy
+    from organism.agency.prospective import ProspectiveAgency
+    from organism.agency.value import OutcomeValueLedger
+    from organism.cognition.activation import SensoryNormalizer
+    from organism.cognition.graph import CognitiveGraph, PlasticEdge, PlasticNode
+    from organism.cognition.composition import EdgeLearningInstruction, compose_cognition_transition
+    from organism.cognition.types import EdgeKind, NodeKind
+    from organism.cognition.limits import KernelLimits
+    from organism.cognition.metaplasticity import SafetyState
+    from organism.cognition.portable_checkpoint import CognitiveRuntimeCheckpoint
+    from organism.cognition.transition import CognitiveTransitionState
+    from organism.genetics import EpigeneticMark, GeneExpressionState, GermlineState, create_standard_genome
+    from organism.longitudinal import OrganismVitalRestoreContext, OrganismVitalState
+    from organism.memory import ExperienceLedger
+    from organism.memory import EpistemicStatus, ExperienceRecord, SourceKind
+    from organism.transition import EmbodimentContextRef, OrganismLifecycle, OrganismTransitionState, WorldCausalCorrelation
+
+    identity = OrganismIdentity(UUID("00000000-0000-0000-0000-000000000041"))
+    limits = KernelLimits(max_nodes=512)
+    transition = OrganismTransitionState(
+        owner_checkpoint=OrganismCheckpoint(identity, b"temporary", ()),
+        organism_step=23,
+        embodiment=EmbodimentContextRef("body.1", "episode.1", "morphology.1"),
+        world_correlation=WorldCausalCorrelation("world.1", 123),
+        lifecycle=OrganismLifecycle.ACTIVE,
+    )
+    genome = create_standard_genome("vital-state-test")
+    germline = GermlineState.from_genome(
+        genome, inherited_marks=(EpigeneticMark("plasticity.learning_rate.baseline", delta=0.01, strength=0.5),),
+        acquired_capture_enabled=True,
+    )
+    expression = GeneExpressionState.from_genome(genome, germline=germline)
+    normalizer = SensoryNormalizer()
+    normalizer.normalize(0.25)
+    normalizer.normalize(0.75)
+    initial_graph = CognitiveGraph(
+        nodes=(PlasticNode("sense", NodeKind.SENSE), PlasticNode("memory", NodeKind.STATE)),
+        edges=(PlasticEdge("sense", "memory", EdgeKind.EXCITATORY, 0.5, 0.5, 1),),
+        kernel_limits=limits,
+    )
+    first = compose_cognition_transition(CognitiveTransitionState.initial(identity), initial_graph,
+                                         {"sense": 0.8}, causal_tick=0)
+    learned = compose_cognition_transition(
+        first.state, first.graph, {"sense": 0.6}, causal_tick=1,
+        learning=(EdgeLearningInstruction("sense", "memory", kind=EdgeKind.EXCITATORY,
+            learning_rate=0.1, modulation=1.0, eligibility_decay=0.5, eligible=True),),
+    )
+    learned_graph = learned.graph
+    assert learned_graph.edges[0].weight != initial_graph.edges[0].weight
+    cognition = CognitiveRuntimeCheckpoint(
+        state=learned.state, graph=learned_graph,
+        experience_records=(ExperienceRecord(
+            record_id="experience.vital.1", organism_id=str(identity), tick_class=12,
+            context_tokens=("sense",), action_token="action.1", outcome_tokens=("outcome.1",),
+            epistemic_status=EpistemicStatus.OBSERVED, evidence_refs=("record.12",),
+            confidence_class=6, source_kind=SourceKind.DIRECT,
+        ),),
+        safety_state=SafetyState(), sensory_normalizers={"sense": normalizer},
+        genome=genome, germline_state=germline, expression_state=expression,
+    )
+    experience = ExperienceLedger(str(identity), max_records=64)
+    policy = ProspectivePolicy(organism_id=str(identity), min_model_confidence=0.73,
+                               min_value_samples=5, decision_margin=0.03)
+    agency = ProspectiveAgency(organism_id=str(identity), outcome_value_ledger=OutcomeValueLedger(),
+                               policy=policy, query_budget=5)
+    actuator_ids = tuple(f"actuator.{i}" for i in range(4))
+    engine = CompetenceDevelopmentEngine(actuator_ids, organism_id=str(identity),
+                                         embodiment_fingerprint="embodiment.test", max_concurrent=2)
+    sequence = (
+        {"actuator.0": 0.7, "actuator.1": 0.3}, {"actuator.0": 0.5, "actuator.2": 0.6},
+        {"actuator.1": 0.6, "actuator.3": 0.4}, {"actuator.0": 0.3, "actuator.2": 0.7, "actuator.3": 0.2},
+    )
+    body = {"sense.a": 0.0, "sense.b": 0.0}
+    tick = 0
+    for episode in range(2):
+        for step, vector in enumerate(sequence):
+            engine.observe(tick=tick, body_state=body, motor_vector=vector, discovery_eligible=True)
+            drive = sum(vector.values())
+            body = {"sense.a": body["sense.a"] + drive * 0.01 * ((step + 1) / 4),
+                    "sense.b": body["sense.b"] - drive * 0.006 * ((step + 1) / 4)}
+            tick += 1
+        engine.observe(tick=tick, body_state=body, motor_vector={}, discovery_eligible=False)
+        tick += 1
+        if episode == 0:
+            while tick % 8:
+                engine.observe(tick=tick, body_state=body, motor_vector={}, discovery_eligible=False)
+                tick += 1
+    assert engine.primitives and engine.snapshot().competence_chunks > 0
+    engine.gate = CompetenceGate(min_support=3, min_consistency=0.8)
+    from organism.actuation.context import ActuatorEvidenceContext
+    bindings = CompetenceExecutionBindingRegistry()
+    bindings.bind_from_evidence(
+        competence_id="competence.pending", surface_fingerprint="surface.s",
+        applicability_context=ActuatorEvidenceContext("body.1", "episode.1", "morphology.1", "surface.s"), effect_id="effect.e",
+        evidence_refs=("evidence.1",), reliability=0.9, controllability=0.9, tick=1,
+    )
+    bindings.set_status("competence.pending", BindingStatus.STALE,
+        StalenessReason.SURFACE_NOT_CURRENT, tick=2, cause_refs=("surface-revision-2",))
+    assert bindings.checkpoint()["pending_transitions"]
+    from organism.agency.executive_outcome import ExecutiveOutcomeLedger
+    actions = ActionDomain(outcome_ledger=ExecutiveOutcomeLedger())
+    from organism.agency.affordance import ActionAffordance
+    from organism.agency.prospective import ProspectiveDecision
+    from organism.actuation.action import (ActionEvaluation, ActionJustification, ActionProposal, ActionSource)
+    from organism.actuation.surface import derive_actuator_constitution
+    from organism.agency.executive_outcome import ExecutiveOutcomeSample, OutcomeClass
+    affordance = ActionAffordance(
+        affordance_id="affordance.1", competence_id="competence.walk", anticipated_effect_id="effect.walk",
+        context_ref="context.1", embodiment_id="body.1", prediction_confidence=0.5,
+        controllability=0.4, executability_confidence=1.0, prediction_ref="prediction.1",
+        evidence_refs=("evidence.1",),
+    )
+    decision = ProspectiveDecision(
+        competence_id="competence.walk", anticipated_effect_id="effect.walk", prediction_ref="prediction.1",
+        confidence=0.5, epistemic_relevance=0.4, homeostatic_relevance=0.2,
+        origin_refs=("source.1",), supporting_affordance_id="affordance.1",
+    )
+    actions.admit(decision, supporting_affordance=affordance, intent_id="intent.closed",
+                  context_ref="context.1", embodiment_id="body.1", tick=4)
+    proposal = ActionProposal("proposal.1", ActionSource.COMPETENCE, "effect.walk", "competence.walk",
+        ActionJustification(effect_target_id="effect.walk", competence_id="competence.walk"),
+        ActionEvaluation(effect_confidence=0.5, uncertainty=0.2), intent_id="intent.closed")
+    surface = derive_actuator_constitution(("effector.left",))
+    selected = actions.select_and_commit((proposal,), tick=4, commitment_id="commitment.closed",
+        controller_id="controller.1", surface=surface, embodiment_id="body.1",
+        interruptibility=1.0, minimum_duration=0, maximum_duration=None)
+    actions.close(selected.commitment.commitment_id, status=IntentStatus.SATISFIED,
+        tick=5, reason="anticipated_effect_observed", outcome=ExecutiveOutcomeSample(tick=5, outcome_class=OutcomeClass.POSITIVE,
+        reason="anticipated_effect_observed", effect_similarity=1.0, prediction_mismatch=0.0, progress_before_failure=None))
+    active_affordance = replace(affordance, affordance_id="affordance.2", context_ref="context.2")
+    active_decision = replace(decision, supporting_affordance_id="affordance.2")
+    actions.admit(active_decision, supporting_affordance=active_affordance, intent_id="intent.active",
+                  context_ref="context.2", embodiment_id="body.1", tick=6)
+    active_proposal = replace(proposal, proposal_id="proposal.2", intent_id="intent.active")
+    selected_active = actions.select_and_commit((active_proposal,), tick=6, commitment_id="commitment.active",
+        controller_id="controller.2", surface=surface, embodiment_id="body.1",
+        interruptibility=1.0, minimum_duration=0, maximum_duration=None)
+    assert selected_active.commitment is actions.active_commitment
+    assert actions._outcome_ledger.get(("competence.walk", "effect.walk")).satisfactions == 1
+    vital = OrganismVitalState(transition, cognition, experience, agency, engine, actions, bindings)
+    captured = vital.capture_transition()
+    payload_path = tmp_path / "checkpoint.json"
+    payload_path.write_bytes(captured.to_bytes())
+    aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(captured.owner_checkpoint)
+    expected_max_concurrent = json.loads(aggregate.components["competencies"])["engine"]["max_concurrent"]
+    expected_component_digests = {
+        name: sha256(payload).hexdigest() for name, payload in aggregate.components.items()
+    }
+    digest_path = tmp_path / "component-digests.json"
+    digest_path.write_text(json.dumps(expected_component_digests, sort_keys=True))
+
+    # A new interpreter process uses only the serialized checkpoint and the
+    # verified, non-checkpoint runtime configuration below.
+    script = r"""
+import sys
+import json
+from hashlib import sha256
+from organism import OrganismTransitionState
+from organism.cognition.limits import KernelLimits
+from organism.actuation.competence import CompetenceGate
+from organism.agency.policy import ProspectivePolicy
+from organism import OrganismLongitudinalCheckpoint
+from organism.longitudinal import OrganismVitalRestoreContext, OrganismVitalState, restore_vital_state
+transition = OrganismTransitionState.from_bytes(open(sys.argv[1], 'rb').read())
+identity = str(transition.identity)
+policy = ProspectivePolicy(organism_id=identity, min_model_confidence=0.73, min_value_samples=5, decision_margin=0.03)
+context = OrganismVitalRestoreContext(kernel_limits=KernelLimits(max_nodes=512), policy=policy,
+    actuator_ids=tuple(f'actuator.{i}' for i in range(4)), embodiment_fingerprint='embodiment.test',
+    expected_max_concurrent=int(sys.argv[2]),
+    competence_gate=CompetenceGate(min_support=3, min_consistency=0.8),
+    running_version=(0, 85, 0))
+restored = restore_vital_state(transition.owner_checkpoint, context)
+assert restored.transition.to_bytes() == transition.to_bytes()
+restored_vital = OrganismVitalState(restored.transition, restored.cognition, restored.experience,
+    restored.agency, restored.competencies, restored.actions, restored.bindings)
+restored_checkpoint = restored_vital.capture()
+restored_aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(restored_checkpoint)
+actual_digests = {name: sha256(payload).hexdigest()
+    for name, payload in restored_aggregate.components.items()}
+assert actual_digests == json.load(open(sys.argv[3], encoding='utf-8'))
+assert restored.cognition.sensory_normalizers['sense'].count == 2
+assert restored.experience.max_records == 64
+assert restored.agency.checkpoint()['query_budget'] == 5
+assert restored.competencies.checkpoint()['competence_gate'] == {'min_support': 3, 'min_consistency': 0.8}
+print('fresh-process-restore-ok')
+"""
+    result = subprocess.run([sys.executable, "-c", script, str(payload_path), str(expected_max_concurrent), str(digest_path)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "fresh-process-restore-ok"
+
+def test_checkpoint_requires_explicit_classification_for_every_component() -> None:
+    checkpoint = _checkpoint()
+    incomplete = dict(checkpoint.classifications)
+    incomplete.pop("experience_memory")
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="classifications"):
+        OrganismLongitudinalCheckpoint(
+            checkpoint.identity, checkpoint.components, incomplete
+        )
+
+
+def test_checkpoint_rejects_inactive_declaration_without_verified_profile_proof() -> None:
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="inactive components"):
+        LongitudinalComponentClassification(
+            LongitudinalComponentActivity.INACTIVE,
+            "scenario-evidence:genetics-disabled",
+        )
+
+
+def test_missing_active_component_cannot_be_omitted_or_skipped_on_restore() -> None:
+    checkpoint = _checkpoint()
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="inactive components"):
+        LongitudinalComponentClassification(
+            LongitudinalComponentActivity.INACTIVE,
+            "scenario-evidence:genetics-disabled",
+        )
+
+    components = dict(checkpoint.components)
+    components.pop("genetic_expression")
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="payload mismatch"):
+        OrganismLongitudinalCheckpoint(
+            checkpoint.identity, components, checkpoint.classifications
+        )
+
+
+def _restore_context(**overrides):
+    from organism.agency.policy import ProspectivePolicy
+    from organism.cognition.limits import KernelLimits
+    from organism.longitudinal import OrganismVitalRestoreContext
+
+    identity = str(_checkpoint().identity)
+    values = dict(
+        kernel_limits=KernelLimits(max_nodes=512),
+        policy=ProspectivePolicy(organism_id=identity),
+        actuator_ids=("actuator.0",),
+        embodiment_fingerprint="embodiment.test",
+        expected_max_concurrent=2,
+    )
+    values.update(overrides)
+    return OrganismVitalRestoreContext(**values)
+
+
+def test_typed_restore_rejects_wrong_owner_identity_before_materialization() -> None:
+    checkpoint = _checkpoint()
+    wrong_owner = OrganismCheckpoint(
+        OrganismIdentity(UUID("00000000-0000-0000-0000-000000000042")),
+        checkpoint.to_organism_checkpoint().private_state,
+    )
+    from organism.longitudinal import restore_vital_state
+
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="failed to restore"):
+        restore_vital_state(wrong_owner, _restore_context())
+
+
+def test_typed_restore_rejects_corrupt_component_evidence_before_materialization() -> None:
+    checkpoint = _checkpoint()
+    components = dict(checkpoint.components)
+    components["cognitive_graph"] += b"tampered"
+    tampered = OrganismLongitudinalCheckpoint(
+        checkpoint.identity, components, checkpoint.classifications
+    )
+    owner = OrganismCheckpoint(checkpoint.identity, tampered.to_bytes())
+    from organism.longitudinal import restore_vital_state
+
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="failed to restore"):
+        restore_vital_state(owner, _restore_context())
+
+
+def test_typed_restore_rejects_unavailable_dependency_before_materialization() -> None:
+    checkpoint = _checkpoint()
+    dependency = CheckpointDependency("model://required", sha256(b"required").hexdigest())
+    aggregate = OrganismLongitudinalCheckpoint(
+        checkpoint.identity, checkpoint.components, checkpoint.classifications,
+        dependencies=(dependency,),
+    )
+    owner = OrganismCheckpoint(
+        checkpoint.identity, aggregate.to_bytes(), dependencies=(dependency,),
+    )
+    from organism.longitudinal import restore_vital_state
+
+    with pytest.raises(InvalidLongitudinalCheckpoint, match="dependency reader is required"):
+        restore_vital_state(owner, _restore_context())
 

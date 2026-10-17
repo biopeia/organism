@@ -231,6 +231,33 @@ def test_all_pending_lifecycle_transitions_survive_checkpoint_restore():
     assert restored.drain_transitions() == ()
 
 
+def test_binding_registry_portable_codec_preserves_pending_transitions():
+    registry = CompetenceExecutionBindingRegistry()
+    registry.bind_from_evidence(
+        competence_id="competence.pending",
+        surface_fingerprint="surface.s",
+        applicability_context=_context("surface.s"),
+        effect_id="effect.e",
+        evidence_refs=("ev.1",),
+        reliability=0.9,
+        controllability=0.9,
+        tick=1,
+    )
+    registry.set_status(
+        "competence.pending",
+        BindingStatus.STALE,
+        StalenessReason.SURFACE_NOT_CURRENT,
+        tick=2,
+        cause_refs=("surface-revision-2",),
+    )
+
+    encoded = registry.to_bytes()
+    restored = CompetenceExecutionBindingRegistry.from_bytes(encoded)
+
+    assert restored.checkpoint() == registry.checkpoint()
+    assert restored.to_bytes() == encoded
+
+
 def test_binding_restore_rejects_old_schema_and_missing_current_fields():
     registry = CompetenceExecutionBindingRegistry()
     old = registry.checkpoint()

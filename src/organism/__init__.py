@@ -7,9 +7,17 @@ from .checkpoint import (
     MissingCheckpointDependency,
     InvalidLongitudinalCheckpoint,
     OrganismLongitudinalCheckpoint,
+    LongitudinalComponentActivity,
+    LongitudinalComponentClassification,
     OrganismCheckpoint,
 )
 from .identity import OrganismIdentity
+from .longitudinal import (
+    OrganismVitalRestoreContext,
+    OrganismVitalState,
+    RestoredOrganismVitalState,
+    restore_vital_state,
+)
 from .continuation import (
     CanonicalContinuationLease,
     CanonicalContinuationRegistry,
@@ -42,8 +50,14 @@ __all__ = [
     "MissingCheckpointDependency",
     "InvalidLongitudinalCheckpoint",
     "OrganismLongitudinalCheckpoint",
+    "LongitudinalComponentActivity",
+    "LongitudinalComponentClassification",
     "OrganismCheckpoint",
     "OrganismIdentity",
+    "OrganismVitalRestoreContext",
+    "OrganismVitalState",
+    "RestoredOrganismVitalState",
+    "restore_vital_state",
     "CanonicalContinuationLease",
     "CanonicalContinuationRegistry",
     "ContinuationAncestry",

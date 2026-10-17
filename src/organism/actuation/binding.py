@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
+import json
 from typing import Any, Mapping
 
 from ..capacity import CapacityPressure
@@ -414,6 +415,37 @@ class CompetenceExecutionBindingRegistry:
                 for competence_id, entry in sorted(self._unconfirmed.items())
             },
         }
+
+    def to_bytes(self) -> bytes:
+        """Return a deterministic portable encoding of this registry state."""
+        return json.dumps(
+            self.checkpoint(),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+
+    @classmethod
+    def from_bytes(cls, payload: bytes) -> "CompetenceExecutionBindingRegistry":
+        """Decode a complete registry checkpoint; never accept duplicate JSON keys."""
+        if not isinstance(payload, bytes):
+            raise ValueError("binding registry checkpoint must be bytes")
+
+        def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate binding checkpoint field: {key}")
+                result[key] = value
+            return result
+
+        try:
+            value = json.loads(payload, object_pairs_hook=reject_duplicates)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("malformed binding registry checkpoint") from exc
+        if not isinstance(value, Mapping):
+            raise ValueError("binding registry checkpoint must contain an object")
+        return cls.restore(value)
 
     @classmethod
     def restore(
