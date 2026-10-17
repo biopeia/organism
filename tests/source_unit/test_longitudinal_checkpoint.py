@@ -411,20 +411,43 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         engine=engine,
         action_domain=candidate_actions,
     )
+    # The cognitive owner advances in this cycle: exercise a genuine learned
+    # weight change, then make that exact owner checkpoint the World input.
+    advanced_cognition = compose_cognition_transition(
+        cognition.state, cognition.graph, {"sense": 0.9}, causal_tick=2,
+        learning=(EdgeLearningInstruction(
+            "sense", "memory", kind=EdgeKind.EXCITATORY,
+            learning_rate=0.1, modulation=1.0, eligibility_decay=0.5, eligible=True,
+        ),),
+    )
+    assert advanced_cognition.graph.edges[0].weight != cognition.graph.edges[0].weight
+    candidate_transition = replace(
+        source_transition,
+        owner_checkpoint=CognitiveRuntimeCheckpoint(
+            state=advanced_cognition.state,
+            graph=advanced_cognition.graph,
+            experience_records=cognition.experience_records,
+            safety_state=cognition.safety_state,
+            sensory_normalizers=cognition.sensory_normalizers,
+            generative_resident=cognition.generative_resident,
+            genome=cognition.genome,
+            germline_state=cognition.germline_state,
+            expression_state=cognition.expression_state,
+        ).to_organism_checkpoint(),
+    )
     candidate = composer.prepare(
-        source_transition, actuator_context=actuator_context, surface=surface,
+        candidate_transition, actuator_context=actuator_context, surface=surface,
         target_causal_tick=124, physical_step_id="physical-step.124", commit_id="commit.124",
     )
-    vital_runtime = OrganismVitalRuntime(candidate_vital)
+    vital_runtime = OrganismVitalRuntime(candidate_vital, running_version=(0, 85, 0))
     # Production callers need not rebuild/pass the complete owner composition:
     # the runtime parses the cognition emitted by the transition and holds all
     # other accepted owners itself.
     candidate_bytes = vital_runtime.checkpoint_for_candidate(
-        composer, candidate, transition_state=source_transition,
+        composer, candidate, transition_state=candidate_transition,
     )
     assert vital_runtime.checkpoint_for_candidate(
-        composer, candidate, transition_state=source_transition,
-        candidate_vital_state=candidate_vital,
+        composer, candidate, transition_state=candidate_transition,
     ) == candidate_bytes
     candidate_checkpoint = OrganismTransitionState.from_bytes(candidate_bytes)
     candidate_aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(
@@ -443,15 +466,21 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         name for name in REQUIRED_LONGITUDINAL_COMPONENTS
         if candidate_aggregate.components[name] != accepted_candidate_source.components[name]
     }
-    assert changed_components == {"competencies", "action_commitments"}
+    assert changed_components == {
+        "cognitive_transition", "cognitive_graph", "competencies", "action_commitments"
+    }
+    candidate_cognitive_graph = json.loads(candidate_aggregate.components["cognitive_graph"])
+    accepted_cognitive_graph = json.loads(
+        accepted_candidate_source.components["cognitive_graph"]
+    )
+    assert candidate_cognitive_graph["graph"] != accepted_cognitive_graph["graph"]
     candidate_engine = json.loads(candidate_aggregate.components["competencies"])
     assert candidate_engine["engine"]["embodiment_fingerprint"] == actuator_context.fingerprint
     assert candidate_engine["engine"]["primitives"] == engine.checkpoint()["primitives"]
     with pytest.raises(InvalidLongitudinalCheckpoint, match="another vital-state candidate"):
         next_candidate = replace(candidate, candidate_id="candidate.other")
         vital_runtime.checkpoint_for_candidate(
-            composer, next_candidate, transition_state=source_transition,
-            candidate_vital_state=candidate_vital,
+            composer, next_candidate, transition_state=candidate_transition,
         )
     # A candidate does not become the runtime's accepted baseline until the
     # composer has adopted it and the caller supplies the matching cut receipt.
@@ -475,7 +504,7 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     ))
     with pytest.raises(InvalidLongitudinalCheckpoint, match="changed outside a committed restore boundary"):
         vital_runtime.checkpoint_for_candidate(
-            composer, candidate, transition_state=source_transition,
+            composer, candidate, transition_state=candidate_transition,
             candidate_vital_state=candidate_vital,
         )
 

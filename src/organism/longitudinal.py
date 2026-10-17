@@ -243,10 +243,20 @@ class OrganismVitalRuntime:
     selected by World after its own commit verification.
     """
 
-    def __init__(self, accepted: OrganismVitalState) -> None:
+    def __init__(
+        self,
+        accepted: OrganismVitalState,
+        *,
+        running_version: tuple[int, int, int] | None = None,
+        generative_registry: GenerativeModelRegistry | None = None,
+    ) -> None:
         if not isinstance(accepted, OrganismVitalState):
             raise TypeError("accepted must be OrganismVitalState")
         self._accepted = accepted
+        # These are explicit runtime configuration, not guessed checkpoint
+        # data. They are needed to validate an advanced cognitive candidate.
+        self._running_version = running_version
+        self._generative_registry = generative_registry
         self._accepted_checkpoint = accepted.capture()
         self._pending_candidate_id: str | None = None
         self._pending_source: bytes | None = None
@@ -255,7 +265,13 @@ class OrganismVitalRuntime:
         self._pending_vital_state: OrganismVitalState | None = None
 
     @classmethod
-    def from_restored_state(cls, restored: "RestoredOrganismVitalState") -> "OrganismVitalRuntime":
+    def from_restored_state(
+        cls,
+        restored: "RestoredOrganismVitalState",
+        *,
+        running_version: tuple[int, int, int] | None = None,
+        generative_registry: GenerativeModelRegistry | None = None,
+    ) -> "OrganismVitalRuntime":
         """Create the owner-held runtime directly from the verified restore result.
 
         This is an integration seam, not a default composition: every required
@@ -279,7 +295,10 @@ class OrganismVitalRuntime:
             controllability_model=restored.controllability_model,
             agency_model=restored.agency_model,
         )
-        return cls(accepted)
+        return cls(
+            accepted, running_version=running_version,
+            generative_registry=generative_registry,
+        )
 
     @property
     def accepted_source_checkpoint(self) -> OrganismCheckpoint:
@@ -301,17 +320,20 @@ class OrganismVitalRuntime:
             raise TypeError("transition_state must be OrganismTransitionState")
         if transition_state.identity != self._accepted.identity:
             raise InvalidLongitudinalCheckpoint("candidate transition identity differs from accepted vital state")
-        cognition_bytes = transition_state.owner_checkpoint.private_state
-        # The transition owner checkpoint carries the canonical full cognitive
-        # runtime, not the narrower recurrent-state format. Until the runtime
-        # receives an explicit staged cognitive composition, accept only the
-        # exact already-accepted bytes; do not silently keep stale graph/learning
-        # state when a candidate cognition payload has advanced.
-        if cognition_bytes != self._accepted.cognition.to_bytes():
-            raise InvalidLongitudinalCheckpoint(
-                "advanced cognition requires a complete candidate vital composition"
+        try:
+            cognition = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
+                transition_state.owner_checkpoint,
+                kernel_limits=self._accepted.cognition.graph.kernel_limits,
+                generative_registry=self._generative_registry,
+                running_version=self._running_version,
             )
-        return replace(self._accepted, transition=transition_state)
+        except (TypeError, ValueError) as exc:
+            raise InvalidLongitudinalCheckpoint(
+                "candidate cognitive state could not be validated under runtime configuration"
+            ) from exc
+        if cognition.state.identity != self._accepted.identity:
+            raise InvalidLongitudinalCheckpoint("candidate cognition identity differs")
+        return replace(self._accepted, transition=transition_state, cognition=cognition)
 
     def checkpoint_for_candidate(
         self,
