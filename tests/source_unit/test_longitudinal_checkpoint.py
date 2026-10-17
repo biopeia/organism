@@ -397,8 +397,11 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
         )
 
     payload_path = tmp_path / "checkpoint.json"
-    payload_path.write_bytes(captured.to_bytes())
-    aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(captured.owner_checkpoint)
+    # Restore the staged candidate in a fresh process, not the accepted
+    # baseline. This proves that the changed competence/action state survives
+    # the same serialization boundary that World would consume.
+    payload_path.write_bytes(candidate_bytes)
+    aggregate = candidate_aggregate
     # The owner envelope alone cannot prove ownership of nested component
     # state. Both independently-restorable payloads carry and verify it.
     from organism.longitudinal import restore_vital_state
