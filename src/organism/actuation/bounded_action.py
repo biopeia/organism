@@ -53,6 +53,23 @@ class ExplorationOutcome(str, Enum):
     NO_ACTUATION = "no_actuation"
 
 
+def _declares_longitudinal_checkpoint(payload: bytes) -> bool:
+    """Detect a full-vital payload before choosing a legacy restore path.
+
+    A valid JSON document that names the longitudinal schema must be restored
+    strictly. A malformed or incomplete document must not silently downgrade
+    to the older cognition-only format.
+    """
+    try:
+        document = json.loads(payload)
+    except (TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(document, dict)
+        and document.get("schema") == "biopeia.organism-longitudinal-checkpoint"
+    )
+
+
 def _identifier(kind: str, organism_id: str, world_id: str, tick: int) -> str:
     material = f"{kind}\0{organism_id}\0{world_id}\0{tick}".encode("utf-8")
     return f"{kind}.{sha256(material).hexdigest()[:24]}"
@@ -227,13 +244,12 @@ class OrganismCheckpointContract:
 
     def _validate_transition_owner_payload(self, state: OrganismTransitionState) -> None:
         """Validate private owner bytes, not just the generic envelope shape."""
-        from ..checkpoint import OrganismLongitudinalCheckpoint
+        if _declares_longitudinal_checkpoint(state.owner_checkpoint.private_state):
+            from ..checkpoint import OrganismLongitudinalCheckpoint
 
-        try:
+            # Do not downgrade declared full-vital state to a partial cognitive
+            # restore if parsing, integrity, or component validation fails.
             OrganismLongitudinalCheckpoint.from_organism_checkpoint(state.owner_checkpoint)
-        except Exception:
-            pass
-        else:
             self._restore_complete_vital_transition(state)
             return
         CognitiveRuntimeCheckpoint.from_organism_checkpoint(
@@ -267,13 +283,7 @@ class OrganismCheckpointContract:
         transition = OrganismTransitionState.from_bytes(encoded)
         if str(transition.identity) != owner_identity:
             raise ValueError("transition checkpoint does not match expected owner")
-        from ..checkpoint import OrganismLongitudinalCheckpoint
-
-        try:
-            OrganismLongitudinalCheckpoint.from_organism_checkpoint(transition.owner_checkpoint)
-        except Exception:
-            pass
-        else:
+        if _declares_longitudinal_checkpoint(transition.owner_checkpoint.private_state):
             _, restored = self._restore_complete_vital_transition(transition)
             # The result advertises the complete materialized closure, not a
             # cognition-only projection. Keep the canonical transition bytes.
