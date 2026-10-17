@@ -72,15 +72,17 @@ def _transition(
     tick: int = 1,
     lifecycle: OrganismLifecycle = OrganismLifecycle.ACTIVE,
     embodiment: EmbodimentContextRef | None = None,
+    kernel_limits: KernelLimits | None = None,
 ) -> OrganismTransitionState:
     identity = IDENTITY
+    limits = kernel_limits or KernelLimits()
     graph = CognitiveGraph(
         nodes=(
             PlasticNode("node.1", NodeKind.STATE),
             PlasticNode("sense.channel", NodeKind.SENSE),
         ),
         edges=(),
-        kernel_limits=KernelLimits(),
+        kernel_limits=limits,
     )
     checkpoint = CognitiveRuntimeCheckpoint(
         state=CognitiveTransitionState.initial(identity), graph=graph
@@ -96,7 +98,10 @@ def _transition(
 
 
 def _advance_cognition(
-    current: OrganismTransitionState, *, tick: int
+    current: OrganismTransitionState,
+    *,
+    tick: int,
+    kernel_limits: KernelLimits | None = None,
 ) -> OrganismTransitionState:
     """Advance the public Organism transition using one opaque test signal."""
     provenance = SenseProvenance(
@@ -126,11 +131,14 @@ def _advance_cognition(
         (SenseChannelBinding("channel.1", "receptor.1", "sense.channel"),),
         (signal,),
         expected_provenance=provenance,
-        kernel_limits=KernelLimits(),
+        kernel_limits=kernel_limits or KernelLimits(),
     ).state
 
 
-def _composer(surface: ActuatorSurface, context: ActuatorEvidenceContext) -> OrganismExplorationComposer:
+def _composer(
+    surface: ActuatorSurface,
+    context: ActuatorEvidenceContext,
+) -> OrganismExplorationComposer:
     engine = CompetenceDevelopmentEngine(
         ACTUATORS,
         organism_id=str(IDENTITY),
@@ -152,9 +160,10 @@ def _candidate_with_command(
     context: ActuatorEvidenceContext,
     *,
     dependencies: tuple[CheckpointDependency, ...] = (),
+    kernel_limits: KernelLimits | None = None,
 ):
     for tick in range(1, 65):
-        current_transition = _transition(tick=tick)
+        current_transition = _transition(tick=tick, kernel_limits=kernel_limits)
         if dependencies:
             current_transition = replace(
                 current_transition,
@@ -584,9 +593,15 @@ def test_candidate_checkpoint_restores_and_continues_in_fresh_process(tmp_path: 
     """
     surface = ActuatorSurface.from_effector_ids(ACTUATORS)
     context = _context(surface)
+    # Verify continuation under an explicitly non-default owner configuration.
+    limits = KernelLimits(max_nodes=512, max_edges=4096)
     composer = _composer(surface, context)
-    candidate = _candidate_with_command(composer, surface, context)
-    source_transition = _transition(tick=candidate.source_causal_tick)
+    candidate = _candidate_with_command(
+        composer, surface, context, kernel_limits=limits
+    )
+    source_transition = _transition(
+        tick=candidate.source_causal_tick, kernel_limits=limits
+    )
     encoded = composer.checkpoint_for_candidate(
         candidate,
         transition_state=source_transition,
@@ -600,7 +615,9 @@ def test_candidate_checkpoint_restores_and_continues_in_fresh_process(tmp_path: 
     candidate_payload.write_bytes(encoded)
 
     next_tick = candidate.target_causal_tick
-    next_transition = _advance_cognition(source_transition, tick=next_tick)
+    next_transition = _advance_cognition(
+        source_transition, tick=next_tick, kernel_limits=limits
+    )
     # Simulate the cut correlation required by the API. This is not evidence
     # that World issued or durably published the cut.
     composer.adopt_after_world_commit(candidate, committed_cut=test_cut_context)
@@ -633,18 +650,35 @@ from test_exploration_composition import (
     _context,
 )
 from organism.actuation import ActuatorSurface
+from organism.cognition import CognitiveRuntimeCheckpointError
+from organism.cognition.limits import KernelLimits
 
 payload = Path(sys.argv[2]).read_bytes()
 world_id, asserted_tick, commit_id, physical_step_id = sys.argv[3:7]
+limits = KernelLimits(max_nodes=512, max_edges=4096)
 test_cut_context = _CommittedCut(world_id, int(asserted_tick), commit_id)
+try:
+    OrganismExplorationComposer.restore_from_committed_checkpoint(
+        payload,
+        committed_cut=test_cut_context,
+        expected_organism_id=str(IDENTITY),
+        expected_physical_step_id=physical_step_id,
+    )
+except CognitiveRuntimeCheckpointError as exc:
+    assert "kernel limits do not match" in str(exc)
+else:
+    raise AssertionError("non-default owner limits restored under defaults")
 restored = OrganismExplorationComposer.restore_from_committed_checkpoint(
     payload,
     committed_cut=test_cut_context,
     expected_organism_id=str(IDENTITY),
     expected_physical_step_id=physical_step_id,
+    kernel_limits=limits,
 )
 next_tick = int(asserted_tick)
-transition = _advance_cognition(restored.transition_state, tick=next_tick)
+transition = _advance_cognition(
+    restored.transition_state, tick=next_tick, kernel_limits=limits
+)
 surface = ActuatorSurface.from_effector_ids(ACTUATORS)
 context = _context(surface)
 candidate = restored.action_composer.prepare(
