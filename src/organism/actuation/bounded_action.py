@@ -659,7 +659,7 @@ class OrganismExplorationComposer:
             raise ValueError("a v5 composer must export its dependency: use checkpoint_with_dependency_for_candidate")
         return self._encode(self._candidate_payload(candidate, transition_state))
 
-    def _vital_checkpoint_for_candidate(
+    def vital_checkpoint_for_candidate(
         self,
         candidate: ExplorationActionCandidate,
         *,
@@ -667,7 +667,7 @@ class OrganismExplorationComposer:
         vital_state: object,
         dependencies: tuple[CheckpointDependency, ...] = (),
     ) -> bytes:
-        """Internal export of the full active vital composition for this staged candidate.
+        """Export the full active vital composition for this staged candidate.
 
         The caller must supply the other live, owner-authored Organism
         components. This method replaces only the competence engine and
@@ -697,11 +697,7 @@ class OrganismExplorationComposer:
         return staged_vital.capture_transition(dependencies=dependencies).to_bytes()
 
     def matches_vital_baseline(self, *, competencies: CompetenceDevelopmentEngine, actions: ActionDomain) -> bool:
-        """Check that the full composition's committed actuation owners match this composer.
-
-        This is a read-only consistency check for Organism's full-state runtime
-        boundary. It does not establish that World committed a cut.
-        """
+        """Check that the composer owners match the full vital-state baseline."""
         if not isinstance(competencies, CompetenceDevelopmentEngine) or not isinstance(actions, ActionDomain):
             return False
         return (

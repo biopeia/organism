@@ -319,7 +319,7 @@ class OrganismVitalRuntime:
             competencies=staged_engine,
             actions=staged_actions,
         )
-        encoded = composer._vital_checkpoint_for_candidate(
+        encoded = composer.vital_checkpoint_for_candidate(
             candidate,
             transition_state=transition_state,
             vital_state=candidate_state,
