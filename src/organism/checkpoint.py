@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass
+from enum import StrEnum
 from hashlib import sha256
 import json
 from types import MappingProxyType
@@ -34,9 +35,8 @@ class InvalidLongitudinalCheckpoint(ValueError):
     """A longitudinal checkpoint omits or corrupts declared owner state."""
 
 
-# These are the payload sections required by the currently declared
-# continuation-closure taxonomy. Component codecs remain owned by their
-# respective Organism subsystems; this aggregate refuses a partial profile.
+# Until a concrete runtime composition can prove that a component is inactive,
+# every member of the Owner-approved M2 closure is required in every checkpoint.
 REQUIRED_LONGITUDINAL_COMPONENTS = frozenset({
     "lifecycle",
     "cognitive_transition",
@@ -51,6 +51,35 @@ REQUIRED_LONGITUDINAL_COMPONENTS = frozenset({
 })
 
 
+class LongitudinalComponentActivity(StrEnum):
+    """Runtime participation declaration; this is not itself proof of N/A."""
+
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+
+
+@dataclass(frozen=True, slots=True)
+class LongitudinalComponentClassification:
+    """Explicit profile-level classification for one required component.
+
+    M2 currently has no approved inactive-component proof protocol. Therefore
+    INACTIVE is rejected rather than treated as a shortcut for missing state.
+    """
+
+    activity: LongitudinalComponentActivity
+    evidence_ref: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.activity, LongitudinalComponentActivity):
+            raise InvalidLongitudinalCheckpoint("component activity must be explicit")
+        if not isinstance(self.evidence_ref, str) or not self.evidence_ref.strip():
+            raise InvalidLongitudinalCheckpoint("component classification needs an evidence reference")
+        if self.activity is not LongitudinalComponentActivity.ACTIVE:
+            raise InvalidLongitudinalCheckpoint(
+                "inactive components are not permitted without a verified profile proof"
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class OrganismLongitudinalCheckpoint:
     """Organism-owned aggregate of exact, subsystem-encoded continuation state.
@@ -63,23 +92,33 @@ class OrganismLongitudinalCheckpoint:
 
     identity: OrganismIdentity
     components: Mapping[str, bytes]
+    classifications: Mapping[str, LongitudinalComponentClassification]
     dependencies: tuple[CheckpointDependency, ...] = ()
-    schema_version: int = 1
+    schema_version: int = 2
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, OrganismIdentity):
             raise InvalidLongitudinalCheckpoint("identity must be an OrganismIdentity")
-        if type(self.schema_version) is not int or self.schema_version != 1:
+        if type(self.schema_version) is not int or self.schema_version != 2:
             raise InvalidLongitudinalCheckpoint("unsupported longitudinal checkpoint version")
         if not isinstance(self.components, Mapping):
             raise InvalidLongitudinalCheckpoint("components must be a mapping")
         if any(not isinstance(name, str) for name in self.components):
             raise InvalidLongitudinalCheckpoint("component names must be strings")
+        if (
+            not isinstance(self.classifications, Mapping)
+            or set(self.classifications) != REQUIRED_LONGITUDINAL_COMPONENTS
+            or any(not isinstance(item, LongitudinalComponentClassification)
+                   for item in self.classifications.values())
+        ):
+            raise InvalidLongitudinalCheckpoint(
+                "component classifications do not match continuation closure"
+            )
         if set(self.components) != REQUIRED_LONGITUDINAL_COMPONENTS:
             missing = sorted(REQUIRED_LONGITUDINAL_COMPONENTS - set(self.components))
             extra = sorted(set(self.components) - REQUIRED_LONGITUDINAL_COMPONENTS)
             raise InvalidLongitudinalCheckpoint(
-                f"longitudinal component closure mismatch (missing={missing}, extra={extra})"
+                f"active longitudinal payload mismatch (missing={missing}, inactive_or_extra={extra})"
             )
         if not isinstance(self.dependencies, tuple) or any(
             not isinstance(item, CheckpointDependency) for item in self.dependencies
@@ -93,6 +132,7 @@ class OrganismLongitudinalCheckpoint:
                 raise InvalidLongitudinalCheckpoint("component payloads must be non-empty bytes")
             normalized[name] = bytes(payload)
         object.__setattr__(self, "components", MappingProxyType(normalized))
+        object.__setattr__(self, "classifications", MappingProxyType(dict(self.classifications)))
 
     def to_bytes(self) -> bytes:
         document = {
@@ -105,6 +145,10 @@ class OrganismLongitudinalCheckpoint:
                     "sha256": sha256(payload).hexdigest(),
                 }
                 for name, payload in sorted(self.components.items())
+            },
+            "classifications": {
+                name: {"activity": item.activity.value, "evidence_ref": item.evidence_ref}
+                for name, item in sorted(self.classifications.items())
             },
             "dependencies": [
                 {"locator": item.locator, "sha256": item.sha256_hex}
@@ -120,6 +164,7 @@ class OrganismLongitudinalCheckpoint:
         component_states: Mapping[str, object],
         encoders: Mapping[str, Callable[[object, OrganismIdentity], bytes]],
         *,
+        classifications: Mapping[str, LongitudinalComponentClassification],
         dependencies: tuple[CheckpointDependency, ...] = (),
     ) -> "OrganismLongitudinalCheckpoint":
         """Encode the complete named owner state through subsystem codecs.
@@ -130,15 +175,14 @@ class OrganismLongitudinalCheckpoint:
         """
         if not isinstance(identity, OrganismIdentity):
             raise InvalidLongitudinalCheckpoint("identity must be an OrganismIdentity")
-        if (
-            not isinstance(component_states, Mapping)
-            or set(component_states) != REQUIRED_LONGITUDINAL_COMPONENTS
-        ):
-            raise InvalidLongitudinalCheckpoint(
-                "component state set does not match continuation closure"
-            )
+        if not isinstance(classifications, Mapping) or set(classifications) != REQUIRED_LONGITUDINAL_COMPONENTS:
+            raise InvalidLongitudinalCheckpoint("component classifications do not match continuation closure")
+        if any(not isinstance(item, LongitudinalComponentClassification) for item in classifications.values()):
+            raise InvalidLongitudinalCheckpoint("component classifications must be explicit")
+        if not isinstance(component_states, Mapping) or set(component_states) != REQUIRED_LONGITUDINAL_COMPONENTS:
+            raise InvalidLongitudinalCheckpoint("component state set does not match required M2 closure")
         if not isinstance(encoders, Mapping) or set(encoders) != REQUIRED_LONGITUDINAL_COMPONENTS:
-            raise InvalidLongitudinalCheckpoint("encoder registry does not match component closure")
+            raise InvalidLongitudinalCheckpoint("encoder registry does not match required M2 closure")
         if any(not callable(encoder) for encoder in encoders.values()):
             raise InvalidLongitudinalCheckpoint("every component encoder must be callable")
         encoded: dict[str, bytes] = {}
@@ -149,28 +193,45 @@ class OrganismLongitudinalCheckpoint:
                 raise InvalidLongitudinalCheckpoint(
                     f"failed to capture longitudinal component: {name}"
                 ) from exc
-        return cls(identity, encoded, dependencies)
+        return cls(identity, encoded, classifications, dependencies)
 
     @classmethod
     def from_bytes(cls, payload: bytes) -> "OrganismLongitudinalCheckpoint":
         try:
             document = json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
-            expected = {"schema", "schema_version", "identity", "components", "dependencies"}
+            expected = {
+                "schema", "schema_version", "identity", "components",
+                "classifications", "dependencies",
+            }
             if not isinstance(document, dict) or set(document) != expected:
                 raise InvalidLongitudinalCheckpoint("longitudinal checkpoint has an invalid shape")
             if (
                 document["schema"] != "biopeia.organism-longitudinal-checkpoint"
                 or type(document["schema_version"]) is not int
-                or document["schema_version"] != 1
+                or document["schema_version"] != 2
             ):
                 raise InvalidLongitudinalCheckpoint("unsupported longitudinal checkpoint schema")
             raw_components = document["components"]
+            if not isinstance(raw_components, dict):
+                raise InvalidLongitudinalCheckpoint("longitudinal checkpoint components must be an object")
+            raw_classifications = document["classifications"]
             if (
-                not isinstance(raw_components, dict)
-                or set(raw_components) != REQUIRED_LONGITUDINAL_COMPONENTS
+                not isinstance(raw_classifications, dict)
+                or set(raw_classifications) != REQUIRED_LONGITUDINAL_COMPONENTS
             ):
                 raise InvalidLongitudinalCheckpoint(
-                    "longitudinal checkpoint component closure mismatch"
+                    "component classifications do not match continuation closure"
+                )
+            classifications = {}
+            for name, item in raw_classifications.items():
+                if not isinstance(item, dict) or set(item) != {"activity", "evidence_ref"}:
+                    raise InvalidLongitudinalCheckpoint(f"invalid {name} classification")
+                classifications[name] = LongitudinalComponentClassification(
+                    LongitudinalComponentActivity(item["activity"]), item["evidence_ref"]
+                )
+            if set(raw_components) != REQUIRED_LONGITUDINAL_COMPONENTS:
+                raise InvalidLongitudinalCheckpoint(
+                    "component payloads do not match required M2 closure"
                 )
             components: dict[str, bytes] = {}
             for name, entry in raw_components.items():
@@ -194,7 +255,10 @@ class OrganismLongitudinalCheckpoint:
             )
             if len(dependencies) != len(raw_dependencies):
                 raise InvalidLongitudinalCheckpoint("invalid dependency entry")
-            return cls(OrganismIdentity.parse(document["identity"]), components, dependencies)
+            return cls(
+                OrganismIdentity.parse(document["identity"]), components,
+                classifications, dependencies,
+            )
         except InvalidLongitudinalCheckpoint:
             raise
         except (TypeError, ValueError, KeyError, binascii.Error, json.JSONDecodeError) as exc:
@@ -225,7 +289,9 @@ class OrganismLongitudinalCheckpoint:
         identity, configuration and applicability invariants.
         """
         if not isinstance(decoders, Mapping) or set(decoders) != REQUIRED_LONGITUDINAL_COMPONENTS:
-            raise InvalidLongitudinalCheckpoint("decoder registry does not match component closure")
+            raise InvalidLongitudinalCheckpoint(
+                "decoder registry does not match active profile components"
+            )
         if any(not callable(decoder) for decoder in decoders.values()):
             raise InvalidLongitudinalCheckpoint("every component decoder must be callable")
         self.verify_dependency_closure(read_dependency)

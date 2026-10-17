@@ -60,7 +60,7 @@ def test_competence_library_checkpoint_roundtrip() -> None:
     library.add(c2)
 
     persisted = json.loads(json.dumps(library.checkpoint()))
-    assert persisted["schema_version"] == 1
+    assert persisted["schema_version"] == 2
     assert persisted["max_competences"] == 10
     assert len(persisted["competences"]) == 2
 
@@ -94,17 +94,36 @@ def test_competence_library_checkpoint_roundtrip() -> None:
 def test_competence_library_restore_respects_custom_gate() -> None:
     custom_gate = CompetenceGate(min_support=10, min_consistency=0.9)
     library = CompetenceLibrary(max_competences=4)
-    c = _make_competence("competence.custom", support=5, directional_consistency=0.7)
+    c = _make_competence(
+        "competence.custom", support=5, directional_consistency=0.7, gate=custom_gate
+    )
     library.add(c)
 
     persisted = library.checkpoint()
-    # Restored with default gate: support=5 >= min_support(2) and consistency 0.7 >= 0.6 -> ESTABLISHED
-    restored_default = CompetenceLibrary.restore(persisted)
-    assert restored_default.get("competence.custom").maturity == CompetenceMaturity.ESTABLISHED
-
-    # Restored with strict custom gate: support=5 < 10 -> EMERGING
-    restored_custom = CompetenceLibrary.restore(persisted, gate=custom_gate)
+    restored_custom = CompetenceLibrary.restore(persisted)
     assert restored_custom.get("competence.custom").maturity == CompetenceMaturity.EMERGING
+    assert restored_custom.get("competence.custom").evidence.gate == custom_gate
+
+    # An explicitly supplied runtime configuration must agree with the saved one.
+    with pytest.raises(ValueError, match="does not match expected runtime configuration"):
+        CompetenceLibrary.restore(persisted, gate=DEFAULT_COMPETENCE_GATE)
+    assert CompetenceLibrary.restore(persisted, gate=custom_gate).checkpoint() == persisted
+
+
+def test_competence_library_restore_rejects_invalid_or_missing_gate() -> None:
+    library = CompetenceLibrary(max_competences=4)
+    library.add(_make_competence("c1"))
+    valid = library.checkpoint()
+
+    missing = copy.deepcopy(valid)
+    del missing["competences"][0]["evidence"]["gate"]
+    with pytest.raises(ValueError, match="invalid competence evidence fields"):
+        CompetenceLibrary.restore(missing)
+
+    invalid = copy.deepcopy(valid)
+    invalid["competences"][0]["evidence"]["gate"]["min_support"] = True
+    with pytest.raises(ValueError, match="invalid competence gate min_support"):
+        CompetenceLibrary.restore(invalid)
 
 
 def test_competence_library_restore_rejects_malformed_payload() -> None:

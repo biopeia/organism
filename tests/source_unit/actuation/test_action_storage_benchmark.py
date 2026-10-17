@@ -246,7 +246,11 @@ def test_fresh_process_nontrivial_action_domain_restore():
     import subprocess
     import tempfile
     from organism import OrganismIdentity, OrganismLongitudinalCheckpoint
-    from organism.checkpoint import REQUIRED_LONGITUDINAL_COMPONENTS
+    from organism.checkpoint import (
+        REQUIRED_LONGITUDINAL_COMPONENTS,
+        LongitudinalComponentActivity,
+        LongitudinalComponentClassification,
+    )
     from organism.actuation.action import ActionEvaluation, ActionJustification, ActionProposal, ActionSource
     from organism.actuation.domain import ActionDomain
     from organism.agency.affordance import ActionAffordance
@@ -325,7 +329,15 @@ def test_fresh_process_nontrivial_action_domain_restore():
     identity = OrganismIdentity.parse("00000000-0000-0000-0000-000000000041")
     components = {name: f"{name}:vital".encode() for name in REQUIRED_LONGITUDINAL_COMPONENTS}
     components["action_commitments"] = domain_bytes
-    longitudinal_bytes = OrganismLongitudinalCheckpoint(identity=identity, components=components).to_bytes()
+    classifications = {
+        name: LongitudinalComponentClassification(
+            LongitudinalComponentActivity.ACTIVE, f"benchmark-profile:{name}"
+        )
+        for name in REQUIRED_LONGITUDINAL_COMPONENTS
+    }
+    longitudinal_bytes = OrganismLongitudinalCheckpoint(
+        identity=identity, components=components, classifications=classifications
+    ).to_bytes()
 
     worker_code = """
 import sys

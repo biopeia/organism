@@ -110,11 +110,15 @@ def _competence_evidence_payload(evidence: CompetenceEvidence) -> dict[str, obje
         "reproducibility": float(evidence.reproducibility),
         "controllability": float(evidence.controllability),
         "directional_consistency": float(evidence.directional_consistency),
+        "gate": {
+            "min_support": int(evidence.gate.min_support),
+            "min_consistency": float(evidence.gate.min_consistency),
+        },
     }
 
 
 def _restore_competence_evidence(
-    payload: object, *, gate: CompetenceGate = DEFAULT_COMPETENCE_GATE
+    payload: object, *, expected_gate: CompetenceGate | None = None
 ) -> CompetenceEvidence:
     if not isinstance(payload, dict):
         raise ValueError("invalid competence evidence payload")
@@ -128,6 +132,7 @@ def _restore_competence_evidence(
         "reproducibility",
         "controllability",
         "directional_consistency",
+        "gate",
     }
     if set(payload) != required:
         raise ValueError("invalid competence evidence fields")
@@ -154,6 +159,21 @@ def _restore_competence_evidence(
     ):
         if not 0.0 <= val <= 1.0:
             raise ValueError(f"{name} must be within [0, 1]")
+    raw_gate = payload["gate"]
+    if not isinstance(raw_gate, dict) or set(raw_gate) != {"min_support", "min_consistency"}:
+        raise ValueError("invalid competence gate")
+    min_support = raw_gate["min_support"]
+    min_consistency = raw_gate["min_consistency"]
+    if isinstance(min_support, bool) or not isinstance(min_support, int):
+        raise ValueError("invalid competence gate min_support")
+    if isinstance(min_consistency, bool) or not isinstance(min_consistency, (int, float)):
+        raise ValueError("invalid competence gate min_consistency")
+    try:
+        gate = CompetenceGate(min_support=min_support, min_consistency=float(min_consistency))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid competence gate") from exc
+    if expected_gate is not None and gate != expected_gate:
+        raise ValueError("competence gate does not match expected runtime configuration")
     return CompetenceEvidence(
         controller_seed_ref=controller_seed_ref,
         effect_evidence_refs=tuple(payload["effect_evidence_refs"]),
@@ -180,7 +200,7 @@ def _motor_competence_payload(competence: MotorCompetence) -> dict[str, object]:
 
 
 def _restore_motor_competence(
-    payload: object, *, gate: CompetenceGate = DEFAULT_COMPETENCE_GATE
+    payload: object, *, expected_gate: CompetenceGate | None = None
 ) -> MotorCompetence:
     if not isinstance(payload, dict):
         raise ValueError("invalid motor competence payload")
@@ -209,7 +229,7 @@ def _restore_motor_competence(
     strategy_ref = payload["controller_strategy_ref"]
     if strategy_ref is not None and (not isinstance(strategy_ref, str) or not strategy_ref):
         raise ValueError("invalid controller_strategy_ref")
-    evidence = _restore_competence_evidence(payload["evidence"], gate=gate)
+    evidence = _restore_competence_evidence(payload["evidence"], expected_gate=expected_gate)
     return MotorCompetence(
         competence_id=competence_id,
         controller_id=controller_id,
@@ -221,7 +241,7 @@ def _restore_motor_competence(
 
 
 class CompetenceLibrary:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, *, max_competences: int = 512) -> None:
         if (
@@ -282,7 +302,7 @@ class CompetenceLibrary:
         cls,
         payload: bytes,
         *,
-        gate: CompetenceGate = DEFAULT_COMPETENCE_GATE,
+        gate: CompetenceGate | None = None,
     ) -> "CompetenceLibrary":
         """Restore only an unambiguous JSON export with the current schema."""
         if not isinstance(payload, bytes):
@@ -307,7 +327,7 @@ class CompetenceLibrary:
         cls,
         payload: object,
         *,
-        gate: CompetenceGate = DEFAULT_COMPETENCE_GATE,
+        gate: CompetenceGate | None = None,
     ) -> "CompetenceLibrary":
         if not isinstance(payload, dict):
             raise ValueError("invalid competence library checkpoint")
@@ -333,7 +353,7 @@ class CompetenceLibrary:
             raise ValueError("invalid or unbounded competence library entries")
         library = cls(max_competences=max_competences)
         for raw_item in raw_items:
-            competence = _restore_motor_competence(raw_item, gate=gate)
+            competence = _restore_motor_competence(raw_item, expected_gate=gate)
             if competence.competence_id in library._items:
                 raise ValueError("duplicate competence_id in checkpoint")
             library._items[competence.competence_id] = competence

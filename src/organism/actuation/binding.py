@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
+import json
 from typing import Any, Mapping
 
 from ..capacity import CapacityPressure
@@ -101,12 +102,15 @@ class BindingTransition:
 class CompetenceExecutionBindingRegistry:
     """Bounded current-embodiment authority, separate from competence knowledge."""
 
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
 
-    def __init__(self, *, capacity: int = 512) -> None:
+    def __init__(self, *, capacity: int = 512, organism_id: str | None = None) -> None:
         if capacity < 1:
             raise ValueError("capacity must be positive")
+        if organism_id is not None and (not isinstance(organism_id, str) or not organism_id):
+            raise ValueError("organism_id must be a non-empty string when provided")
         self.capacity = int(capacity)
+        self.organism_id = organism_id
         self._items: dict[str, CompetenceExecutionBinding] = {}
         # Wave 0 measurement only (Cross-Domain Revision Coherence v1 §2.1).
         self.pressure = CapacityPressure(self.capacity)
@@ -392,6 +396,7 @@ class CompetenceExecutionBindingRegistry:
 
         return {
             "schema_version": self.SCHEMA_VERSION,
+            "organism_id": self.organism_id,
             "capacity": self.capacity,
             "items": [binding_payload(item) for item in self.items],
             "pending_transitions": [
@@ -415,6 +420,37 @@ class CompetenceExecutionBindingRegistry:
             },
         }
 
+    def to_bytes(self) -> bytes:
+        """Return a deterministic portable encoding of this registry state."""
+        return json.dumps(
+            self.checkpoint(),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+
+    @classmethod
+    def from_bytes(cls, payload: bytes) -> "CompetenceExecutionBindingRegistry":
+        """Decode a complete registry checkpoint; never accept duplicate JSON keys."""
+        if not isinstance(payload, bytes):
+            raise ValueError("binding registry checkpoint must be bytes")
+
+        def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate binding checkpoint field: {key}")
+                result[key] = value
+            return result
+
+        try:
+            value = json.loads(payload, object_pairs_hook=reject_duplicates)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("malformed binding registry checkpoint") from exc
+        if not isinstance(value, Mapping):
+            raise ValueError("binding registry checkpoint must contain an object")
+        return cls.restore(value)
+
     @classmethod
     def restore(
         cls,
@@ -422,6 +458,7 @@ class CompetenceExecutionBindingRegistry:
     ) -> "CompetenceExecutionBindingRegistry":
         required = {
             "schema_version",
+            "organism_id",
             "capacity",
             "items",
             "pending_transitions",
@@ -438,6 +475,9 @@ class CompetenceExecutionBindingRegistry:
             or version != cls.SCHEMA_VERSION
         ):
             raise ValueError("unsupported competence execution binding checkpoint")
+        organism_id = payload["organism_id"]
+        if organism_id is not None and (not isinstance(organism_id, str) or not organism_id):
+            raise ValueError("invalid competence execution binding organism identity")
         capacity = payload["capacity"]
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
             raise ValueError("invalid competence execution binding capacity")
@@ -451,7 +491,7 @@ class CompetenceExecutionBindingRegistry:
             payload["unconfirmed_executions"], Mapping
         ):
             raise ValueError("invalid competence execution binding metadata")
-        obj = cls(capacity=capacity)
+        obj = cls(capacity=capacity, organism_id=organism_id)
         raw = payload["items"]
         if not isinstance(raw, list) or len(raw) > obj.capacity:
             raise ValueError("invalid or unbounded competence execution bindings")

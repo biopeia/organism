@@ -15,6 +15,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
 
+from ..checkpoint import CheckpointDependency
 from ..transition import OrganismLifecycle, OrganismTransitionState
 from ..cognition.limits import KernelLimits
 from ..cognition.portable_checkpoint import CognitiveRuntimeCheckpoint
@@ -133,6 +134,7 @@ class RestoredOrganismTransitionCheckpoint:
 
     transition_state: OrganismTransitionState
     cognitive_runtime: CognitiveRuntimeCheckpoint
+    vital_state: object | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.transition_state, OrganismTransitionState):
@@ -141,9 +143,16 @@ class RestoredOrganismTransitionCheckpoint:
             raise TypeError("cognitive_runtime must be CognitiveRuntimeCheckpoint")
         if self.transition_state.identity != self.cognitive_runtime.state.identity:
             raise ValueError("transition and cognitive runtime identities differ")
-        materialized_checkpoint = self.cognitive_runtime.to_organism_checkpoint()
-        if materialized_checkpoint.to_bytes() != self.transition_state.owner_checkpoint.to_bytes():
-            raise ValueError("cognitive runtime does not match transition checkpoint")
+        if self.vital_state is None:
+            materialized_checkpoint = self.cognitive_runtime.to_organism_checkpoint()
+            if materialized_checkpoint.to_bytes() != self.transition_state.owner_checkpoint.to_bytes():
+                raise ValueError("cognitive runtime does not match transition checkpoint")
+        elif (
+            getattr(self.vital_state, "cognition", None) != self.cognitive_runtime
+            or getattr(getattr(self.vital_state, "transition", None), "to_bytes", lambda: None)()
+            != self.transition_state.to_bytes()
+        ):
+            raise ValueError("materialized vital state does not match transition checkpoint")
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +193,7 @@ class OrganismCheckpointContract:
         *,
         read_dependency: Callable[[str], bytes] | None = None,
         kernel_limits: KernelLimits | None = None,
+        vital_restore_context: object | None = None,
     ) -> None:
         self._read_dependency = read_dependency
         # Verified action-history index of the last validated v5 checkpoint:
@@ -192,9 +202,40 @@ class OrganismCheckpointContract:
         # Validation must use the same owner-configured resource ceilings as
         # restoration. The default is the canonical kernel safety profile.
         self._kernel_limits = kernel_limits or KernelLimits()
+        # Full M2 restoration needs subsystem configuration which is not part
+        # of the private checkpoint bytes. Keep that explicit and optional so
+        # the existing cognition-only M1 verifier remains source-compatible.
+        self._vital_restore_context = vital_restore_context
+
+    def _restore_complete_vital_transition(self, state: OrganismTransitionState):
+        from ..checkpoint import OrganismLongitudinalCheckpoint
+        from ..longitudinal import restore_vital_state
+
+        if self._vital_restore_context is None:
+            raise ValueError("complete vital-state restoration context is required")
+        aggregate = OrganismLongitudinalCheckpoint.from_organism_checkpoint(state.owner_checkpoint)
+        restored = restore_vital_state(state.owner_checkpoint, self._vital_restore_context)
+        if (
+            restored.transition.organism_step != state.organism_step
+            or restored.transition.embodiment != state.embodiment
+            or restored.transition.world_correlation != state.world_correlation
+            or restored.transition.lifecycle != state.lifecycle
+            or restored.transition.lifecycle_history != state.lifecycle_history
+        ):
+            raise ValueError("transition envelope diverges from captured vital lifecycle")
+        return aggregate, restored
 
     def _validate_transition_owner_payload(self, state: OrganismTransitionState) -> None:
         """Validate private owner bytes, not just the generic envelope shape."""
+        from ..checkpoint import OrganismLongitudinalCheckpoint
+
+        try:
+            OrganismLongitudinalCheckpoint.from_organism_checkpoint(state.owner_checkpoint)
+        except Exception:
+            pass
+        else:
+            self._restore_complete_vital_transition(state)
+            return
         CognitiveRuntimeCheckpoint.from_organism_checkpoint(
             state.owner_checkpoint,
             kernel_limits=self._kernel_limits,
@@ -226,6 +267,21 @@ class OrganismCheckpointContract:
         transition = OrganismTransitionState.from_bytes(encoded)
         if str(transition.identity) != owner_identity:
             raise ValueError("transition checkpoint does not match expected owner")
+        from ..checkpoint import OrganismLongitudinalCheckpoint
+
+        try:
+            OrganismLongitudinalCheckpoint.from_organism_checkpoint(transition.owner_checkpoint)
+        except Exception:
+            pass
+        else:
+            _, restored = self._restore_complete_vital_transition(transition)
+            # The result advertises the complete materialized closure, not a
+            # cognition-only projection. Keep the canonical transition bytes.
+            return RestoredOrganismTransitionCheckpoint(
+                transition_state=transition,
+                cognitive_runtime=restored.cognition,
+                vital_state=restored,
+            )
         cognitive_runtime = CognitiveRuntimeCheckpoint.from_organism_checkpoint(
             transition.owner_checkpoint,
             kernel_limits=self._kernel_limits,
@@ -351,11 +407,14 @@ class OrganismExplorationComposer:
             organism_id=organism_id,
             embodiment_fingerprint=engine.embodiment_fingerprint,
         )
+        if action_domain is not None and action_domain.organism_id not in (None, organism_id):
+            raise ValueError("action domain Organism identity does not match this composer")
         self._domain = (
             action_domain.clone()
             if action_domain is not None
-            else ActionDomain()
+            else ActionDomain(organism_id=organism_id)
         )
+        self._domain.bind_owner(organism_id)
         # v5 mode when an action-history index is held (organism#183).
         if history is not None and not isinstance(history, action_history.HistoryIndex):
             raise TypeError("history must be an action_history.HistoryIndex")
@@ -599,6 +658,43 @@ class OrganismExplorationComposer:
         if self._history is not None:
             raise ValueError("a v5 composer must export its dependency: use checkpoint_with_dependency_for_candidate")
         return self._encode(self._candidate_payload(candidate, transition_state))
+
+    def vital_checkpoint_for_candidate(
+        self,
+        candidate: ExplorationActionCandidate,
+        *,
+        transition_state: OrganismTransitionState,
+        vital_state: object,
+        dependencies: tuple[CheckpointDependency, ...] = (),
+    ) -> bytes:
+        """Export the full active vital composition for this staged candidate.
+
+        The caller must supply the other live, owner-authored Organism
+        components. This method replaces only the competence engine and
+        ActionDomain with the exact staged candidate versions, then binds the
+        aggregate to the transition/cut already validated by this composer.
+        It deliberately supplies no defaults for other vital components.
+        """
+        from dataclasses import replace
+
+        from ..longitudinal import OrganismVitalState
+
+        self._candidate_payload(candidate, transition_state)
+        if not isinstance(vital_state, OrganismVitalState):
+            raise TypeError("vital_state must be OrganismVitalState")
+        if vital_state.identity != transition_state.identity or vital_state.transition.to_bytes() != transition_state.to_bytes():
+            raise ValueError("vital state does not match the staged transition source")
+        if vital_state.cognition.to_bytes() != transition_state.owner_checkpoint.private_state:
+            raise ValueError("vital cognition differs from the staged transition owner payload")
+        assert self._staged_state is not None
+        staged_engine, staged_domain = self._staged_state
+        staged_vital = replace(
+            vital_state,
+            transition=transition_state,
+            competencies=staged_engine,
+            actions=staged_domain,
+        )
+        return staged_vital.capture_transition(dependencies=dependencies).to_bytes()
 
     @property
     def exports_dependencies(self) -> bool:

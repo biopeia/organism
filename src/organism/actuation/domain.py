@@ -39,14 +39,18 @@ class ActionSelection:
 class ActionDomain:
     """A single explicitly scoped action execution context for one Organism."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(
         self,
         *,
+        organism_id: str | None = None,
         arbitrator: ActionArbitrator | None = None,
         outcome_ledger: ExecutiveOutcomeLedger | None = None,
     ) -> None:
+        if organism_id is not None and (not isinstance(organism_id, str) or not organism_id):
+            raise ValueError("organism_id must be a non-empty string when provided")
+        self.organism_id = organism_id
         self._arbitrator = arbitrator or ActionArbitrator()
         self._actuator_system = _ActuatorSystem()
         self._outcome_ledger = outcome_ledger
@@ -69,6 +73,7 @@ class ActionDomain:
         """
         return {
             "schema_version": self.SCHEMA_VERSION,
+            "organism_id": self.organism_id,
             "intents": [item.checkpoint() for item in self._intents.values()],
             "commitments": [item.checkpoint() for item in self._commitments.values()],
             "active_commitment_id": self._active_commitment_id,
@@ -116,6 +121,7 @@ class ActionDomain:
         """Restore strict ActionDomain-owned state; reject incomplete joins."""
         expected = {
             "schema_version",
+            "organism_id",
             "intents",
             "commitments",
             "active_commitment_id",
@@ -127,6 +133,9 @@ class ActionDomain:
         version = payload["schema_version"]
         if isinstance(version, bool) or not isinstance(version, int) or version != cls.SCHEMA_VERSION:
             raise ValueError("unsupported action domain checkpoint schema")
+        organism_id = payload["organism_id"]
+        if organism_id is not None and (not isinstance(organism_id, str) or not organism_id):
+            raise ValueError("invalid action domain organism identity")
 
         raw_intents = payload["intents"]
         raw_commitments = payload["commitments"]
@@ -221,7 +230,7 @@ class ActionDomain:
         if raw_ledger is not None and not isinstance(raw_ledger, Mapping):
             raise ValueError("outcome ledger checkpoint must be a mapping or null")
         ledger = ExecutiveOutcomeLedger.restore(raw_ledger) if raw_ledger is not None else None
-        domain = cls(outcome_ledger=ledger)
+        domain = cls(organism_id=organism_id, outcome_ledger=ledger)
         domain._intents = intents
         domain._commitments = commitments
         domain._active_commitment_id = active_id
@@ -241,6 +250,14 @@ class ActionDomain:
         domain._retired_commitment_ids = self._retired_commitment_ids
         domain._retired_closed_ids = self._retired_closed_ids
         return domain
+
+    def bind_owner(self, organism_id: str) -> None:
+        """Bind an unscoped domain at its owner composition boundary."""
+        if not isinstance(organism_id, str) or not organism_id:
+            raise ValueError("organism_id must be a non-empty string")
+        if self.organism_id not in (None, organism_id):
+            raise ValueError("action domain Organism identity does not match its owner")
+        self.organism_id = organism_id
 
     @classmethod
     def restore_live(

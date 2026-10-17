@@ -125,6 +125,7 @@ class Lockstep:
         self.oracle_ckpts = [copy.deepcopy(base)]
         self.compact_ckpts = [payload]
         self.oracle = ActionDomain.restore(copy.deepcopy(base))
+        self.oracle.bind_owner(ORG)
         self.domain, self.index = ah.restore_compact(payload, organism_id=ORG, resolve=self.store.__getitem__)
 
     def step(self, op, *, cold=False):
@@ -136,6 +137,7 @@ class Lockstep:
         self.oracle_ckpts.append(full)
         self.compact_ckpts.append(payload)
         self.oracle = ActionDomain.restore(copy.deepcopy(full))
+        self.oracle.bind_owner(ORG)
         self.domain, self.index = ah.restore_compact(
             payload, organism_id=ORG, resolve=self.store.__getitem__, cache=None if cold else self.cache)
         assert actual == expected, op
@@ -147,6 +149,7 @@ class Lockstep:
     def restore_old(self, back):
         k = max(1, min(back, len(self.oracle_ckpts)))
         self.oracle = ActionDomain.restore(copy.deepcopy(self.oracle_ckpts[-k]))
+        self.oracle.bind_owner(ORG)
         self.domain, self.index = ah.restore_compact(
             self.compact_ckpts[-k], organism_id=ORG, resolve=self.store.__getitem__, cache=self.cache)
         self.oracle_ckpts.append(self.oracle_ckpts[-k])

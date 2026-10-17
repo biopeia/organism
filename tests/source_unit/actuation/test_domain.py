@@ -346,7 +346,7 @@ def test_action_domain_checkpoint_restores_terminal_lifecycle_and_closed_ids():
 @pytest.mark.parametrize(
     "mutate",
     (
-        lambda payload: payload.update(schema_version=2),
+        lambda payload: payload.update(schema_version=3),
         lambda payload: payload.update(active_commitment_id="missing"),
         lambda payload: payload["commitments"].clear(),
         lambda payload: payload["closed_commitment_ids"].append("missing"),
