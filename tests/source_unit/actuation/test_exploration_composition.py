@@ -1067,6 +1067,39 @@ def test_owner_contract_does_not_return_partially_restored_transition(
         contract.restore_transition_checkpoint(source.to_bytes(), str(IDENTITY))
 
 
+def test_declared_longitudinal_payload_is_never_downgraded_to_cognitive_restore(
+    monkeypatch,
+) -> None:
+    """A damaged full-vital payload must fail as longitudinal, not become a partial restore."""
+    contract = OrganismCheckpointContract()
+    source = _transition()
+    declared_but_incomplete = json.dumps(
+        {
+            "schema": "biopeia.organism-longitudinal-checkpoint",
+            "schema_version": 1,
+            "components": {},
+        }
+    ).encode()
+    source = replace(
+        source,
+        owner_checkpoint=replace(
+            source.owner_checkpoint,
+            private_state=declared_but_incomplete,
+        ),
+    )
+
+    def reject_partial_restore(*args, **kwargs):
+        raise AssertionError("declared full-vital payload entered the cognitive-only decoder")
+
+    monkeypatch.setattr(
+        CognitiveRuntimeCheckpoint,
+        "from_organism_checkpoint",
+        reject_partial_restore,
+    )
+    with pytest.raises(ValueError, match="complete vital-state restoration context"):
+        contract.restore_transition_checkpoint(source.to_bytes(), str(IDENTITY))
+
+
 def test_owner_contract_rejects_wrong_identity_and_oversized_transition_before_restore() -> None:
     source = _transition().to_bytes()
     contract = OrganismCheckpointContract()
