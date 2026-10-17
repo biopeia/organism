@@ -464,14 +464,16 @@ def test_typed_vital_composition_restores_in_fresh_process_with_nondefault_confi
     # Candidate export requires a complete staged owner snapshot. The runtime
     # verifies its cognitive and transition bytes against the produced World
     # candidate instead of silently reusing accepted non-cognitive owners.
-    candidate_bytes = vital_runtime.checkpoint_for_candidate(
+    candidate_bytes, dependency_declaration = vital_runtime.checkpoint_with_dependency_for_candidate(
         composer, candidate, transition_state=candidate_transition,
         candidate_vital_state=candidate_vital,
     )
-    assert vital_runtime.checkpoint_for_candidate(
+    assert dependency_declaration is None
+    repeated_bytes, repeated_declaration = vital_runtime.checkpoint_with_dependency_for_candidate(
         composer, candidate, transition_state=candidate_transition,
         candidate_vital_state=candidate_vital,
-    ) == candidate_bytes
+    )
+    assert (repeated_bytes, repeated_declaration) == (candidate_bytes, dependency_declaration)
     changed_candidate_experience = ExperienceLedger.from_bytes(
         candidate_experience.to_bytes(), organism_id=str(identity)
     )

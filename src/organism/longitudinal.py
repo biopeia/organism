@@ -16,6 +16,7 @@ from .actuation.binding import CompetenceExecutionBindingRegistry
 from .actuation.competence import CompetenceLibrary
 from .actuation.domain import ActionDomain
 from .actuation.evidence import CausalEvidenceLedger
+from .actuation.action_history import DependencyDeclaration
 from .actuation.model import AgencyModel, CompetenceEffectModel, ControllabilityModel
 from .actuation.sensorimotor import CompetenceDevelopmentEngine, CompetenceGate
 from .agency.prospective import ProspectiveAgency, ProspectivePolicy
@@ -264,6 +265,7 @@ class OrganismVitalRuntime:
         self._pending_dependencies: tuple[CheckpointDependency, ...] | None = None
         self._pending_vital_source: bytes | None = None
         self._pending_checkpoint: bytes | None = None
+        self._pending_dependency_declaration: DependencyDeclaration | None = None
         self._pending_vital_state: OrganismVitalState | None = None
 
     @classmethod
@@ -429,6 +431,47 @@ class OrganismVitalRuntime:
         self._pending_vital_state = candidate_state
         return encoded
 
+    def checkpoint_with_dependency_for_candidate(
+        self,
+        composer: object,
+        candidate: object,
+        *,
+        transition_state: OrganismTransitionState,
+        candidate_vital_state: OrganismVitalState,
+        dependencies: tuple[CheckpointDependency, ...] = (),
+    ) -> tuple[bytes, DependencyDeclaration | None]:
+        """Export the complete vital checkpoint and v5 history declaration.
+
+        The compact exploration codec remains responsible for creating and
+        declaring its content-addressed history segment. The persisted owner
+        payload, however, is the complete longitudinal composition. World
+        stores the declaration's opaque blob before committing that payload.
+        v4 composers return no declaration.
+        """
+        from .actuation.bounded_action import OrganismExplorationComposer
+
+        if not isinstance(composer, OrganismExplorationComposer):
+            raise TypeError("composer must be OrganismExplorationComposer")
+        declaration = None
+        if composer.exports_dependencies:
+            _, declaration = composer.checkpoint_with_dependency_for_candidate(
+                candidate, transition_state=transition_state
+            )
+        encoded = self.checkpoint_for_candidate(
+            composer, candidate,
+            transition_state=transition_state,
+            candidate_vital_state=candidate_vital_state,
+            dependencies=dependencies,
+        )
+        if self._pending_dependency_declaration is not None:
+            if self._pending_dependency_declaration != declaration:
+                raise InvalidLongitudinalCheckpoint(
+                    "vital checkpoint dependency declaration changed for pending candidate"
+                )
+        else:
+            self._pending_dependency_declaration = declaration
+        return encoded, declaration
+
     def adopt_after_world_commit(self, composer: object, candidate: object, *, committed_cut: object) -> None:
         """Advance the held full state only for the exact committed candidate.
 
@@ -466,6 +509,7 @@ class OrganismVitalRuntime:
         self._pending_dependencies = None
         self._pending_vital_source = None
         self._pending_checkpoint = None
+        self._pending_dependency_declaration = None
         self._pending_vital_state = None
 
 
